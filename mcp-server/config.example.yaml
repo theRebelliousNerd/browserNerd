@@ -1,0 +1,24 @@
+server:
+  name: browsernerd-mcp
+  version: 0.0.1
+  log_file: browsernerd-mcp.log
+
+browser:
+  # Either point to an existing Chrome with --remote-debugging-port or provide a launch command.
+  debugger_url: ws://localhost:9222
+  launch: []
+  default_navigation_timeout: 15s
+  default_attach_timeout: 10s
+  session_store: sessions.json
+  enable_dom_ingestion: true
+  enable_header_ingestion: true
+
+mcp:
+  # When zero, stdio mode is used. Set to 2024 for SSE/HTTP testing.
+  sse_port: 0
+
+mangle:
+  enable: true
+  schema_path: schemas/browser.mg
+  disable_builtin_rules: false
+  fact_buffer_limit: 2048

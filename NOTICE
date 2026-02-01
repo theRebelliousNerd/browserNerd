@@ -1,0 +1,18 @@
+BrowserNERD
+Copyright 2024-2026 theRebelliousNerd
+
+This product includes software developed by theRebelliousNerd.
+
+If you use this software in your research or projects, please cite:
+
+    BrowserNERD: Browser Automation with Mangle Reasoning
+    https://github.com/theRebelliousNerd/browserNerd
+
+For academic citations, please use:
+
+    @software{browsernerd,
+      author = {theRebelliousNerd},
+      title = {BrowserNERD: Browser Automation with Mangle Reasoning},
+      year = {2024-2026},
+      url = {https://github.com/theRebelliousNerd/browserNerd}
+    }

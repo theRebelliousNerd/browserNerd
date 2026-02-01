@@ -1,0 +1,967 @@
+2025/11/24 16:11:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:11:50 starting BrowserNERD MCP stdio server
+2025/11/24 16:12:42 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:12:42 starting BrowserNERD MCP stdio server
+2025/11/24 16:12:42 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:12:42 starting BrowserNERD MCP stdio server
+2025/11/24 16:12:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:12:48 starting BrowserNERD MCP stdio server
+2025/11/24 16:16:03 Browser connected at ws://127.0.0.1:65530/devtools/browser/10d91e61-a710-4c47-ac92-67dcffbf7137
+2025/11/24 16:28:38 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:28:38 starting BrowserNERD MCP stdio server
+2025/11/24 16:28:49 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:28:49 starting BrowserNERD MCP stdio server
+2025/11/24 16:36:46 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:36:46 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:38:01 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:38:11 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:39:24 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:40:11 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:40:21 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:40:48 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:41:19 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:41:34 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:41:35 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:42:09 failed to initialize mangle engine: parse schema: 157:30 no viable alternative at input 'false)'
+157:30 missing '(' at ')'
+162:30 no viable alternative at input 'false)'
+162:30 missing '(' at ')'
+174:8 extraneous input 'interactive' expecting '('
+178:8 extraneous input 'interactive' expecting '('
+2025/11/24 16:43:20 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:43:20 starting BrowserNERD MCP stdio server
+2025/11/24 16:43:59 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:43:59 starting BrowserNERD MCP stdio server
+2025/11/24 16:48:06 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:48:06 starting BrowserNERD MCP stdio server
+2025/11/24 16:48:07 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:48:07 starting BrowserNERD MCP stdio server
+2025/11/24 16:49:18 Browser connected at ws://127.0.0.1:9224/devtools/browser/87be0e1b-7bd0-4c71-a76b-e828a260ed05
+2025/11/24 16:51:27 Browser shutdown complete
+2025/11/24 16:52:39 Browser connected at ws://127.0.0.1:9224/devtools/browser/eb1c9f66-75b3-4a75-98e3-3f5ec682af0c
+2025/11/24 16:56:32 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:56:32 starting BrowserNERD MCP stdio server
+2025/11/24 16:56:32 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:56:32 starting BrowserNERD MCP stdio server
+2025/11/24 16:59:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 16:59:28 starting BrowserNERD MCP stdio server
+2025/11/24 17:07:51 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:07:51 starting BrowserNERD MCP stdio server
+2025/11/24 17:09:44 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:09:44 starting BrowserNERD MCP stdio server
+2025/11/24 17:10:23 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:10:23 starting BrowserNERD MCP stdio server
+2025/11/24 17:11:29 Browser shutdown complete
+2025/11/24 17:12:22 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:12:22 starting BrowserNERD MCP stdio server
+2025/11/24 17:12:54 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:12:54 starting BrowserNERD MCP stdio server
+2025/11/24 17:12:54 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:12:54 starting BrowserNERD MCP stdio server
+2025/11/24 17:15:23 Browser connected at ws://127.0.0.1:9224/devtools/browser/f68aae24-e2b3-42b2-816d-9eb9af00f2df
+2025/11/24 17:16:44 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:16:44 starting BrowserNERD MCP stdio server
+2025/11/24 17:16:44 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:16:44 starting BrowserNERD MCP stdio server
+2025/11/24 17:18:58 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:18:58 starting BrowserNERD MCP stdio server
+2025/11/24 17:24:30 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:24:30 starting BrowserNERD MCP stdio server
+2025/11/24 17:24:54 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:24:54 starting BrowserNERD MCP stdio server
+2025/11/24 17:24:54 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:24:54 starting BrowserNERD MCP stdio server
+2025/11/24 17:45:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:45:48 starting BrowserNERD MCP stdio server
+2025/11/24 17:45:49 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 17:45:49 starting BrowserNERD MCP stdio server
+2025/11/24 17:48:33 Browser connected at ws://127.0.0.1:61992/devtools/browser/af8d74ee-23b2-46f2-aad7-42fb72659471
+2025/11/24 18:44:29 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:44:45 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:44:53 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:44:53 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:45:08 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:46:30 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:46:42 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:49:51 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:49:52 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:50:54 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:51:03 failed to initialize mangle engine: parse schema: 225:5 not a literal or fml: fn:string_contains(Url,"login")
+2025/11/24 18:52:10 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 18:52:10 starting BrowserNERD MCP stdio server
+2025/11/24 18:53:03 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 18:53:03 starting BrowserNERD MCP stdio server
+2025/11/24 18:53:25 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 18:53:25 starting BrowserNERD MCP stdio server
+2025/11/24 18:53:25 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 18:53:25 starting BrowserNERD MCP stdio server
+2025/11/24 18:54:13 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 18:54:13 starting BrowserNERD MCP stdio server
+2025/11/24 18:54:14 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 18:54:14 starting BrowserNERD MCP stdio server
+2025/11/24 18:56:12 Browser connected at ws://127.0.0.1:9224/devtools/browser/63cdf53b-b6c3-4166-87ca-b0530fc3d528
+2025/11/24 19:04:19 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:04:19 starting BrowserNERD MCP stdio server
+2025/11/24 19:05:19 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:05:19 starting BrowserNERD MCP stdio server
+2025/11/24 19:05:38 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:05:38 starting BrowserNERD MCP stdio server
+2025/11/24 19:10:19 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:10:19 starting BrowserNERD MCP stdio server
+2025/11/24 19:11:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:11:12 starting BrowserNERD MCP stdio server
+2025/11/24 19:11:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:11:12 starting BrowserNERD MCP stdio server
+2025/11/24 19:13:15 Browser connected at ws://127.0.0.1:9224/devtools/browser/c4e3eed7-0ca6-4439-b69e-3d278fda0297
+2025/11/24 19:15:38 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:15:38 starting BrowserNERD MCP stdio server
+2025/11/24 19:31:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:31:48 starting BrowserNERD MCP stdio server
+2025/11/24 19:31:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 19:31:48 starting BrowserNERD MCP stdio server
+2025/11/24 20:27:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 20:27:48 starting BrowserNERD MCP stdio server
+2025/11/24 20:27:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 20:27:57 starting BrowserNERD MCP stdio server
+2025/11/24 20:27:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 20:27:57 starting BrowserNERD MCP stdio server
+2025/11/24 20:30:32 Browser connected at ws://127.0.0.1:9224/devtools/browser/34c13919-535c-41dc-9f4c-6d56c6fce3e0
+2025/11/24 20:51:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 20:51:48 starting BrowserNERD MCP stdio server
+2025/11/24 20:51:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 20:51:48 starting BrowserNERD MCP stdio server
+2025/11/24 21:03:43 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:03:43 starting BrowserNERD MCP stdio server
+2025/11/24 21:03:43 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:03:43 starting BrowserNERD MCP stdio server
+2025/11/24 21:07:01 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:07:01 starting BrowserNERD MCP stdio server
+2025/11/24 21:08:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:08:24 starting BrowserNERD MCP stdio server
+2025/11/24 21:14:59 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:14:59 starting BrowserNERD MCP stdio server
+2025/11/24 21:17:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:17:15 starting BrowserNERD MCP stdio server
+2025/11/24 21:17:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:17:15 starting BrowserNERD MCP stdio server
+2025/11/24 21:22:26 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:22:26 starting BrowserNERD MCP stdio server
+2025/11/24 21:22:26 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:22:26 starting BrowserNERD MCP stdio server
+2025/11/24 21:23:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:23:11 starting BrowserNERD MCP stdio server
+2025/11/24 21:23:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:23:11 starting BrowserNERD MCP stdio server
+2025/11/24 21:46:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:46:02 starting BrowserNERD MCP stdio server
+2025/11/24 21:48:14 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:48:14 starting BrowserNERD MCP stdio server
+2025/11/24 21:52:38 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:52:38 starting BrowserNERD MCP stdio server
+2025/11/24 21:52:38 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 21:52:38 starting BrowserNERD MCP stdio server
+2025/11/24 22:14:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 22:14:57 starting BrowserNERD MCP stdio server
+2025/11/24 22:14:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 22:14:57 starting BrowserNERD MCP stdio server
+2025/11/24 23:08:44 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 23:08:44 starting BrowserNERD MCP stdio server
+2025/11/24 23:08:44 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 23:08:44 starting BrowserNERD MCP stdio server
+2025/11/24 23:16:20 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 23:16:20 starting BrowserNERD MCP stdio server
+2025/11/24 23:16:20 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/24 23:16:20 starting BrowserNERD MCP stdio server
+2025/11/25 00:00:33 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:00:33 starting BrowserNERD MCP stdio server
+2025/11/25 00:45:34 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:45:34 starting BrowserNERD MCP stdio server
+2025/11/25 00:45:34 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:45:34 starting BrowserNERD MCP stdio server
+2025/11/25 00:48:52 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:48:52 starting BrowserNERD MCP stdio server
+2025/11/25 00:48:52 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:48:52 starting BrowserNERD MCP stdio server
+2025/11/25 00:49:14 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:49:14 starting BrowserNERD MCP stdio server
+2025/11/25 00:49:35 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:49:35 starting BrowserNERD MCP stdio server
+2025/11/25 00:49:41 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:49:41 starting BrowserNERD MCP stdio server
+2025/11/25 00:49:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:49:47 starting BrowserNERD MCP stdio server
+2025/11/25 00:49:51 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:49:51 starting BrowserNERD MCP stdio server
+2025/11/25 00:50:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 00:50:02 starting BrowserNERD MCP stdio server
+2025/11/25 01:53:52 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 01:53:52 starting BrowserNERD MCP stdio server
+2025/11/25 01:53:52 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 01:53:52 starting BrowserNERD MCP stdio server
+2025/11/25 10:23:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 10:23:18 starting BrowserNERD MCP stdio server
+2025/11/25 10:31:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 10:31:47 starting BrowserNERD MCP stdio server
+2025/11/25 10:31:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 10:31:47 starting BrowserNERD MCP stdio server
+2025/11/25 14:33:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 14:33:39 starting BrowserNERD MCP stdio server
+2025/11/25 14:44:32 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 14:44:32 starting BrowserNERD MCP stdio server
+2025/11/25 16:26:06 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 16:26:06 starting BrowserNERD MCP stdio server
+2025/11/25 16:30:19 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 16:30:19 starting BrowserNERD MCP stdio server
+2025/11/25 16:30:19 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 16:30:19 starting BrowserNERD MCP stdio server
+2025/11/25 17:45:17 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 17:45:17 starting BrowserNERD MCP stdio server
+2025/11/25 17:45:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 17:45:18 starting BrowserNERD MCP stdio server
+2025/11/25 17:45:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 17:45:24 starting BrowserNERD MCP stdio server
+2025/11/25 17:59:16 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 17:59:16 starting BrowserNERD MCP stdio server
+2025/11/25 17:59:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 17:59:28 starting BrowserNERD MCP stdio server
+2025/11/25 17:59:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 17:59:28 starting BrowserNERD MCP stdio server
+2025/11/25 22:25:30 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 22:25:30 starting BrowserNERD MCP stdio server
+2025/11/25 22:32:47 Browser connected at ws://127.0.0.1:9224/devtools/browser/c6f968b3-51ec-4097-8992-d8a3a9f18a89
+2025/11/25 22:33:32 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 22:33:32 starting BrowserNERD MCP stdio server
+2025/11/25 22:33:32 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/25 22:33:32 starting BrowserNERD MCP stdio server
+2025/11/26 18:38:43 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 18:38:43 starting BrowserNERD MCP stdio server
+2025/11/26 18:38:59 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 18:38:59 starting BrowserNERD MCP stdio server
+2025/11/26 18:39:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 18:39:18 starting BrowserNERD MCP stdio server
+2025/11/26 18:39:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 18:39:18 starting BrowserNERD MCP stdio server
+2025/11/26 19:51:20 Browser connected at ws://127.0.0.1:9224/devtools/browser/7ecff637-c8b5-4a6c-b581-1e17fe0edd90
+2025/11/26 19:52:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 19:52:47 starting BrowserNERD MCP stdio server
+2025/11/26 19:52:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 19:52:47 starting BrowserNERD MCP stdio server
+2025/11/26 20:12:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 20:12:57 starting BrowserNERD MCP stdio server
+2025/11/26 20:12:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 20:12:57 starting BrowserNERD MCP stdio server
+2025/11/26 20:24:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 20:24:24 starting BrowserNERD MCP stdio server
+2025/11/26 20:24:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 20:24:24 starting BrowserNERD MCP stdio server
+2025/11/26 23:33:30 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 23:33:30 starting BrowserNERD MCP stdio server
+2025/11/26 23:33:30 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 23:33:30 starting BrowserNERD MCP stdio server
+2025/11/26 23:33:56 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/26 23:33:56 starting BrowserNERD MCP stdio server
+2025/11/27 13:19:04 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/27 13:19:04 starting BrowserNERD MCP stdio server
+2025/11/27 13:26:14 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/27 13:26:14 starting BrowserNERD MCP stdio server
+2025/11/27 13:26:14 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/27 13:26:14 starting BrowserNERD MCP stdio server
+2025/11/27 20:06:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/27 20:06:39 starting BrowserNERD MCP stdio server
+2025/11/27 20:06:44 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/27 20:06:44 starting BrowserNERD MCP stdio server
+2025/11/28 13:41:59 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/28 13:41:59 starting BrowserNERD MCP stdio server
+2025/11/28 13:41:59 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/28 13:41:59 starting BrowserNERD MCP stdio server
+2025/11/28 19:33:41 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/28 19:33:41 starting BrowserNERD MCP stdio server
+2025/11/28 19:33:41 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/28 19:33:41 starting BrowserNERD MCP stdio server
+2025/11/29 10:58:36 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 10:58:36 starting BrowserNERD MCP stdio server
+2025/11/29 10:58:36 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 10:58:36 starting BrowserNERD MCP stdio server
+2025/11/29 11:04:49 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 11:04:49 starting BrowserNERD MCP stdio server
+2025/11/29 11:04:49 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 11:04:49 starting BrowserNERD MCP stdio server
+2025/11/29 11:17:32 Browser connected at ws://127.0.0.1:9224/devtools/browser/02e80a66-4618-43de-add5-4d4f83ff85c9
+2025/11/29 11:19:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 11:19:02 starting BrowserNERD MCP stdio server
+2025/11/29 11:19:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 11:19:02 starting BrowserNERD MCP stdio server
+2025/11/29 11:37:33 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 11:37:33 starting BrowserNERD MCP stdio server
+2025/11/29 11:37:34 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 11:37:34 starting BrowserNERD MCP stdio server
+2025/11/29 12:14:46 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 12:14:46 starting BrowserNERD MCP stdio server
+2025/11/29 12:14:46 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 12:14:46 starting BrowserNERD MCP stdio server
+2025/11/29 12:35:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 12:35:24 starting BrowserNERD MCP stdio server
+2025/11/29 12:35:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 12:35:24 starting BrowserNERD MCP stdio server
+2025/11/29 12:51:40 Browser connected at ws://127.0.0.1:9224/devtools/browser/2f1019b0-6d59-4b27-85f1-10ae32108dc8
+2025/11/29 13:18:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 13:18:11 starting BrowserNERD MCP stdio server
+2025/11/29 13:18:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 13:18:12 starting BrowserNERD MCP stdio server
+2025/11/29 13:19:10 Browser connected at ws://127.0.0.1:51730/devtools/browser/366a6d19-6aff-475e-90d6-bd5ff77c2328
+2025/11/29 14:12:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 14:12:15 starting BrowserNERD MCP stdio server
+2025/11/29 14:12:16 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 14:12:16 starting BrowserNERD MCP stdio server
+2025/11/29 15:28:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 15:28:28 starting BrowserNERD MCP stdio server
+2025/11/29 15:28:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 15:28:28 starting BrowserNERD MCP stdio server
+2025/11/29 15:29:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 15:29:57 starting BrowserNERD MCP stdio server
+2025/11/29 15:29:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 15:29:57 starting BrowserNERD MCP stdio server
+2025/11/29 16:04:01 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 16:04:01 starting BrowserNERD MCP stdio server
+2025/11/29 16:04:01 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 16:04:01 starting BrowserNERD MCP stdio server
+2025/11/29 16:05:12 Browser connected at ws://127.0.0.1:9224/devtools/browser/101fb875-7b29-4a62-b4f0-278a8e95f198
+2025/11/29 17:00:40 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 17:00:40 starting BrowserNERD MCP stdio server
+2025/11/29 17:00:40 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/29 17:00:40 starting BrowserNERD MCP stdio server
+2025/11/29 17:02:08 [session:823b24c7-1fbe-4e81-bb02-77eeaceb1985] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 17:05:53 [session:823b24c7-1fbe-4e81-bb02-77eeaceb1985] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 17:09:47 [session:823b24c7-1fbe-4e81-bb02-77eeaceb1985] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 17:10:41 [session:823b24c7-1fbe-4e81-bb02-77eeaceb1985] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 17:30:06 [session:823b24c7-1fbe-4e81-bb02-77eeaceb1985] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 17:33:00 [session:823b24c7-1fbe-4e81-bb02-77eeaceb1985] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 18:09:09 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 18:11:05 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 18:35:07 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 18:38:04 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 19:06:22 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 19:09:49 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 19:38:33 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 19:42:38 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 20:37:11 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 20:41:54 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 21:06:18 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/29 21:11:33 [session:2b73af92-f0de-4c09-8168-0db0e1fdee92] DOM capture error: {-32001 Session with given id not found. }
+2025/11/30 05:15:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 05:15:18 starting BrowserNERD MCP stdio server
+2025/11/30 05:15:19 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 05:15:19 starting BrowserNERD MCP stdio server
+2025/11/30 14:42:28 Browser connected at ws://127.0.0.1:56010/devtools/browser/88afbabd-65b9-44e4-aa27-ebb3d8deac32
+2025/11/30 15:58:46 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 15:58:46 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 15:58:46 starting BrowserNERD MCP stdio server
+2025/11/30 15:58:46 starting BrowserNERD MCP stdio server
+2025/11/30 16:33:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 16:33:18 starting BrowserNERD MCP stdio server
+2025/11/30 16:33:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 16:33:18 starting BrowserNERD MCP stdio server
+2025/11/30 17:02:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 17:02:28 starting BrowserNERD MCP stdio server
+2025/11/30 17:02:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 17:02:28 starting BrowserNERD MCP stdio server
+2025/11/30 17:14:23 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 17:14:23 starting BrowserNERD MCP stdio server
+2025/11/30 17:14:23 browser auto-start disabled; use MCP tools to launch/attach later
+2025/11/30 17:14:23 starting BrowserNERD MCP stdio server
+2025/12/01 01:16:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 01:16:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 01:16:39 starting BrowserNERD MCP stdio server
+2025/12/01 01:16:39 starting BrowserNERD MCP stdio server
+2025/12/01 15:24:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 15:24:12 starting BrowserNERD MCP stdio server
+2025/12/01 15:24:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 15:24:12 starting BrowserNERD MCP stdio server
+2025/12/01 16:47:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 16:47:39 starting BrowserNERD MCP stdio server
+2025/12/01 16:47:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 16:47:39 starting BrowserNERD MCP stdio server
+2025/12/01 18:18:17 Browser connected at ws://127.0.0.1:9224/devtools/browser/e15f0225-8e58-46d2-b446-22609b9bf9cb
+2025/12/01 20:08:00 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 20:08:00 starting BrowserNERD MCP stdio server
+2025/12/01 20:08:00 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 20:08:00 starting BrowserNERD MCP stdio server
+2025/12/01 21:18:23 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 21:18:23 starting BrowserNERD MCP stdio server
+2025/12/01 21:18:23 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 21:18:23 starting BrowserNERD MCP stdio server
+2025/12/01 22:19:53 Browser connected at ws://127.0.0.1:9224/devtools/browser/da1eec28-8ccf-4ee6-b793-934ed208a472
+2025/12/01 22:31:55 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 22:31:55 starting BrowserNERD MCP stdio server
+2025/12/01 23:10:56 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 23:10:56 starting BrowserNERD MCP stdio server
+2025/12/01 23:37:22 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 23:37:22 starting BrowserNERD MCP stdio server
+2025/12/01 23:37:22 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 23:37:22 starting BrowserNERD MCP stdio server
+2025/12/01 23:37:49 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/01 23:37:49 starting BrowserNERD MCP stdio server
+2025/12/01 23:45:41 Browser connected at ws://127.0.0.1:9224/devtools/browser/ca403575-7895-4702-b5fb-c485405a8d55
+2025/12/02 00:00:35 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 00:00:35 starting BrowserNERD MCP stdio server
+2025/12/02 00:00:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 00:00:50 starting BrowserNERD MCP stdio server
+2025/12/02 00:47:07 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 00:47:07 starting BrowserNERD MCP stdio server
+2025/12/02 00:47:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 00:47:12 starting BrowserNERD MCP stdio server
+2025/12/02 00:47:29 Browser connected at ws://127.0.0.1:9224/devtools/browser/fb741203-6b7a-4a9c-bd9f-987f430083b9
+2025/12/02 00:53:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 00:53:57 starting BrowserNERD MCP stdio server
+2025/12/02 00:53:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 00:53:57 starting BrowserNERD MCP stdio server
+2025/12/02 01:13:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:13:15 starting BrowserNERD MCP stdio server
+2025/12/02 01:13:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:13:15 starting BrowserNERD MCP stdio server
+2025/12/02 01:21:59 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:21:59 starting BrowserNERD MCP stdio server
+2025/12/02 01:21:59 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:21:59 starting BrowserNERD MCP stdio server
+2025/12/02 01:23:00 [session:7339a943-f097-4767-ac70-2e09d41d5157] DOM capture error: {-32001 Session with given id not found. }
+2025/12/02 01:24:00 [session:7339a943-f097-4767-ac70-2e09d41d5157] DOM capture error: {-32001 Session with given id not found. }
+2025/12/02 01:26:56 [session:7339a943-f097-4767-ac70-2e09d41d5157] DOM capture error: {-32001 Session with given id not found. }
+2025/12/02 01:27:41 [session:7339a943-f097-4767-ac70-2e09d41d5157] DOM capture error: {-32001 Session with given id not found. }
+2025/12/02 01:30:02 [session:7339a943-f097-4767-ac70-2e09d41d5157] DOM capture error: {-32001 Session with given id not found. }
+2025/12/02 01:30:52 [session:7339a943-f097-4767-ac70-2e09d41d5157] DOM capture error: {-32001 Session with given id not found. }
+2025/12/02 01:46:27 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:46:27 starting BrowserNERD MCP stdio server
+2025/12/02 01:46:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:46:28 starting BrowserNERD MCP stdio server
+2025/12/02 01:57:29 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:57:29 starting BrowserNERD MCP stdio server
+2025/12/02 01:57:29 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 01:57:29 starting BrowserNERD MCP stdio server
+2025/12/02 02:03:29 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 02:03:29 starting BrowserNERD MCP stdio server
+2025/12/02 02:03:29 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 02:03:29 starting BrowserNERD MCP stdio server
+2025/12/02 10:08:21 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 10:08:21 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 10:08:21 starting BrowserNERD MCP stdio server
+2025/12/02 10:08:21 starting BrowserNERD MCP stdio server
+2025/12/02 11:21:40 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:21:40 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:21:40 starting BrowserNERD MCP stdio server
+2025/12/02 11:21:40 starting BrowserNERD MCP stdio server
+2025/12/02 11:21:58 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:21:58 starting BrowserNERD MCP stdio server
+2025/12/02 11:22:04 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:22:04 starting BrowserNERD MCP stdio server
+2025/12/02 11:22:05 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:22:05 starting BrowserNERD MCP stdio server
+2025/12/02 11:22:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:22:12 starting BrowserNERD MCP stdio server
+2025/12/02 11:46:30 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:46:30 starting BrowserNERD MCP stdio server
+2025/12/02 11:46:42 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:46:42 starting BrowserNERD MCP stdio server
+2025/12/02 11:47:04 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:47:04 starting BrowserNERD MCP stdio server
+2025/12/02 11:47:04 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:47:04 starting BrowserNERD MCP stdio server
+2025/12/02 11:51:20 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:51:20 starting BrowserNERD MCP stdio server
+2025/12/02 11:51:34 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:51:34 starting BrowserNERD MCP stdio server
+2025/12/02 11:51:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 11:51:37 starting BrowserNERD MCP stdio server
+2025/12/02 12:17:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:17:47 starting BrowserNERD MCP stdio server
+2025/12/02 12:17:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:17:47 starting BrowserNERD MCP stdio server
+2025/12/02 12:35:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:35:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:35:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:35:37 starting BrowserNERD MCP stdio server
+2025/12/02 12:35:37 starting BrowserNERD MCP stdio server
+2025/12/02 12:35:37 starting BrowserNERD MCP stdio server
+2025/12/02 12:53:25 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:53:25 starting BrowserNERD MCP stdio server
+2025/12/02 12:53:25 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:53:25 starting BrowserNERD MCP stdio server
+2025/12/02 12:53:34 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 12:53:34 starting BrowserNERD MCP stdio server
+2025/12/02 13:36:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 13:36:37 starting BrowserNERD MCP stdio server
+2025/12/02 14:54:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 14:54:47 starting BrowserNERD MCP stdio server
+2025/12/02 14:54:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 14:54:47 starting BrowserNERD MCP stdio server
+2025/12/02 14:56:16 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 14:56:16 starting BrowserNERD MCP stdio server
+2025/12/02 15:03:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 15:03:15 starting BrowserNERD MCP stdio server
+2025/12/02 15:03:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 15:03:15 starting BrowserNERD MCP stdio server
+2025/12/02 15:08:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 15:08:11 starting BrowserNERD MCP stdio server
+2025/12/02 15:08:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 15:08:12 starting BrowserNERD MCP stdio server
+2025/12/02 19:52:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 19:52:02 starting BrowserNERD MCP stdio server
+2025/12/02 19:52:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/02 19:52:02 starting BrowserNERD MCP stdio server
+2025/12/03 21:32:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/03 21:32:37 starting BrowserNERD MCP stdio server
+2025/12/03 21:32:44 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/03 21:32:44 starting BrowserNERD MCP stdio server
+2025/12/03 21:33:14 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/03 21:33:14 starting BrowserNERD MCP stdio server
+2025/12/03 21:33:14 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/03 21:33:14 starting BrowserNERD MCP stdio server
+2025/12/03 21:34:19 Browser connected at ws://127.0.0.1:9224/devtools/browser/119b4d4e-cc61-48fe-9739-d8637fb70ca3
+2025/12/04 11:04:56 Browser shutdown complete
+2025/12/04 11:05:01 Browser connected at ws://127.0.0.1:49329/devtools/browser/8c64a48c-51f1-4317-92ce-2bf7362d7dab
+2025/12/04 12:00:53 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 12:00:53 starting BrowserNERD MCP stdio server
+2025/12/04 12:21:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 12:21:48 starting BrowserNERD MCP stdio server
+2025/12/04 12:21:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 12:21:48 starting BrowserNERD MCP stdio server
+2025/12/04 13:23:31 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 13:23:31 starting BrowserNERD MCP stdio server
+2025/12/04 13:23:31 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 13:23:31 starting BrowserNERD MCP stdio server
+2025/12/04 13:30:35 Browser connected at ws://127.0.0.1:58718/devtools/browser/bb4b3427-d28f-43d3-8182-24e00fd9e3a9
+2025/12/04 13:31:14 Browser shutdown complete
+2025/12/04 13:31:48 Browser connected at ws://127.0.0.1:64567/devtools/browser/879cd4be-dc51-4694-b8d4-7f04d13c1345
+2025/12/04 13:35:48 Browser shutdown complete
+2025/12/04 13:46:27 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 13:46:27 starting BrowserNERD MCP stdio server
+2025/12/04 13:46:27 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 13:46:27 starting BrowserNERD MCP stdio server
+2025/12/04 13:46:33 Browser connected at ws://127.0.0.1:56279/devtools/browser/5defca03-e7b8-4489-801b-6e9f3e363a5f
+2025/12/04 13:49:51 Browser shutdown complete
+2025/12/04 13:50:21 Browser connected at ws://127.0.0.1:65129/devtools/browser/20d58b7f-4dfc-4cf8-a1cd-685291e662e5
+2025/12/04 14:57:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 14:57:11 starting BrowserNERD MCP stdio server
+2025/12/04 14:57:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 14:57:11 starting BrowserNERD MCP stdio server
+2025/12/04 15:06:20 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 15:06:20 starting BrowserNERD MCP stdio server
+2025/12/04 15:06:20 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 15:06:20 starting BrowserNERD MCP stdio server
+2025/12/04 15:49:24 Browser connected at ws://127.0.0.1:9224/devtools/browser/78d69bdb-664c-4271-8e72-4f4732eebd29
+2025/12/04 15:52:30 Browser shutdown complete
+2025/12/04 15:57:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 15:57:11 starting BrowserNERD MCP stdio server
+2025/12/04 15:57:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 15:57:11 starting BrowserNERD MCP stdio server
+2025/12/04 16:28:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 16:28:50 starting BrowserNERD MCP stdio server
+2025/12/04 16:28:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 16:28:50 starting BrowserNERD MCP stdio server
+2025/12/04 17:12:51 Browser connected at ws://127.0.0.1:9224/devtools/browser/75475257-1ff1-45f9-bea8-09f10be34d3a
+2025/12/04 17:14:21 Browser shutdown complete
+2025/12/04 19:26:02 Browser connected at ws://127.0.0.1:9224/devtools/browser/139858ff-6374-4165-bf58-4d0f54345e06
+2025/12/04 19:30:19 Browser shutdown complete
+2025/12/04 19:33:32 Browser connected at ws://127.0.0.1:9224/devtools/browser/5f73ef37-9503-4053-894a-90d982c1e917
+2025/12/04 19:40:03 Browser shutdown complete
+2025/12/04 19:41:42 Browser connected at ws://127.0.0.1:9224/devtools/browser/e472b3da-278e-4e8a-951c-b1ec36a29a96
+2025/12/04 19:47:00 Browser shutdown complete
+2025/12/04 19:49:31 Browser connected at ws://127.0.0.1:9224/devtools/browser/d600e1d3-7c30-4820-9d49-3226471bbd34
+2025/12/04 20:16:33 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 20:16:33 starting BrowserNERD MCP stdio server
+2025/12/04 20:16:33 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 20:16:33 starting BrowserNERD MCP stdio server
+2025/12/04 20:17:00 Browser connected at ws://127.0.0.1:50109/devtools/browser/55b59aab-d1cb-48cd-9a70-a9cc4a0bac7c
+2025/12/04 20:17:18 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 20:17:54 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 20:17:54 starting BrowserNERD MCP stdio server
+2025/12/04 20:17:54 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/04 20:17:54 starting BrowserNERD MCP stdio server
+2025/12/04 20:18:24 Browser connected at ws://127.0.0.1:56972/devtools/browser/e0e6ebe1-2d3c-44c4-bb2e-a515bd1566bc
+2025/12/04 20:18:35 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 20:25:18 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 20:27:24 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 20:31:53 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 20:34:18 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 20:54:18 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 20:57:51 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 21:58:18 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 22:05:42 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 22:20:46 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 22:43:43 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 23:27:39 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/04 23:39:18 [session:4dac794e-3aab-4d95-96d6-39c93401613d] DOM capture error: {-32001 Session with given id not found. }
+2025/12/05 02:48:33 Browser shutdown complete
+2025/12/06 00:13:57 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/06 00:13:57 starting BrowserNERD MCP stdio server
+2025/12/07 01:24:20 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/07 01:24:20 starting BrowserNERD MCP stdio server
+2025/12/07 01:24:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/07 01:24:28 starting BrowserNERD MCP stdio server
+2025/12/11 14:19:04 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/11 14:19:04 starting BrowserNERD MCP stdio server
+2025/12/11 14:19:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/11 14:19:11 starting BrowserNERD MCP stdio server
+2025/12/11 14:19:45 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/11 14:19:45 starting BrowserNERD MCP stdio server
+2025/12/11 14:19:45 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/11 14:19:45 starting BrowserNERD MCP stdio server
+2025/12/11 14:21:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/11 14:21:15 starting BrowserNERD MCP stdio server
+2025/12/19 16:35:17 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/19 16:35:17 starting BrowserNERD MCP stdio server
+2025/12/20 00:19:13 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/20 00:19:13 starting BrowserNERD MCP stdio server
+2025/12/20 00:19:15 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/20 00:19:15 starting BrowserNERD MCP stdio server
+2025/12/21 17:08:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 17:08:11 starting BrowserNERD MCP stdio server
+2025/12/21 17:08:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 17:08:18 starting BrowserNERD MCP stdio server
+2025/12/21 17:08:41 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 17:08:41 starting BrowserNERD MCP stdio server
+2025/12/21 17:08:42 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 17:08:42 starting BrowserNERD MCP stdio server
+2025/12/21 17:10:21 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 17:10:21 starting BrowserNERD MCP stdio server
+2025/12/21 17:10:22 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 17:10:22 starting BrowserNERD MCP stdio server
+2025/12/21 19:08:26 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 19:08:26 starting BrowserNERD MCP stdio server
+2025/12/21 19:08:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/21 19:08:28 starting BrowserNERD MCP stdio server
+2025/12/22 00:22:42 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 00:22:42 starting BrowserNERD MCP stdio server
+2025/12/22 00:22:43 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 00:22:43 starting BrowserNERD MCP stdio server
+2025/12/22 00:24:36 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 00:24:36 starting BrowserNERD MCP stdio server
+2025/12/22 00:24:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 00:24:37 starting BrowserNERD MCP stdio server
+2025/12/22 00:26:01 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 00:26:01 starting BrowserNERD MCP stdio server
+2025/12/22 00:26:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 00:26:02 starting BrowserNERD MCP stdio server
+2025/12/22 02:22:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 02:22:39 starting BrowserNERD MCP stdio server
+2025/12/22 02:22:41 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/22 02:22:41 starting BrowserNERD MCP stdio server
+2025/12/23 00:54:42 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/23 00:54:42 starting BrowserNERD MCP stdio server
+2025/12/23 00:54:46 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/23 00:54:46 starting BrowserNERD MCP stdio server
+2025/12/23 19:28:19 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/23 19:28:19 starting BrowserNERD MCP stdio server
+2025/12/23 19:28:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/23 19:28:24 starting BrowserNERD MCP stdio server
+2025/12/23 19:50:12 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/23 19:50:12 starting BrowserNERD MCP stdio server
+2025/12/23 19:50:53 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/23 19:50:53 starting BrowserNERD MCP stdio server
+2025/12/23 19:50:58 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/23 19:50:58 starting BrowserNERD MCP stdio server
+2025/12/26 11:34:00 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 11:34:00 starting BrowserNERD MCP stdio server
+2025/12/26 11:34:17 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 11:34:17 starting BrowserNERD MCP stdio server
+2025/12/26 11:47:02 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 11:47:02 starting BrowserNERD MCP stdio server
+2025/12/26 11:47:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 11:47:18 starting BrowserNERD MCP stdio server
+2025/12/26 11:49:03 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 11:49:03 starting BrowserNERD MCP stdio server
+2025/12/26 11:49:22 Browser connected at ws://127.0.0.1:9224/devtools/browser/162de9af-eb39-4a2a-bc19-27553757750a
+2025/12/26 12:09:41 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 12:09:41 starting BrowserNERD MCP stdio server
+2025/12/26 12:10:00 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 12:10:00 starting BrowserNERD MCP stdio server
+2025/12/26 14:05:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 14:05:48 starting BrowserNERD MCP stdio server
+2025/12/26 14:06:11 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 14:06:11 starting BrowserNERD MCP stdio server
+2025/12/26 14:06:28 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 14:06:28 starting BrowserNERD MCP stdio server
+2025/12/26 14:06:52 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 14:06:52 starting BrowserNERD MCP stdio server
+2025/12/26 14:09:04 Browser connected at ws://127.0.0.1:51729/devtools/browser/55817013-24fd-45ac-8f28-e4c1f7ce1c08
+2025/12/26 14:34:27 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 14:34:27 starting BrowserNERD MCP stdio server
+2025/12/26 14:51:09 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 14:51:09 starting BrowserNERD MCP stdio server
+2025/12/26 16:33:33 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 16:33:33 starting BrowserNERD MCP stdio server
+2025/12/26 16:34:03 [session:6913aaaf-0187-4afd-ba90-07010a3dd585] DOM capture error: {-32001 Session with given id not found. }
+2025/12/26 16:38:00 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 16:38:00 starting BrowserNERD MCP stdio server
+2025/12/26 16:58:06 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 16:58:06 starting BrowserNERD MCP stdio server
+2025/12/26 16:58:58 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 16:58:58 starting BrowserNERD MCP stdio server
+2025/12/26 18:06:17 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 18:06:17 starting BrowserNERD MCP stdio server
+2025/12/26 18:06:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 18:06:18 starting BrowserNERD MCP stdio server
+2025/12/26 18:06:18 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 18:06:18 starting BrowserNERD MCP stdio server
+2025/12/26 18:06:24 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 18:06:24 starting BrowserNERD MCP stdio server
+2025/12/26 18:06:34 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 18:06:34 starting BrowserNERD MCP stdio server
+2025/12/26 18:06:35 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 18:06:35 starting BrowserNERD MCP stdio server
+2025/12/26 18:07:29 Browser connected at ws://127.0.0.1:59929/devtools/browser/f431d261-8e0d-470c-8cf3-f54bd8b7cbee
+2025/12/26 18:15:53 Browser shutdown complete
+2025/12/26 18:22:39 Browser connected at ws://127.0.0.1:58509/devtools/browser/0bc04f48-3c28-4963-b44b-157f2b093897
+2025/12/26 19:35:34 Browser shutdown complete
+2025/12/26 23:20:26 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 23:20:26 starting BrowserNERD MCP stdio server
+2025/12/26 23:20:29 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 23:20:29 starting BrowserNERD MCP stdio server
+2025/12/26 23:21:48 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 23:21:48 starting BrowserNERD MCP stdio server
+2025/12/26 23:21:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 23:21:50 starting BrowserNERD MCP stdio server
+2025/12/26 23:39:40 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 23:39:40 starting BrowserNERD MCP stdio server
+2025/12/26 23:39:42 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/26 23:39:42 starting BrowserNERD MCP stdio server
+2025/12/27 00:06:08 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/27 00:06:08 starting BrowserNERD MCP stdio server
+2025/12/27 00:06:10 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/27 00:06:10 starting BrowserNERD MCP stdio server
+2025/12/27 02:29:20 Browser connected at ws://127.0.0.1:58474/devtools/browser/a8da3a79-064e-4c86-aae9-3fc8870954c3
+2025/12/27 10:02:22 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/27 10:02:22 starting BrowserNERD MCP stdio server
+2025/12/27 12:59:53 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/27 12:59:53 starting BrowserNERD MCP stdio server
+2025/12/27 13:00:27 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/27 13:00:27 starting BrowserNERD MCP stdio server
+2025/12/27 13:08:47 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/27 13:08:47 starting BrowserNERD MCP stdio server
+2025/12/27 13:08:51 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/27 13:08:51 starting BrowserNERD MCP stdio server
+2025/12/27 17:06:08 Browser connected at ws://127.0.0.1:50989/devtools/browser/a48e4f05-f06d-4055-8920-eab279d2120b
+2025/12/27 17:35:39 Browser shutdown complete
+2025/12/27 17:42:52 Browser connected at ws://127.0.0.1:56487/devtools/browser/ef75e007-4799-400e-b2c7-15a4d625588e
+2025/12/28 11:47:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 11:47:50 starting BrowserNERD MCP stdio server
+2025/12/28 11:47:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 11:47:50 starting BrowserNERD MCP stdio server
+2025/12/28 11:47:50 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 11:47:50 starting BrowserNERD MCP stdio server
+2025/12/28 11:47:58 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 11:47:58 starting BrowserNERD MCP stdio server
+2025/12/28 17:29:21 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:29:21 starting BrowserNERD MCP stdio server
+2025/12/28 17:29:21 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:29:21 starting BrowserNERD MCP stdio server
+2025/12/28 17:29:21 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:29:21 starting BrowserNERD MCP stdio server
+2025/12/28 17:29:29 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:29:29 starting BrowserNERD MCP stdio server
+2025/12/28 17:29:31 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:29:31 starting BrowserNERD MCP stdio server
+2025/12/28 17:29:33 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:29:33 starting BrowserNERD MCP stdio server
+2025/12/28 17:31:31 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:31:31 starting BrowserNERD MCP stdio server
+2025/12/28 17:31:33 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:31:33 starting BrowserNERD MCP stdio server
+2025/12/28 17:39:27 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:39:27 starting BrowserNERD MCP stdio server
+2025/12/28 17:59:37 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:59:37 starting BrowserNERD MCP stdio server
+2025/12/28 17:59:39 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 17:59:39 starting BrowserNERD MCP stdio server
+2025/12/28 18:04:06 browser auto-start disabled; use MCP tools to launch/attach later
+2025/12/28 18:04:06 starting BrowserNERD MCP stdio server
+2026/01/04 02:03:17 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/04 02:03:17 starting BrowserNERD MCP stdio server
+2026/01/04 02:03:19 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/04 02:03:19 starting BrowserNERD MCP stdio server
+2026/01/04 06:36:16 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/04 06:36:16 starting BrowserNERD MCP stdio server
+2026/01/04 06:36:19 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/04 06:36:19 starting BrowserNERD MCP stdio server
+2026/01/13 09:27:14 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/13 09:27:14 starting BrowserNERD MCP stdio server
+2026/01/13 09:27:17 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/13 09:27:17 starting BrowserNERD MCP stdio server
+2026/01/15 10:58:02 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/15 10:58:02 starting BrowserNERD MCP stdio server
+2026/01/15 11:16:08 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/15 11:16:08 starting BrowserNERD MCP stdio server
+2026/01/20 10:35:11 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/20 10:35:11 starting BrowserNERD MCP stdio server
+2026/01/20 10:35:18 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/20 10:35:18 starting BrowserNERD MCP stdio server
+2026/01/20 11:43:46 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/20 11:43:46 starting BrowserNERD MCP stdio server
+2026/01/20 14:26:56 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/20 14:26:56 starting BrowserNERD MCP stdio server
+2026/01/20 14:51:01 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/20 14:51:01 starting BrowserNERD MCP stdio server
+2026/01/20 15:28:28 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/20 15:28:28 starting BrowserNERD MCP stdio server
+2026/01/20 23:09:01 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/20 23:09:01 starting BrowserNERD MCP stdio server
+2026/01/21 22:54:29 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/21 22:54:29 starting BrowserNERD MCP stdio server
+2026/01/22 13:44:31 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/22 13:44:31 starting BrowserNERD MCP stdio server
+2026/01/22 16:04:09 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/22 16:04:09 starting BrowserNERD MCP stdio server
+2026/01/23 16:51:43 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/23 16:51:43 starting BrowserNERD MCP stdio server
+2026/01/24 12:32:20 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/24 12:32:20 starting BrowserNERD MCP stdio server
+2026/01/25 23:30:04 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/25 23:30:04 starting BrowserNERD MCP stdio server
+2026/01/25 23:30:05 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/25 23:30:05 starting BrowserNERD MCP stdio server
+2026/01/26 12:43:01 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/26 12:43:01 starting BrowserNERD MCP stdio server
+2026/01/27 02:58:57 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/27 02:58:57 starting BrowserNERD MCP stdio server
+2026/01/28 10:54:48 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 10:54:48 starting BrowserNERD MCP stdio server
+2026/01/28 11:36:47 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 11:36:47 starting BrowserNERD MCP stdio server
+2026/01/28 12:28:11 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 12:28:11 starting BrowserNERD MCP stdio server
+2026/01/28 12:28:12 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 12:28:12 starting BrowserNERD MCP stdio server
+2026/01/28 12:50:28 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 12:50:28 starting BrowserNERD MCP stdio server
+2026/01/28 12:51:03 Browser connected at ws://127.0.0.1:9224/devtools/browser/187ac7e7-9378-478a-8023-cfc4e5c07da5
+2026/01/28 15:01:15 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 15:01:15 starting BrowserNERD MCP stdio server
+2026/01/28 17:26:39 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 17:26:39 starting BrowserNERD MCP stdio server
+2026/01/28 17:26:43 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 17:26:43 starting BrowserNERD MCP stdio server
+2026/01/28 17:27:56 Browser connected at ws://127.0.0.1:9224/devtools/browser/5d195ab2-6915-40a2-a7a6-10435639e8fa
+2026/01/28 17:30:01 Browser shutdown complete
+2026/01/28 17:31:25 Browser connected at ws://127.0.0.1:9224/devtools/browser/bad08999-d689-49b2-9a33-d33fcebcb789
+2026/01/28 17:33:27 Browser shutdown complete
+2026/01/28 17:34:55 Browser connected at ws://127.0.0.1:9224/devtools/browser/0070e24e-82c7-417d-ae0b-65f9150c3842
+2026/01/28 18:17:18 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 18:17:18 starting BrowserNERD MCP stdio server
+2026/01/28 21:18:30 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 21:18:30 starting BrowserNERD MCP stdio server
+2026/01/28 21:18:31 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 21:18:31 starting BrowserNERD MCP stdio server
+2026/01/28 21:20:14 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 21:20:14 starting BrowserNERD MCP stdio server
+2026/01/28 21:22:24 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 21:22:24 starting BrowserNERD MCP stdio server
+2026/01/28 21:22:25 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/28 21:22:25 starting BrowserNERD MCP stdio server
+2026/01/29 10:47:52 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 10:47:52 starting BrowserNERD MCP stdio server
+2026/01/29 10:47:53 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 10:47:53 starting BrowserNERD MCP stdio server
+2026/01/29 10:48:27 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 10:48:27 starting BrowserNERD MCP stdio server
+2026/01/29 18:09:56 Browser connected at ws://127.0.0.1:9224/devtools/browser/127a607b-5961-4913-9a2a-ae1b5c232747
+2026/01/29 21:10:50 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:10:50 starting BrowserNERD MCP stdio server
+2026/01/29 21:10:54 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:10:54 starting BrowserNERD MCP stdio server
+2026/01/29 21:10:57 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:10:57 starting BrowserNERD MCP stdio server
+2026/01/29 21:10:58 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:10:58 starting BrowserNERD MCP stdio server
+2026/01/29 21:11:00 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:11:00 starting BrowserNERD MCP stdio server
+2026/01/29 21:11:02 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:11:02 starting BrowserNERD MCP stdio server
+2026/01/29 21:11:09 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:11:09 starting BrowserNERD MCP stdio server
+2026/01/29 21:11:20 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/29 21:11:20 starting BrowserNERD MCP stdio server
+2026/01/30 14:15:39 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:15:39 starting BrowserNERD MCP stdio server
+2026/01/30 14:15:41 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:15:41 starting BrowserNERD MCP stdio server
+2026/01/30 14:15:52 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:15:52 starting BrowserNERD MCP stdio server
+2026/01/30 14:15:53 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:15:53 starting BrowserNERD MCP stdio server
+2026/01/30 14:26:36 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:26:36 starting BrowserNERD MCP stdio server
+2026/01/30 14:26:38 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:26:38 starting BrowserNERD MCP stdio server
+2026/01/30 14:26:48 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:26:48 starting BrowserNERD MCP stdio server
+2026/01/30 14:26:50 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:26:50 starting BrowserNERD MCP stdio server
+2026/01/30 14:28:28 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:28:28 starting BrowserNERD MCP stdio server
+2026/01/30 14:28:29 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 14:28:29 starting BrowserNERD MCP stdio server
+2026/01/30 15:08:10 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 15:08:10 starting BrowserNERD MCP stdio server
+2026/01/30 18:19:24 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/30 18:19:24 starting BrowserNERD MCP stdio server
+2026/01/31 18:23:50 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/31 18:23:50 starting BrowserNERD MCP stdio server
+2026/01/31 22:18:50 Browser connected at ws://127.0.0.1:9224/devtools/browser/d14bd4a3-4d48-4445-9e7c-e0551f2e6d3b
+2026/01/31 22:20:14 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/31 22:20:14 starting BrowserNERD MCP stdio server
+2026/01/31 22:29:49 browser auto-start disabled; use MCP tools to launch/attach later
+2026/01/31 22:29:49 starting BrowserNERD MCP stdio server
