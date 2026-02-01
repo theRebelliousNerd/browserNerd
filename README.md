@@ -2,11 +2,12 @@
 
 **The token-efficient browser automation MCP server built for AI agents.**
 
-Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent structured, actionable browser state in **50-100x fewer tokens** than traditional approaches.
+Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent structured, actionable browser state in **50-100x fewer tokens** than traditional approaches - plus built-in causal reasoning, React extraction, and full-stack error correlation.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
+[![Tools](https://img.shields.io/badge/MCP_Tools-34-blue)](https://modelcontextprotocol.io)
 
 ---
 
@@ -38,75 +39,41 @@ Hacker News front page:
   - get-interactive-elements: 20 elements in ~450 tokens
 ```
 
-**What makes it different:**
+---
 
-- **Structured extraction** - Returns JSON with refs, labels, and actions - not HTML soup
+## Key Features
+
+### Token Efficiency
+- **Structured JSON output** - Refs, labels, and actions - not HTML soup
 - **Semantic grouping** - Navigation links grouped by page area (nav, sidebar, main, footer)
-- **Action-ready refs** - Every element has a `ref` you can pass directly to `interact`
-- **Mangle reasoning** - Logic programming engine for causal reasoning and assertions
-- **Session persistence** - Detached sessions survive restarts, fork for parallel testing
+- **Action-ready refs** - Every element has a `ref` for direct interaction
+- **Batch automation** - `execute-plan` runs multiple actions in one call
 
----
+### Dual Browser Modes
+- **Auto-launch** - BrowserNERD starts Chrome automatically via Rod
+- **Attach to existing** - Connect to your browser, preserve logins and cookies
 
-## Features
+### React Intelligence
+- **Fiber tree extraction** - Full React component hierarchy as Mangle facts
+- **Props and state** - Query component props and hook state
+- **DOM mapping** - Link Fiber nodes to DOM elements
 
-- **Ultra-Compact Output** - 50-100x fewer tokens than raw HTML
-- **Dual Browser Modes** - Auto-launch Chrome OR attach to existing browser instances
-- **MCP Protocol** - Works with Claude Desktop, Claude Code, Cursor, and any MCP client
-- **Session Management** - Create, attach, fork, and persist browser sessions
-- **React Fiber Extraction** - Reify React component trees as queryable facts
-- **DOM Snapshotting** - Capture and query DOM state efficiently
-- **CDP Event Streaming** - Network, console, and navigation events as Mangle facts
-- **Logic Assertions** - Mangle-based causal reasoning for intelligent test assertions
+### Mangle Reasoning Engine
+- **60+ built-in predicates** - DOM, network, React, console, toasts
+- **20+ causal reasoning rules** - Automatic root cause analysis
+- **Custom rule submission** - Define your own derived facts
+- **Temporal queries** - Time-windowed fact analysis
 
----
+### Full-Stack Error Correlation
+- **Console error tracking** - With causal API correlation
+- **Toast/notification detection** - Instant error overlay capture
+- **Docker log integration** - Correlate browser errors with backend containers
+- **Root cause analysis** - Automatic error chain detection
 
-## Browser Connection Modes
-
-BrowserNERD supports **two ways** to connect to Chrome:
-
-### Mode 1: Auto-Launch (Zero Config)
-
-BrowserNERD automatically launches and manages Chrome for you:
-
-```
-launch-browser  ->  Chrome starts with CDP enabled
-create-session  ->  New tab opens
-navigate-url    ->  Automate away
-shutdown-browser -> Clean exit
-```
-
-No manual Chrome setup required. Perfect for automation scripts and CI/CD.
-
-### Mode 2: Attach to Existing Browser
-
-Connect to a Chrome instance you're already using - preserve your logged-in sessions, cookies, and extensions:
-
-```bash
-# Start Chrome with remote debugging (one-time setup)
-# Windows:
-chrome.exe --remote-debugging-port=9222
-
-# macOS:
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-
-# Linux:
-google-chrome --remote-debugging-port=9222
-```
-
-Then configure `config.yaml`:
-
-```yaml
-browser:
-  auto_start: false
-  remote_debugging_url: "ws://localhost:9222"
-```
-
-**Why attach mode?**
-- Use your existing login sessions (no re-auth needed)
-- Keep your extensions active
-- Debug alongside your normal browsing
-- Perfect for development and testing
+### Session Management
+- **Persistent sessions** - Survive server restarts
+- **Fork with auth** - Clone sessions preserving login state
+- **Multi-session** - Run parallel automation flows
 
 ---
 
@@ -149,23 +116,124 @@ Edit `~/.config/claude/mcp.json` (Linux/macOS) or `%APPDATA%\Claude\mcp.json` (W
 
 ---
 
+## Browser Connection Modes
+
+### Mode 1: Auto-Launch (Zero Config)
+
+BrowserNERD automatically launches and manages Chrome via Rod:
+
+```
+launch-browser  ->  Chrome starts with CDP enabled
+create-session  ->  New tab opens
+navigate-url    ->  Automate away
+shutdown-browser -> Clean exit
+```
+
+### Mode 2: Attach to Existing Browser
+
+Connect to a Chrome instance you're already using:
+
+```bash
+# Start Chrome with remote debugging
+chrome --remote-debugging-port=9222
+```
+
+Configure `config.yaml`:
+```yaml
+browser:
+  auto_start: false
+  remote_debugging_url: "ws://localhost:9222"
+```
+
+**Benefits:** Preserve logins, cookies, extensions. Debug alongside normal browsing.
+
+---
+
+## Complete Tool Reference (34 Tools)
+
+### Session Management (8 tools)
+
+| Tool | Description |
+|------|-------------|
+| `launch-browser` | Start Chrome with CDP enabled (idempotent) |
+| `shutdown-browser` | Close Chrome and clean up all sessions |
+| `list-sessions` | List all active browser sessions |
+| `create-session` | Open new tab with optional starting URL |
+| `attach-session` | Attach to existing CDP target by ID |
+| `fork-session` | Clone session preserving auth state (cookies, localStorage) |
+| `reify-react` | Extract React Fiber tree as Mangle facts |
+| `snapshot-dom` | Capture DOM structure as Mangle facts |
+
+### Navigation & State (4 tools)
+
+| Tool | Tokens | Description |
+|------|--------|-------------|
+| `get-page-state` | ~50 | URL, title, loading state, scroll position, active element |
+| `get-navigation-links` | ~150-400 | All links grouped by page area (nav/side/main/footer) |
+| `get-interactive-elements` | ~300-600 | Buttons, inputs, links, selects with action refs |
+| `navigate-url` | ~50 | Navigate with wait options (load/networkidle/none) |
+
+### Browser Interaction (7 tools)
+
+| Tool | Description |
+|------|-------------|
+| `interact` | Click, type, select, toggle, clear elements by ref |
+| `fill-form` | Fill multiple form fields in one call (token efficient) |
+| `press-key` | Send keyboard input (Enter, Tab, Escape, characters) |
+| `browser-history` | Navigate back, forward, or reload |
+| `discover-hidden-content` | Find elements hidden by CSS/JS |
+| `screenshot` | Capture page/element to file (no base64 bloat) |
+| `evaluate-js` | Execute JavaScript in browser context |
+
+### Mangle-Driven Automation (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `execute-plan` | Run batch actions from Mangle facts (MASSIVE token savings) |
+| `wait-for-condition` | Wait until Mangle predicate matches (with wildcards) |
+| `await-stable-state` | Block until network idle AND DOM settled |
+| `diagnose-page` | One-shot page health check via Mangle queries |
+
+### Mangle Fact Operations (10 tools)
+
+| Tool | Description |
+|------|-------------|
+| `push-facts` | Inject facts into the knowledge base |
+| `read-facts` | View recent facts in the buffer |
+| `query-facts` | Run Mangle queries with variable binding |
+| `query-temporal` | Query facts in a time window |
+| `submit-rule` | Add derivation rules at runtime |
+| `evaluate-rule` | Check if a rule matches right now |
+| `subscribe-rule` | Push-based notification when rule triggers |
+| `await-fact` | Wait for a specific fact to appear |
+| `await-conditions` | Wait for multiple facts (AND logic) |
+
+### Diagnostics (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `get-console-errors` | Console errors with root cause analysis + Docker correlation |
+| `get-toast-notifications` | Detect toast/snackbar overlays with API correlation |
+
+---
+
 ## Token Efficiency in Action
 
-### Traditional Approach (Playwright/Puppeteer MCP)
+### Traditional Approach
 ```
-User: "Click the login button on this page"
+User: "Click the login button"
 
 1. Get page HTML: 45,000 tokens
-2. AI parses HTML to find button: (cognitive overhead)
+2. AI parses HTML to find button
 3. Execute click with selector
 4. Get updated HTML: 45,000 tokens
 
-Total: ~90,000 tokens for one click
+Total: ~90,000 tokens
 ```
 
 ### BrowserNERD Approach
 ```
-User: "Click the login button on this page"
+User: "Click the login button"
 
 1. get-interactive-elements (filter: buttons): 400 tokens
    Returns: [{ref: "login-btn", label: "Login", action: "click"}]
@@ -173,51 +241,167 @@ User: "Click the login button on this page"
 2. interact(ref: "login-btn", action: "click"): 50 tokens
 
 3. get-page-state: 50 tokens
-   Returns: {url: "/dashboard", title: "Dashboard"}
 
-Total: ~500 tokens for one click
+Total: ~500 tokens (180x more efficient)
 ```
 
-**That's 180x more efficient.**
+### execute-plan: Ultimate Token Efficiency
+
+Instead of individual tool calls:
+```
+1. type email: 50 tokens
+2. type password: 50 tokens
+3. click submit: 50 tokens
+4. wait for navigation: 50 tokens
+Total: 200 tokens + 4 round trips
+```
+
+With execute-plan:
+```
+execute-plan({
+  actions: [
+    {type: "type", ref: "email", value: "user@test.com"},
+    {type: "type", ref: "password", value: "secret"},
+    {type: "click", ref: "submit"},
+    {type: "wait", value: "1000"}
+  ]
+})
+Total: ~100 tokens, 1 round trip
+```
 
 ---
 
-## MCP Tools Reference
+## Mangle: Logic Programming for Browser State
 
-### Navigation & State
+BrowserNERD uses [Google's Mangle](https://github.com/google/mangle) for declarative reasoning.
 
-| Tool | Tokens | Description |
-|------|--------|-------------|
-| `get-page-state` | ~50 | URL, title, loading state, scroll position |
-| `get-navigation-links` | ~150-400 | All links grouped by page area |
-| `get-interactive-elements` | ~300-600 | Buttons, inputs, links with action refs |
-| `navigate-url` | ~50 | Navigate and wait for load |
+### Built-in Predicates (60+)
 
-### Interaction
+**React Fiber:**
+```mangle
+react_component(FiberId, ComponentName, ParentId).
+react_prop(FiberId, Key, Value).
+react_state(FiberId, HookIndex, Value).
+```
 
-| Tool | Tokens | Description |
-|------|--------|-------------|
-| `interact` | ~50 | Click, type, select, toggle elements |
-| `fill-form` | ~100 | Fill multiple form fields at once |
-| `screenshot` | ~100 | Capture to file (no base64 bloat) |
+**DOM & Navigation:**
+```mangle
+dom_node(NodeId, Tag, Text, ParentId).
+dom_attr(NodeId, Key, Value).
+navigation_event(SessionId, Url, Timestamp).
+current_url(SessionId, Url).
+```
 
-### Sessions
+**Network (HAR-like):**
+```mangle
+net_request(Id, Method, Url, InitiatorId, StartTime).
+net_response(Id, Status, Latency, Duration).
+net_header(Id, Kind, Key, Value).
+```
 
-| Tool | Tokens | Description |
-|------|--------|-------------|
-| `launch-browser` | ~50 | Start Chrome with CDP |
-| `create-session` | ~100 | New tab with optional URL |
-| `fork-session` | ~100 | Clone session with auth state |
-| `list-sessions` | ~50-200 | All active sessions |
+**Interactive Elements:**
+```mangle
+interactive(Ref, Type, Label, Action).
+nav_link(Ref, Href, Area, Internal).
+user_click(Ref, Timestamp).
+user_type(Ref, Value, Timestamp).
+```
 
-### Mangle Reasoning
+**Diagnostics:**
+```mangle
+console_event(Level, Message, Timestamp).
+toast_notification(Text, Level, Source, Timestamp).
+docker_log(Container, Level, Tag, Message, Timestamp).
+```
 
-| Tool | Tokens | Description |
-|------|--------|-------------|
-| `push-facts` | ~50 | Add facts to knowledge base |
-| `query-facts` | ~100-500 | Run Mangle queries |
-| `await-fact` | ~50 | Wait for condition |
-| `reify-react` | ~200-1000 | Extract React component tree |
+### Built-in Causal Reasoning Rules (20+)
+
+**API-Triggered Crash Detection:**
+```mangle
+caused_by(ConsoleErr, ReqId) :-
+    console_event("error", ConsoleErr, TError),
+    net_response(ReqId, Status, _, _),
+    Status >= 400,
+    TNet < TError,
+    fn:minus(TError, TNet) < 100.
+```
+
+**Slow API Detection (>1 second):**
+```mangle
+slow_api(ReqId, Url, Duration) :-
+    net_request(ReqId, _, Url, _, _),
+    net_response(ReqId, _, _, Duration),
+    Duration > 1000.
+```
+
+**Full-Stack Error Correlation:**
+```mangle
+full_stack_error(ConsoleMsg, ReqId, Url, BackendMsg) :-
+    caused_by(ConsoleMsg, ReqId),
+    net_request(ReqId, _, Url, _, _),
+    api_backend_correlation(ReqId, Url, _, BackendMsg, _).
+```
+
+**Universal Login Detection:**
+```mangle
+login_succeeded(SessionId) :-
+    url_changed_after_submit(SessionId, _, _, TNav),
+    form_submitted(SessionId, _, TSubmit),
+    successful_post(_, _, TPost),
+    fn:minus(TNav, TSubmit) < 5000.
+```
+
+### Custom Rules
+
+Submit rules at runtime:
+```
+submit-rule("ready() :- navigation_event(_, \"/dashboard\", _), dom_text(_, \"Welcome\").")
+wait-for-condition(predicate: "ready", timeout_ms: 10000)
+```
+
+---
+
+## Docker Log Integration
+
+Enable full-stack error correlation by connecting to backend containers:
+
+```yaml
+docker:
+  enabled: true
+  containers:
+    - symbiogen-backend
+    - symbiogen-frontend
+  log_window: 60s
+```
+
+**What it does:**
+- Queries backend container logs when errors occur
+- Correlates browser API failures with backend exceptions
+- Provides full chain: Browser console -> Failed API -> Backend error
+- Analyzes container health status
+
+**Example output from get-console-errors:**
+```json
+{
+  "errors": [{
+    "message": "TypeError: Cannot read property 'map' of undefined",
+    "caused_by": {
+      "request_id": "req-123",
+      "url": "/api/users",
+      "status": 500
+    }
+  }],
+  "backend_correlations": [{
+    "request_id": "req-123",
+    "container": "symbiogen-backend",
+    "backend_error": "KeyError: 'users'",
+    "time_delta_ms": 45
+  }],
+  "container_health": {
+    "symbiogen-backend": {"status": "degraded", "error_count": 3}
+  }
+}
+```
 
 ---
 
@@ -239,6 +423,11 @@ mangle:
   enable: true
   schema_path: "schemas/browser.mg"
   fact_buffer_limit: 10000
+
+docker:
+  enabled: false             # Enable for full-stack correlation
+  containers: []             # Container names to monitor
+  log_window: 60s            # How far back to query logs
 ```
 
 ---
@@ -263,25 +452,21 @@ GOOS=linux GOARCH=amd64 go build -o bin/browsernerd-linux-amd64 ./cmd/server
 
 ---
 
-## Mangle: Logic Programming for Browser State
+## Comparison with Alternatives
 
-BrowserNERD uses [Google's Mangle](https://github.com/google/mangle) for declarative reasoning about browser state:
-
-```mangle
-# Facts emitted by browser tools
-nav_link(Ref, Href, Area, Internal).
-interactive(Ref, Type, Label, Action).
-react_component(SessionId, ComponentId, Name, ParentId).
-dom_node(SessionId, NodeId, Tag, ParentId).
-
-# Query: Find all internal navigation links
-internal_nav(Ref, Href) :- nav_link(Ref, Href, _, true).
-
-# Query: Find React components with specific props
-auth_component(Id) :-
-  react_component(_, Id, "AuthProvider", _),
-  react_prop(Id, "authenticated", "true").
-```
+| Feature | BrowserNERD | Playwright MCP | Puppeteer MCP | Browser-Use |
+|---------|-------------|----------------|---------------|-------------|
+| Token efficiency | 50-100x better | Baseline | Baseline | ~2-3x better |
+| Structured output | JSON with refs | Raw HTML/selectors | Raw HTML | JSON |
+| Browser modes | Launch OR attach | Launch only | Launch only | Launch only |
+| Session persistence | Yes (survives restart) | No | No | No |
+| React extraction | Native Fiber | Manual | Manual | No |
+| Mangle reasoning | 60+ predicates | None | None | None |
+| Causal analysis | 20+ built-in rules | None | None | None |
+| Docker correlation | Full-stack | None | None | None |
+| Toast detection | Native | Manual | Manual | No |
+| Batch automation | execute-plan | Individual calls | Individual calls | Limited |
+| Fork with auth | Yes | No | No | No |
 
 ---
 
@@ -292,12 +477,12 @@ browserNerd/
 +-- mcp-server/                 # Go MCP server
 |   +-- cmd/server/             # Entry point
 |   +-- internal/
-|   |   +-- browser/            # Rod session management
-|   |   +-- mcp/                # MCP tools
-|   |   +-- mangle/             # Fact engine
-|   |   +-- config/             # Configuration
-|   +-- schemas/                # Mangle schemas
-+-- docs/                       # Documentation
+|   |   +-- browser/            # Rod session management, CDP events
+|   |   +-- mcp/                # MCP server, 34 tool implementations
+|   |   +-- mangle/             # Fact engine, rule evaluation
+|   |   +-- config/             # YAML configuration
+|   |   +-- docker/             # Container log integration
+|   +-- schemas/                # Mangle predicates and rules
 +-- LICENSE                     # Apache 2.0
 +-- NOTICE                      # Attribution
 ```
@@ -309,20 +494,6 @@ browserNerd/
 
 ---
 
-## Comparison with Alternatives
-
-| Feature | BrowserNERD | Playwright MCP | Puppeteer MCP | Browser-Use |
-|---------|-------------|----------------|---------------|-------------|
-| Token efficiency | 50-100x better | Baseline | Baseline | ~2-3x better |
-| Structured output | JSON with refs | Raw HTML/selectors | Raw HTML | JSON |
-| Browser modes | Launch OR attach | Launch only | Launch only | Launch only |
-| Session persistence | Yes (survives restart) | No | No | No |
-| Logic reasoning | Mangle built-in | None | None | None |
-| React extraction | Native | Manual | Manual | No |
-| Multi-session | Fork with auth | New session | New session | Limited |
-
----
-
 ## Development
 
 ```bash
@@ -331,6 +502,9 @@ cd mcp-server && go test ./...
 
 # Verbose logging
 ./bin/browsernerd --config config.yaml --verbose
+
+# SSE mode (HTTP clients)
+./bin/browsernerd --config config.yaml --sse-port 8080
 ```
 
 ---
