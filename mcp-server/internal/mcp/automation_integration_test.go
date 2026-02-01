@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
-	"browsernerd-mcp-server/internal/config"
-	"browsernerd-mcp-server/internal/mangle"
 )
 
 // TestIntegrationExecutePlan tests multi-step automation with a real browser
@@ -52,7 +50,7 @@ func TestIntegrationExecutePlan(t *testing.T) {
 </body>
 </html>`
 
-	session, err := sessions.CreateSession(ctx, "about:blank", nil)
+	session, err := sessions.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -241,7 +239,7 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 </body>
 </html>`
 
-	session, err := sessions.CreateSession(ctx, "about:blank", nil)
+	session, err := sessions.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -430,7 +428,8 @@ func TestIntegrationSessionTools(t *testing.T) {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
-		session := result.(*browser.Session)
+		resultMap := result.(map[string]interface{})
+		session := resultMap["session"].(*browser.Session)
 		if session.ID == "" {
 			t.Error("expected non-empty session ID")
 		}
@@ -439,31 +438,27 @@ func TestIntegrationSessionTools(t *testing.T) {
 		}
 	})
 
-	t.Run("CreateSessionTool with metadata", func(t *testing.T) {
+	t.Run("CreateSessionTool with URL", func(t *testing.T) {
 		tool := &CreateSessionTool{sessions: sessions}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"url":   "https://example.com",
-			"name":  "test-session",
-			"notes": "Integration test session",
+			"url": "about:blank",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
-		session := result.(*browser.Session)
-		if session.Name != "test-session" {
-			t.Errorf("expected name 'test-session', got %q", session.Name)
-		}
-		if session.Notes != "Integration test session" {
-			t.Errorf("expected notes 'Integration test session', got %q", session.Notes)
+		resultMap := result.(map[string]interface{})
+		session := resultMap["session"].(*browser.Session)
+		if session.ID == "" {
+			t.Error("expected non-empty session ID")
 		}
 	})
 
 	var testSessionID string
 
 	t.Run("Create session for fork test", func(t *testing.T) {
-		session, err := sessions.CreateSession(ctx, "about:blank", nil)
+		session, err := sessions.CreateSession(ctx, "about:blank")
 		if err != nil {
 			t.Fatalf("CreateSession failed: %v", err)
 		}
@@ -500,12 +495,12 @@ func TestIntegrationSessionTools(t *testing.T) {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
-		snapshot := result.(*browser.DOMSnapshot)
-		if snapshot.HTML == "" {
-			t.Error("expected non-empty HTML in snapshot")
+		resultMap := result.(map[string]interface{})
+		if resultMap["session_id"] != testSessionID {
+			t.Errorf("expected session_id %q, got %q", testSessionID, resultMap["session_id"])
 		}
-		if snapshot.URL == "" {
-			t.Error("expected non-empty URL in snapshot")
+		if resultMap["status"] != "captured" {
+			t.Errorf("expected status 'captured', got %q", resultMap["status"])
 		}
 	})
 

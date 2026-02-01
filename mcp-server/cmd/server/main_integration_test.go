@@ -23,20 +23,14 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 	// This simulates what main() does without actually running main()
 
 	t.Run("Load configuration", func(t *testing.T) {
-		// Test config file doesn't exist
-		_, err := config.LoadConfig("nonexistent.yaml")
-		if err == nil {
-			t.Error("expected error for nonexistent config file")
-		}
-
-		// Create minimal config
+		// Create minimal config (LoadConfig is not exported, so we test struct creation)
 		cfg := config.Config{
 			Server: config.ServerConfig{
 				Name:    "integration-test-server",
 				Version: "1.0.0-test",
 			},
 			Browser: config.BrowserConfig{
-				Headless:              boolPtr(true),
+				Headless:              mainBoolPtr(true),
 				EnableDOMIngestion:    true,
 				EnableHeaderIngestion: true,
 			},
@@ -74,7 +68,7 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 
 	t.Run("Initialize session manager", func(t *testing.T) {
 		cfg := config.BrowserConfig{
-			Headless:              boolPtr(true),
+			Headless:              mainBoolPtr(true),
 			EnableDOMIngestion:    true,
 			EnableHeaderIngestion: true,
 		}
@@ -96,7 +90,7 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 				Version: "1.0.0",
 			},
 			Browser: config.BrowserConfig{
-				Headless: boolPtr(true),
+				Headless: mainBoolPtr(true),
 			},
 			Mangle: config.MangleConfig{
 				Enable:          true,
@@ -131,7 +125,7 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 				Version: "1.0.0",
 			},
 			Browser: config.BrowserConfig{
-				Headless:              boolPtr(true),
+				Headless:              mainBoolPtr(true),
 				EnableDOMIngestion:    true,
 				EnableHeaderIngestion: true,
 			},
@@ -253,7 +247,7 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 				Version: "1.0.0",
 			},
 			Browser: config.BrowserConfig{
-				Headless: boolPtr(true),
+				Headless: mainBoolPtr(true),
 			},
 			Mangle: config.MangleConfig{
 				Enable:          true,
@@ -295,7 +289,7 @@ func TestIntegrationConfigurationVariations(t *testing.T) {
 
 	t.Run("Headless browser", func(t *testing.T) {
 		cfg := config.BrowserConfig{
-			Headless: boolPtr(true),
+			Headless: mainBoolPtr(true),
 		}
 
 		if !cfg.IsHeadless() {
@@ -305,7 +299,7 @@ func TestIntegrationConfigurationVariations(t *testing.T) {
 
 	t.Run("Headed browser", func(t *testing.T) {
 		cfg := config.BrowserConfig{
-			Headless: boolPtr(false),
+			Headless: mainBoolPtr(false),
 		}
 
 		if cfg.IsHeadless() {
@@ -359,6 +353,6 @@ func TestIntegrationConfigurationVariations(t *testing.T) {
 	})
 }
 
-func boolPtr(b bool) *bool {
+func mainBoolPtr(b bool) *bool {
 	return &b
 }

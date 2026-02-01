@@ -26,7 +26,7 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a test session
-	session, err := sessions.CreateSession(ctx, "about:blank", nil)
+	session, err := sessions.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	})
 
 	t.Run("DiscoverHiddenContentTool", func(t *testing.T) {
-		tool := &DiscoverHiddenContentTool{sessions: sessions, engine: engine}
+		tool := &DiscoverHiddenContentTool{sessions: sessions}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id": sessionID,
@@ -371,7 +371,7 @@ func TestIntegrationInteractionTools(t *testing.T) {
 </body>
 </html>`
 
-	session, err := sessions.CreateSession(ctx, "about:blank", nil)
+	session, err := sessions.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -557,7 +557,7 @@ func setupIntegrationConfig() config.Config {
 			Version: "1.0.0",
 		},
 		Browser: config.BrowserConfig{
-			Headless:              boolPtr(true),
+			Headless:              navBoolPtr(true),
 			EnableDOMIngestion:    true,
 			EnableHeaderIngestion: true,
 			EventThrottleMs:       50,
@@ -593,6 +593,6 @@ func setupIntegrationBrowser(t *testing.T, cfg config.Config, engine *mangle.Eng
 	return sessions
 }
 
-func boolPtr(b bool) *bool {
+func navBoolPtr(b bool) *bool {
 	return &b
 }

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
-	"browsernerd-mcp-server/internal/config"
 )
 
 // TestIntegrationFindElementByRef tests element finding strategies with a real browser
@@ -39,7 +38,7 @@ func TestIntegrationFindElementByRef(t *testing.T) {
 </body>
 </html>`
 
-	session, err := sessions.CreateSession(ctx, "about:blank", nil)
+	session, err := sessions.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -177,7 +176,7 @@ func TestIntegrationFindElementWithRegistry(t *testing.T) {
 </body>
 </html>`
 
-	session, err := sessions.CreateSession(ctx, "about:blank", nil)
+	session, err := sessions.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -342,7 +341,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 </body>
 </html>`
 
-	session, err := sessions.CreateSession(ctx, "about:blank", nil)
+	session, err := sessions.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
@@ -367,7 +366,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 	}
 
 	t.Run("validateFingerprint with nil fingerprint", func(t *testing.T) {
-		result := validateFingerprint(nil, elem)
+		result := validateFingerprint(elem, nil)
 		if !result.Valid {
 			t.Error("expected valid for nil fingerprint")
 		}
@@ -397,7 +396,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 			GeneratedAt: time.Now(),
 		}
 
-		result := validateFingerprint(fp, elem)
+		result := validateFingerprint(elem, fp)
 		if !result.Valid {
 			t.Errorf("expected valid fingerprint, got changes: %v", result.Changes)
 		}
@@ -415,7 +414,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 			GeneratedAt: time.Now(),
 		}
 
-		result := validateFingerprint(fp, elem)
+		result := validateFingerprint(elem, fp)
 		if result.Score == 1.0 {
 			t.Error("expected score < 1.0 for changed text")
 		}
@@ -433,7 +432,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 			GeneratedAt: time.Now(),
 		}
 
-		result := validateFingerprint(fp, elem)
+		result := validateFingerprint(elem, fp)
 		if result.Score == 1.0 {
 			t.Error("expected score < 1.0 for changed ID")
 		}
@@ -457,7 +456,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 			GeneratedAt: time.Now(),
 		}
 
-		result := validateFingerprint(fp, elem)
+		result := validateFingerprint(elem, fp)
 		if result.Score == 1.0 {
 			t.Error("expected score < 1.0 for changed classes")
 		}
@@ -477,7 +476,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 			GeneratedAt: time.Now(),
 		}
 
-		result := validateFingerprint(fp, elem)
+		result := validateFingerprint(elem, fp)
 		// Position change shouldn't invalidate, but should lower score slightly
 		if result.Score == 1.0 {
 			t.Log("Position change detected, score should be < 1.0")
