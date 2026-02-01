@@ -74,6 +74,10 @@ func (t *ExecutePlanTool) InputSchema() map[string]interface{} {
 					"type": "object",
 				},
 			},
+			"predicate": map[string]interface{}{
+				"type":        "string",
+				"description": "Mangle predicate to query for action plan (alternative to 'actions' array)",
+			},
 			"stop_on_error": map[string]interface{}{
 				"type":        "boolean",
 				"description": "Stop execution on first error (default: true)",
@@ -866,6 +870,10 @@ func (t *GetToastNotificationsTool) InputSchema() map[string]interface{} {
 				"type":        "boolean",
 				"description": "Include API failure correlations for error toasts (default: true)",
 			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum number of toasts to return (default: all)",
+			},
 		},
 	}
 }
@@ -876,6 +884,7 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 	}
 	sinceMs := int64(getIntArg(args, "since_ms", 0))
 	includeCorrelations := getBoolArg(args, "include_correlations", true)
+	limit := getIntArg(args, "limit", 0)
 
 	// Collect all toast notifications
 	toastFacts := t.engine.FactsByPredicate("toast_notification")
@@ -949,6 +958,11 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 		}
 
 		toasts = append(toasts, toastEntry)
+	}
+
+	// Apply limit if specified
+	if limit > 0 && len(toasts) > limit {
+		toasts = toasts[:limit]
 	}
 
 	// Find repeated error messages
