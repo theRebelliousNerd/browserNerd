@@ -612,3 +612,45 @@ func TestElementRegistry(t *testing.T) {
 		}
 	})
 }
+
+func TestLooksLikeCSSSelector(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		// Valid CSS tag.class selectors (should NOT be escaped)
+		{"tag with single class", "button.primary", true},
+		{"tag with multiple classes", "button.inline-flex.items-center", true},
+		{"tag with underscore class", "div.my_class", true},
+		{"tag with numeric class", "span.col-12", true},
+		{"just classes", ".btn.primary", true},
+
+		// Invalid patterns (should be escaped)
+		{"simple tag", "button", false},
+		{"no dots", "submit-btn", false},
+		{"ID selector", "#myButton", false},
+		{"empty string", "", false},
+		{"attribute selector", "[data-testid=foo]", false},
+		{"uppercase tag", "BUTTON.class", false},
+		{"special char in class", "div.class@name", false},
+		{"trailing dot", "button.", false},
+		{"double dot", "button..class", false},
+		{"space in selector", "button.my class", false},
+
+		// Edge cases
+		{"a tag with class", "a.link", true},
+		{"input with classes", "input.form-control.is-valid", true},
+		{"svg element", "svg.icon", true},
+		{"mixed case class", "div.myClass", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := looksLikeCSSSelector(tt.input)
+			if result != tt.expected {
+				t.Errorf("looksLikeCSSSelector(%q) = %v, expected %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

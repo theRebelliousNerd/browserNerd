@@ -17,7 +17,7 @@ func TestLiveServerWithBrowser(t *testing.T) {
 		t.Skip("Skipping live browser tests (SKIP_LIVE_TESTS set)")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	cfg := config.Config{

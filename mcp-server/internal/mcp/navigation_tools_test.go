@@ -524,3 +524,7 @@ func TestNavigationToolDescriptions(t *testing.T) {
 		})
 	}
 }
+
+// Note: Execute() error validation tests are skipped because they require a real
+// session manager and browser. These tests would cause panics with nil sessions.
+// Error validation is covered by integration tests with live browsers.

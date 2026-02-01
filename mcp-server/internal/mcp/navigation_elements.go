@@ -416,6 +416,15 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 						}
 					}
 
+					// Extract alt_selectors for fallback element lookup
+					if altSel, ok := elem["alt_selectors"].([]interface{}); ok {
+						for _, s := range altSel {
+							if str, ok := s.(string); ok {
+								fp.AltSelectors = append(fp.AltSelectors, str)
+							}
+						}
+					}
+
 					fingerprints = append(fingerprints, fp)
 				}
 			}

@@ -98,9 +98,32 @@ func TestExecutePlanTool(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		resultMap := result.(map[string]interface{})
-		if resultMap["success"].(bool) {
-			t.Error("expected success to be false without session_id")
+		// Tool returns success:false for validation errors
+		resultMap, ok := result.(map[string]interface{})
+		if !ok {
+			t.Fatal("expected map result")
+		}
+		if resultMap["success"] != false {
+			t.Error("expected success:false for missing session_id")
+		}
+		if resultMap["error"] == nil {
+			t.Error("expected error message")
+		}
+	})
+
+	// Note: Test for missing session requires a real session manager
+	// which would require a browser. Skipping for unit tests.
+
+	t.Run("default parameters", func(t *testing.T) {
+		// Verify default values are used correctly
+		args := map[string]interface{}{"session_id": "test"}
+		stopOnError := getBoolArg(args, "stop_on_error", true)
+		if !stopOnError {
+			t.Error("expected default stop_on_error to be true")
+		}
+		delayMs := getIntArg(args, "delay_ms", 100)
+		if delayMs != 100 {
+			t.Errorf("expected default delay_ms to be 100, got %d", delayMs)
 		}
 	})
 
