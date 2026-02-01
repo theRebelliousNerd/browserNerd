@@ -1,0 +1,82 @@
+# ============================================
+# BrowserNERD .gitignore
+# ============================================
+
+# --------------------------------------------
+# Compiled binaries
+# --------------------------------------------
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+mcp-server/bin/browsernerd
+mcp-server/bin/browsernerd-*
+mcp-server/browsernerd-mcp-server
+mcp-server/browsernerd-mcp-server.exe
+
+# --------------------------------------------
+# Runtime data (sessions, logs)
+# --------------------------------------------
+mcp-server/data/
+*.log
+sessions.json
+
+# --------------------------------------------
+# Test artifacts
+# --------------------------------------------
+*.out
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# --------------------------------------------
+# Internal development docs (not for public)
+# --------------------------------------------
+# AI assistant guides
+**/CLAUDE.md
+**/agents.md
+**/Agents.md
+
+# Gemini test files
+**/gemini_backuptest.md
+
+# Internal documentation
+docs/
+mcp-server/docs/
+
+# PRD and internal specs
+PRD.md
+
+# --------------------------------------------
+# IDE and editor
+# --------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --------------------------------------------
+# Go workspace
+# --------------------------------------------
+go.work
+go.work.sum
+
+# --------------------------------------------
+# Screenshots (generated)
+# --------------------------------------------
+screenshots/
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# --------------------------------------------
+# Config with secrets (keep example only)
+# --------------------------------------------
+mcp-server/config.yaml
+!mcp-server/config.example.yaml
