@@ -51,12 +51,62 @@ Hacker News front page:
 ## Features
 
 - **Ultra-Compact Output** - 50-100x fewer tokens than raw HTML
+- **Dual Browser Modes** - Auto-launch Chrome OR attach to existing browser instances
 - **MCP Protocol** - Works with Claude Desktop, Claude Code, Cursor, and any MCP client
 - **Session Management** - Create, attach, fork, and persist browser sessions
 - **React Fiber Extraction** - Reify React component trees as queryable facts
 - **DOM Snapshotting** - Capture and query DOM state efficiently
 - **CDP Event Streaming** - Network, console, and navigation events as Mangle facts
 - **Logic Assertions** - Mangle-based causal reasoning for intelligent test assertions
+
+---
+
+## Browser Connection Modes
+
+BrowserNERD supports **two ways** to connect to Chrome:
+
+### Mode 1: Auto-Launch (Zero Config)
+
+BrowserNERD automatically launches and manages Chrome for you:
+
+```
+launch-browser  ->  Chrome starts with CDP enabled
+create-session  ->  New tab opens
+navigate-url    ->  Automate away
+shutdown-browser -> Clean exit
+```
+
+No manual Chrome setup required. Perfect for automation scripts and CI/CD.
+
+### Mode 2: Attach to Existing Browser
+
+Connect to a Chrome instance you're already using - preserve your logged-in sessions, cookies, and extensions:
+
+```bash
+# Start Chrome with remote debugging (one-time setup)
+# Windows:
+chrome.exe --remote-debugging-port=9222
+
+# macOS:
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+
+# Linux:
+google-chrome --remote-debugging-port=9222
+```
+
+Then configure `config.yaml`:
+
+```yaml
+browser:
+  auto_start: false
+  remote_debugging_url: "ws://localhost:9222"
+```
+
+**Why attach mode?**
+- Use your existing login sessions (no re-auth needed)
+- Keep your extensions active
+- Debug alongside your normal browsing
+- Perfect for development and testing
 
 ---
 
@@ -265,6 +315,7 @@ browserNerd/
 |---------|-------------|----------------|---------------|-------------|
 | Token efficiency | 50-100x better | Baseline | Baseline | ~2-3x better |
 | Structured output | JSON with refs | Raw HTML/selectors | Raw HTML | JSON |
+| Browser modes | Launch OR attach | Launch only | Launch only | Launch only |
 | Session persistence | Yes (survives restart) | No | No | No |
 | Logic reasoning | Mangle built-in | None | None | None |
 | React extraction | Native | Manual | Manual | No |
@@ -280,13 +331,6 @@ cd mcp-server && go test ./...
 
 # Verbose logging
 ./bin/browsernerd --config config.yaml --verbose
-
-# Attach to existing Chrome (for debugging)
-# First: chrome --remote-debugging-port=9222
-# Then set in config.yaml:
-#   browser:
-#     auto_start: false
-#     remote_debugging_url: "ws://localhost:9222"
 ```
 
 ---
