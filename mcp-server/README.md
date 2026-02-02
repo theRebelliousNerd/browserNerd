@@ -33,7 +33,7 @@ All settings go in `config.yaml`. See `config.example.yaml` for a minimal templa
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | `"browsernerd-mcp"` | MCP server name |
-| `version` | string | `"0.0.1"` | Server version |
+| `version` | string | `"0.0.2"` | Server version |
 | `log_file` | string | `"browsernerd-mcp.log"` | Log file path (required for stdio mode to avoid stderr pollution) |
 
 ### browser
@@ -157,6 +157,7 @@ launch:
 - `console_event`, `toast_notification` - Console and UI errors
 - `navigation_event`, `current_url` - Page navigation
 - `docker_log`, `backend_error`, `frontend_ssr_error` - Container logs
+- `screen_blocked`, `is_main_content`, `primary_action` - Semantic UI macros
 
 **Causal Rules:**
 - `caused_by(ConsoleErr, ReqId)` - Console error caused by failed request
@@ -165,6 +166,7 @@ launch:
 - `api_backend_correlation(...)` - Browser failure linked to backend exception
 - `full_stack_error(...)` - Complete error chain from browser to backend
 - `login_succeeded(SessionId)` - Universal login detection
+- `interaction_blocked(SessionId, Reason)` - Page interaction blocked by modal/overlay
 
 ## Claude Code Integration
 

@@ -223,15 +223,18 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 	for _, f := range filtered {
 		atom, err := e.factToAtom(f)
 		if err != nil {
+			fmt.Printf("[DEBUG] factToAtom failed for %s: %v\n", f.Predicate, err)
 			continue // Skip malformed facts
 		}
-		e.store.Add(atom) // Returns bool, we ignore it
+		added := e.store.Add(atom)
+		fmt.Printf("[DEBUG] Added fact to store: %s (Arity: %d) -> %v\n", f.Predicate, len(f.Args), added)
 	}
 
 	// Trigger incremental evaluation if schema loaded
 	if e.schemaLoaded && e.programInfo != nil {
 		// Incremental evaluation (semi-naive)
 		if err := engine.EvalProgram(e.programInfo, e.store); err != nil {
+			fmt.Printf("[DEBUG] EvalProgram failed: %v\n", err)
 			return fmt.Errorf("eval program after fact insertion: %w", err)
 		}
 
@@ -513,14 +516,35 @@ func (e *Engine) Evaluate(ctx context.Context, predicate string) ([]Fact, error)
 		return nil, fmt.Errorf("eval program: %w", err)
 	}
 
+	// Find the correct arity from declarations
+	arity := -1
+	for sym := range e.programInfo.Decls {
+		if sym.Symbol == predicate {
+			arity = sym.Arity
+			break
+		}
+	}
+
 	// Get derived facts using callback pattern
-	predSym := ast.PredicateSym{Symbol: predicate, Arity: -1} // -1 for wildcard arity
+	predSym := ast.PredicateSym{Symbol: predicate, Arity: arity}
 	facts := make([]Fact, 0)
 
-	// Create a wildcard atom for the predicate
-	wildcardAtom := ast.Atom{Predicate: predSym}
+	// Create a query atom for the predicate
+	// If arity is known, use it with wildcards for args
+	var queryAtom ast.Atom
+	if arity >= 0 {
+		args := make([]ast.BaseTerm, arity)
+		for i := 0; i < arity; i++ {
+			// Using a variable as a wildcard
+			args[i] = ast.Variable{Symbol: fmt.Sprintf("V%d", i)}
+		}
+		queryAtom = ast.Atom{Predicate: predSym, Args: args}
+	} else {
+		// Fallback to -1 if not found in Decls
+		queryAtom = ast.Atom{Predicate: predSym}
+	}
 
-	err := e.store.GetFacts(wildcardAtom, func(atom ast.Atom) error {
+	err := e.store.GetFacts(queryAtom, func(atom ast.Atom) error {
 		fact, err := e.atomToFact(atom)
 		if err != nil {
 			return nil // Skip malformed atoms

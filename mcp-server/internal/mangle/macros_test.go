@@ -39,18 +39,55 @@ func TestSemanticMacros(t *testing.T) {
 				Args:      []interface{}{"dialog-1", "role", "dialog"},
 				Timestamp: time.Now(),
 			},
+			{
+				Predicate: "dom_attr",
+				Args:      []interface{}{"loader-1", "id", "loading-overlay"},
+				Timestamp: time.Now(),
+			},
+			{
+				Predicate: "dom_attr",
+				Args:      []interface{}{"spin-1", "class", "loading-spinner"},
+				Timestamp: time.Now(),
+			},
 		}
 		if err := engine.AddFacts(ctx, facts); err != nil {
 			t.Fatal(err)
 		}
 
-		results, err := engine.Query(ctx, "screen_blocked(Id, Reason).")
+		results, err := engine.Evaluate(ctx, "screen_blocked")
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if len(results) < 2 {
-			t.Errorf("expected at least 2 blocked elements, got %d", len(results))
+		if len(results) < 4 {
+			t.Errorf("expected at least 4 blocked elements, got %d", len(results))
+		}
+	})
+
+	t.Run("Macro: interaction_blocked", func(t *testing.T) {
+		facts := []Fact{
+			{
+				Predicate: "current_url",
+				Args:      []interface{}{"session-1", "https://example.com"},
+				Timestamp: time.Now(),
+			},
+			{
+				Predicate: "dom_attr",
+				Args:      []interface{}{"blocker", "class", "modal"},
+				Timestamp: time.Now(),
+			},
+		}
+		if err := engine.AddFacts(ctx, facts); err != nil {
+			t.Fatal(err)
+		}
+
+		results, err := engine.Evaluate(ctx, "interaction_blocked")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(results) == 0 {
+			t.Errorf("expected interaction_blocked to be derived")
 		}
 	})
 
@@ -66,18 +103,28 @@ func TestSemanticMacros(t *testing.T) {
 				Args:      []interface{}{"content-1", "id", "main"},
 				Timestamp: time.Now(),
 			},
+			{
+				Predicate: "dom_attr",
+				Args:      []interface{}{"content-2", "role", "main"},
+				Timestamp: time.Now(),
+			},
+			{
+				Predicate: "dom_attr",
+				Args:      []interface{}{"content-3", "class", "main-content"},
+				Timestamp: time.Now(),
+			},
 		}
 		if err := engine.AddFacts(ctx, facts); err != nil {
 			t.Fatal(err)
 		}
 
-		results, err := engine.Query(ctx, "is_main_content(Id).")
+		results, err := engine.Evaluate(ctx, "is_main_content")
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if len(results) < 2 {
-			t.Errorf("expected at least 2 main content areas, got %d", len(results))
+		if len(results) < 4 {
+			t.Errorf("expected at least 4 main content areas, got %d", len(results))
 		}
 	})
 
@@ -103,18 +150,28 @@ func TestSemanticMacros(t *testing.T) {
 				Args:      []interface{}{"btn-2", "class", "btn-primary"},
 				Timestamp: time.Now(),
 			},
+			{
+				Predicate: "interactive",
+				Args:      []interface{}{"btn-3", "button", "Go", "click"},
+				Timestamp: time.Now(),
+			},
+			{
+				Predicate: "dom_attr",
+				Args:      []interface{}{"btn-3", "id", "submit-button"},
+				Timestamp: time.Now(),
+			},
 		}
 		if err := engine.AddFacts(ctx, facts); err != nil {
 			t.Fatal(err)
 		}
 
-		results, err := engine.Query(ctx, "primary_action(Id, Label).")
+		results, err := engine.Evaluate(ctx, "primary_action")
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if len(results) < 2 {
-			t.Errorf("expected at least 2 primary actions, got %d", len(results))
+		if len(results) < 3 {
+			t.Errorf("expected at least 3 primary actions, got %d", len(results))
 		}
 	})
 }

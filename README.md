@@ -59,8 +59,9 @@ Hacker News front page:
 - **DOM mapping** - Link Fiber nodes to DOM elements
 
 ### Mangle Reasoning Engine
-- **60+ built-in predicates** - DOM, network, React, console, toasts
-- **20+ causal reasoning rules** - Automatic root cause analysis
+- **70+ built-in predicates** - DOM, network, React, console, toasts
+- **25+ causal reasoning rules** - Automatic root cause analysis
+- **Semantic UI Macros** - Detect modals, main content, and primary actions (Vector 14)
 - **Custom rule submission** - Define your own derived facts
 - **Temporal queries** - Time-windowed fact analysis
 
@@ -410,7 +411,7 @@ docker:
 ```yaml
 server:
   name: "browsernerd-mcp"
-  version: "0.0.1"
+  version: "0.0.2"
   log_file: "data/browsernerd-mcp.log"
 
 browser:

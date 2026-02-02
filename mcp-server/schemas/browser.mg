@@ -779,3 +779,47 @@ api_success(Url) :-
     net_response(ReqId, Status, _, _),
     Status >= 200,
     Status < 300.
+
+# =============================================================================
+# VECTOR 14: SEMANTIC UI MACROS
+# =============================================================================
+# High-level semantic abstractions for common UI patterns, enabling agents
+# to reason about "main content", "primary actions", and "obstructions".
+
+# --- Screen Obstruction Detection ---
+Decl screen_blocked(NodeId, Reason).
+
+screen_blocked(Id, "modal") :- dom_attr(Id, "class", "modal").
+screen_blocked(Id, "modal-backdrop") :- dom_attr(Id, "class", "modal-backdrop").
+screen_blocked(Id, "modal-backdrop fade show") :- dom_attr(Id, "class", "modal-backdrop fade show").
+screen_blocked(Id, "dialog") :- dom_attr(Id, "role", "dialog").
+screen_blocked(Id, "loading-overlay") :- dom_attr(Id, "id", "loading-overlay").
+screen_blocked(Id, "spinner") :- dom_attr(Id, "class", "loading-spinner").
+
+# Derived: Page interaction is blocked
+Decl interaction_blocked(SessionId, Reason).
+interaction_blocked(SessionId, Reason) :-
+    current_url(SessionId, _),
+    screen_blocked(_, Reason).
+
+# --- Main Content Detection ---
+Decl is_main_content(NodeId).
+is_main_content(Id) :- dom_node(Id, "main", _, _).
+is_main_content(Id) :- dom_attr(Id, "id", "main").
+is_main_content(Id) :- dom_attr(Id, "role", "main").
+is_main_content(Id) :- dom_attr(Id, "class", "main-content").
+
+# --- Primary Action Detection ---
+Decl primary_action(Ref, Label).
+primary_action(Ref, Label) :- 
+    interactive(Ref, "button", Label, _), 
+    dom_attr(Ref, "type", "submit").
+primary_action(Ref, Label) :- 
+    interactive(Ref, "button", Label, _), 
+    dom_attr(Ref, "class", "btn-primary").
+primary_action(Ref, Label) :- 
+    interactive(Ref, "button", Label, _), 
+    dom_attr(Ref, "class", "primary-button").
+primary_action(Ref, Label) :- 
+    interactive(Ref, "button", Label, _), 
+    dom_attr(Ref, "id", "submit-button").
