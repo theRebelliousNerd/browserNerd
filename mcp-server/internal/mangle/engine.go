@@ -698,19 +698,38 @@ func (e *Engine) toConstant(v interface{}) ast.Constant {
 
 // Helper: Convert Mangle Constant to Go value
 func (e *Engine) convertConstant(c ast.BaseTerm) interface{} {
-	if constant, ok := c.(ast.Constant); ok {
-		if constant.Type == ast.StringType {
-			return constant.StringValue
-		} else if constant.Type == ast.NumberType {
-			return constant.NumberValue
-		} else if constant.Type == ast.Float64Type {
-			if val, err := constant.Float64Value(); err == nil {
+	if c == nil {
+		return nil
+	}
+
+	// Handle lazy constants that are returned as functions
+	if fn, ok := interface{}(c).(func() (string, error)); ok {
+		val, err := fn()
+		if err != nil {
+			return fmt.Sprintf("error: %v", err)
+		}
+		return val
+	}
+
+	switch term := c.(type) {
+	case ast.Constant:
+		// In this version of Mangle, StringValue is a function returning (string, error)
+		if term.Type == ast.StringType {
+			val, _ := term.StringValue()
+			return val
+		} else if term.Type == ast.NumberType {
+			return term.NumberValue
+		} else if term.Type == ast.Float64Type {
+			if val, err := term.Float64Value(); err == nil {
 				return val
 			}
 		}
-		return constant.String()
+		return term.String()
+	case ast.Variable:
+		return term.Symbol
+	default:
+		return fmt.Sprintf("%v", c)
 	}
-	return c.String()
 }
 
 // Helper: Rebuild predicate index after circular buffer trim
