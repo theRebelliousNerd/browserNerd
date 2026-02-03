@@ -165,6 +165,19 @@ func (t *NavigateURLTool) Execute(ctx context.Context, args map[string]interface
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("session not found: %s", sessionID)}, nil
 	}
 
+	// Check if we're already on the same URL - skip navigation to avoid hang
+	// Rod/CDP doesn't emit navigation events for same-URL navigation, causing
+	// WaitLoad() to wait indefinitely for an event that never fires.
+	currentInfo, _ := page.Info()
+	if currentInfo != nil && currentInfo.URL == url {
+		return map[string]interface{}{
+			"success":     true,
+			"url":         url,
+			"duration_ms": int64(0),
+			"note":        "already on this URL, no navigation needed",
+		}, nil
+	}
+
 	startTime := time.Now()
 
 	// Navigate based on wait condition

@@ -190,11 +190,18 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 			if url == "" {
 				url = value
 			}
-			actionErr = page.Navigate(url)
-			if actionErr == nil {
-				actionErr = page.WaitLoad()
+			// Skip navigation if already on same URL to avoid WaitLoad hang
+			currentInfo, _ := page.Info()
+			if currentInfo != nil && currentInfo.URL == url {
+				result["url"] = url
+				result["skipped"] = "already on this URL"
+			} else {
+				actionErr = page.Navigate(url)
+				if actionErr == nil {
+					actionErr = page.WaitLoad()
+				}
+				result["url"] = url
 			}
-			result["url"] = url
 
 		case "press":
 			key := ref
