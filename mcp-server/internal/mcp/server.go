@@ -159,7 +159,7 @@ func (s *Server) registerAllTools() {
 	s.registerTool(&PressKeyTool{sessions: s.sessions, engine: s.engine})
 
 	// Advanced tools - Screenshots, JS eval, batch operations
-	s.registerTool(&SmartScreenshotTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&ScreenshotTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&BrowserHistoryTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&EvaluateJSTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&FillFormTool{sessions: s.sessions, engine: s.engine})

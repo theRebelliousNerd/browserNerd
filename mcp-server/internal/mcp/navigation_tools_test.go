@@ -238,8 +238,8 @@ func TestEvaluateJSTool(t *testing.T) {
 	})
 }
 
-func TestSmartScreenshotTool(t *testing.T) {
-	tool := &SmartScreenshotTool{}
+func TestScreenshotTool(t *testing.T) {
+	tool := &ScreenshotTool{}
 
 	t.Run("name", func(t *testing.T) {
 		if name := tool.Name(); name != "screenshot" {
@@ -452,8 +452,8 @@ func TestNavigationToolSchemaDetails(t *testing.T) {
 		}
 	})
 
-	t.Run("SmartScreenshotTool has all expected properties", func(t *testing.T) {
-		tool := &SmartScreenshotTool{}
+	t.Run("ScreenshotTool has all expected properties", func(t *testing.T) {
+		tool := &ScreenshotTool{}
 		schema := tool.InputSchema()
 
 		props := schema["properties"].(map[string]interface{})
@@ -511,7 +511,7 @@ func TestNavigationToolDescriptions(t *testing.T) {
 		&GetInteractiveElementsTool{},
 		&GetNavigationLinksTool{},
 		&EvaluateJSTool{},
-		&SmartScreenshotTool{},
+		&ScreenshotTool{},
 		&DiscoverHiddenContentTool{},
 	}
 

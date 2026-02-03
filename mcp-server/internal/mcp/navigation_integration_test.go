@@ -219,8 +219,8 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		}
 	})
 
-	t.Run("SmartScreenshotTool full page", func(t *testing.T) {
-		tool := &SmartScreenshotTool{sessions: sessions}
+	t.Run("ScreenshotTool full page", func(t *testing.T) {
+		tool := &ScreenshotTool{sessions: sessions}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id": sessionID,
@@ -241,8 +241,8 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		}
 	})
 
-	t.Run("SmartScreenshotTool element screenshot", func(t *testing.T) {
-		tool := &SmartScreenshotTool{sessions: sessions}
+	t.Run("ScreenshotTool element screenshot", func(t *testing.T) {
+		tool := &ScreenshotTool{sessions: sessions}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id":  sessionID,

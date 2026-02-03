@@ -23,25 +23,31 @@ type GetNavigationLinksTool struct {
 
 func (t *GetNavigationLinksTool) Name() string { return "get-navigation-links" }
 func (t *GetNavigationLinksTool) Description() string {
-	return `Hyper token-efficient navigation link extraction.
+	return `Get site navigation links grouped by area.
 
-Returns site navigation grouped by area (header, sidebar, main, footer) with:
-- href destinations (internal/external/anchor)
-- Compact ref for interact tool
-- Link text (truncated for efficiency)
+TOKEN COST: Low (lighter than get-interactive-elements)
 
-Also emits Mangle facts: nav_link(Ref, Href, Area, Internal) for reasoning.
+USE THIS WHEN:
+- You need to find where to navigate (links only)
+- Exploring site structure
+- Finding specific destination links
 
-OUTPUT FORMAT (ultra-compact):
+USE get-interactive-elements INSTEAD WHEN:
+- You need to interact with buttons, inputs, or forms
+- You need non-link clickable elements
+
+RETURNS (compact dict format):
 {
-  "url": "https://example.com/page",
-  "nav": {"Dashboard": "/dashboard", "Settings": "/settings"},
-  "main": {"Article 1": "/article/1", "External": "https://other.com"},
-  "footer": {"Privacy": "/privacy", "Terms": "/terms"},
-  "counts": {"total": 15, "internal": 12, "external": 3}
+  "nav": {"Dashboard": "/dash", "Settings": "/set"},
+  "main": {"Article": "/article/1"},
+  "counts": {total: 15, internal: 12, external: 3}
 }
 
-Use this instead of get-interactive-elements when you only need navigation.`
+Areas: nav (header/menu), side (sidebar), main (content), foot (footer)
+
+OPTIONS:
+- internal_only: true to exclude external links
+- max_per_area: limit per section (default: 20)`
 }
 
 func (t *GetNavigationLinksTool) InputSchema() map[string]interface{} {

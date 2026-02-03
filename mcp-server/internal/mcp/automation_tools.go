@@ -39,25 +39,32 @@ type ExecutePlanTool struct {
 
 func (t *ExecutePlanTool) Name() string { return "execute-plan" }
 func (t *ExecutePlanTool) Description() string {
-	return `Execute a Mangle-derived action plan. Define what you want with Mangle rules, then execute.
+	return `Execute multiple actions in a single tool call.
 
-WORKFLOW:
-1. Submit a Mangle rule that derives 'action(...)' facts
-2. Call this tool to execute all derived actions in sequence
+TOKEN COST: Very Low (1 call replaces N individual calls)
 
-SUPPORTED ACTIONS (derived via Mangle rules):
+PREFER THIS OVER: Multiple interact() calls for multi-step workflows.
+
+SUPPORTED ACTIONS:
 - action("click", Ref)
 - action("type", Ref, Value)
 - action("navigate", URL)
 - action("press", Key)
 - action("wait", Milliseconds)
-- action("screenshot", Name)
 
-EXAMPLE:
-Submit rule: action("type", "email", "user@example.com"). action("type", "password", "secret"). action("click", "login-btn").
-Then call execute-plan to run all actions.
+EXAMPLE (login form - 1 call instead of 3):
+execute-plan(actions: [
+  {type: "type", ref: "email", value: "user@example.com"},
+  {type: "type", ref: "password", value: "secret"},
+  {type: "click", ref: "login-btn"}
+])
 
-This is MASSIVELY more token-efficient than individual tool calls!`
+WHEN TO USE:
+- Form fills (multiple inputs + submit)
+- Navigation sequences
+- Any workflow with 2+ actions
+
+Returns: {succeeded, failed, results[]}`
 }
 func (t *ExecutePlanTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -433,42 +440,31 @@ type GetConsoleErrorsTool struct {
 
 func (t *GetConsoleErrorsTool) Name() string { return "get-console-errors" }
 func (t *GetConsoleErrorsTool) Description() string {
-	return `Get all console errors with root cause analysis.
+	return `Full error report with causal analysis and Docker correlation.
 
-Returns:
-- All console errors captured during the session
-- For each error, any failed API requests that caused it (via Mangle causal reasoning)
-- Failed requests that haven't been linked to console errors yet
-- Slow API calls (>1 second) that might indicate performance issues
+TOKEN COST: Medium-High (detailed data, use diagnose-page first)
 
-This uses Mangle's causal reasoning rules to automatically link:
-- Console errors to failed API requests (status >= 400)
-- API failures to their initiator requests (cascading failures)
+HIERARCHY:
+1. diagnose-page -> Quick health check (use first)
+2. get-console-errors -> Full details (use when diagnose shows errors)
+3. get-toast-notifications -> User-visible errors only
 
-EXAMPLE OUTPUT:
-{
-  "errors": [
-    {
-      "message": "Uncaught TypeError: Cannot read property 'map' of undefined",
-      "timestamp": 1732481234567,
-      "caused_by": {
-        "request_id": "req-123",
-        "url": "/api/users",
-        "status": 500
-      }
-    }
-  ],
-  "failed_requests": [...],
-  "slow_apis": [...],
-  "docker_errors": [...],
-  "backend_correlations": [...]
-}
+RETURNS:
+- Console errors with API correlation (what request caused each error)
+- Failed requests (status >= 400)
+- Slow APIs (>1 second response)
+- Docker backend correlations (if enabled)
 
-When Docker integration is enabled (docker.enabled=true in config):
-- Queries backend container logs for errors around the same time window
-- Correlates frontend API failures to backend exceptions
-- Provides full-stack error tracing: Browser -> API -> Backend
-- Uses Mangle rules for temporal correlation (within 3 second window)`
+WHEN TO USE:
+- After diagnose-page shows status: "error"
+- For detailed debugging of specific failures
+- Full-stack tracing (frontend -> API -> backend)
+
+WHEN NOT TO USE:
+- Quick health checks -> use diagnose-page
+- Just checking if page loaded -> use get-page-state
+
+Returns: {errors[], failed_requests[], slow_apis[], docker_errors[]}`
 }
 func (t *GetConsoleErrorsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -1017,19 +1013,26 @@ type DiagnosePageTool struct {
 
 func (t *DiagnosePageTool) Name() string { return "diagnose-page" }
 func (t *DiagnosePageTool) Description() string {
-	return `Analyze the current page state for errors using Mangle logic.
+	return `Quick health check - find errors without reading raw logs.
 
-WHAT IT DOES:
-- Queries Mangle for "root_cause", "slow_api", and "failed_request" facts.
-- Returns a concise summary of what went wrong.
-- TOKEN EFFICIENT: Replaces dumping 100 log lines with a single structured report.
+TOKEN COST: Very Low (structured summary, not raw data)
+
+PREFER THIS OVER: get-console-errors when you just need a yes/no on errors.
+
+RETURNS:
+- status: "ok" | "warning" | "error"
+- root_causes: Causal analysis of what went wrong
+- failed_requests: API calls that returned errors
+- slow_apis: Performance bottlenecks
 
 WHEN TO USE:
-- After a navigation fails or page looks broken.
-- When you suspect API errors or JS crashes.
-- To get a "health check" of the current session.
+- After navigation to verify page loaded correctly
+- Quick sanity check before interacting
+- Debugging when something seems broken
 
-Returns: {status: "ok"|"error", issues: [...], root_causes: [...]}`
+USE get-console-errors INSTEAD when you need full error details.
+
+Returns: {status, root_causes[], failed_requests[], slow_apis[]}`
 }
 func (t *DiagnosePageTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -1078,17 +1081,21 @@ type AwaitStableStateTool struct {
 
 func (t *AwaitStableStateTool) Name() string { return "await-stable-state" }
 func (t *AwaitStableStateTool) Description() string {
-	return `Block until the page is stable (network idle and DOM settled).
+	return `Wait for page to settle before extraction/screenshot.
 
-WHAT IT DOES:
-- Waits for "network idle" (no requests in last 500ms).
-- Waits for "DOM idle" (no updates in last 200ms).
-- Returns when both conditions are met OR timeout.
+TOKEN COST: Low (single call, blocks until ready)
+
+WAITS FOR:
+- Network idle: No requests in last 500ms
+- DOM idle: No mutations in last 200ms
 
 WHEN TO USE:
-- After navigation or complex interactions.
-- BEFORE taking a screenshot or extracting data.
-- To avoid "flaky" tests caused by loading spinners.
+- After navigation before extracting data
+- Before screenshot to avoid loading spinners
+- After complex interactions (form submits, filters)
+
+PREFER navigate-url(wait_until: "networkidle") when navigating.
+Use this tool after interactions that don't trigger navigation.
 
 Returns: {status: "stable"|"timeout", duration_ms}`
 }

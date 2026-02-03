@@ -22,23 +22,29 @@ type GetPageStateTool struct {
 
 func (t *GetPageStateTool) Name() string { return "get-page-state" }
 func (t *GetPageStateTool) Description() string {
-	return `Quick status check of the current page (lightweight, minimal tokens).
+	return `Quick status check of the current page.
+
+TOKEN COST: Low (use this FIRST before heavier tools)
 
 RETURNS:
-- url: Current page URL (useful after redirects)
+- url: Current page URL
 - title: Page title
-- loading: Whether page is still loading
-- activeElement: Currently focused element ref
-- hasDialog: Whether a modal/dialog is open
+- loading: true if still loading
+- hasDialog: true if modal is open
 - scrollY: Current scroll position
 
-WHEN TO USE:
-- After navigation to confirm URL
-- Check if page finished loading
-- Detect if a modal appeared
-- Before interaction to verify page state
+USE THIS FIRST TO:
+- Verify navigation succeeded (check URL)
+- Confirm page finished loading
+- Detect if a modal/dialog appeared
+- Check scroll position
 
-This is LIGHTER than get-interactive-elements. Use for status checks.`
+THEN USE IF NEEDED:
+- get-interactive-elements (if you need to interact)
+- get-navigation-links (if you need links)
+- screenshot (only for visual debugging)
+
+AVOID: Taking screenshots just to check page state.`
 }
 func (t *GetPageStateTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
