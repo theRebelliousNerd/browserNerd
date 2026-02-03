@@ -1,0 +1,474 @@
+[
+  {
+    "task_id": "mdn_navigate_to_fetch",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2552,
+        "output_tokens": 32,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 12616,
+        "output_tokens": 18,
+        "tool_calls": 1,
+        "wall_clock_s": 1.875,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 113756,
+        "output_tokens": 19,
+        "tool_calls": 1,
+        "wall_clock_s": 3.077999999979511,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 147339,
+        "output_tokens": 19,
+        "tool_calls": 1,
+        "wall_clock_s": 2.3589999999967404,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 180328,
+        "output_tokens": 1,
+        "tool_calls": 0,
+        "wall_clock_s": 11.875,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 456591,
+    "total_output_tokens": 89,
+    "total_tool_calls": 4,
+    "total_wall_clock_s": 20.68699999997625,
+    "final_answer": "resource",
+    "correct": false,
+    "tool_usage": {
+      "browser_navigate": 1,
+      "browser_click": 3
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "github_repo_license",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2537,
+        "output_tokens": 24,
+        "tool_calls": 1,
+        "wall_clock_s": 1.452999999979511,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 20113,
+        "output_tokens": 5,
+        "tool_calls": 0,
+        "wall_clock_s": 1.702999999979511,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 22650,
+    "total_output_tokens": 29,
+    "total_tool_calls": 1,
+    "total_wall_clock_s": 3.155999999959022,
+    "final_answer": "Apache-2.0",
+    "correct": false,
+    "tool_usage": {
+      "browser_navigate": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "wikipedia_linked_article",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2543,
+        "output_tokens": 26,
+        "tool_calls": 1,
+        "wall_clock_s": 1.25,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 105532,
+        "output_tokens": 19,
+        "tool_calls": 1,
+        "wall_clock_s": 2.422000000020489,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 147218,
+        "output_tokens": 4,
+        "tool_calls": 0,
+        "wall_clock_s": 2.437000000034459,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 255293,
+    "total_output_tokens": 49,
+    "total_tool_calls": 2,
+    "total_wall_clock_s": 6.109000000054948,
+    "final_answer": "1961",
+    "correct": true,
+    "tool_usage": {
+      "browser_navigate": 1,
+      "browser_click": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "hn_second_page_story",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2539,
+        "output_tokens": 24,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5469999999622814,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 22313,
+        "output_tokens": 19,
+        "tool_calls": 1,
+        "wall_clock_s": 1.9060000000172295,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 43051,
+        "output_tokens": 16,
+        "tool_calls": 0,
+        "wall_clock_s": 2.60999999998603,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 67903,
+    "total_output_tokens": 59,
+    "total_tool_calls": 2,
+    "total_wall_clock_s": 6.062999999965541,
+    "final_answer": "Show HN: I built \"AI Wattpad\" to eval LLMs on fiction",
+    "correct": true,
+    "tool_usage": {
+      "browser_navigate": 1,
+      "browser_click": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "react_docs_nested_page",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2549,
+        "output_tokens": 20,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7179999999934807,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 16368,
+        "output_tokens": 18,
+        "tool_calls": 1,
+        "wall_clock_s": 1.2660000000032596,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 28128,
+        "output_tokens": 17,
+        "tool_calls": 1,
+        "wall_clock_s": 3.0160000000032596,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 32909,
+        "output_tokens": 20,
+        "tool_calls": 1,
+        "wall_clock_s": 1.827999999979511,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 43475,
+        "output_tokens": 63,
+        "tool_calls": 1,
+        "wall_clock_s": 11.78100000001723,
+        "tools_called": [
+          "browser_evaluate"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 43514,
+        "output_tokens": 1,
+        "tool_calls": 0,
+        "wall_clock_s": 5.327999999979511,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 166943,
+    "total_output_tokens": 139,
+    "total_tool_calls": 5,
+    "total_wall_clock_s": 24.93699999997625,
+    "final_answer": "className",
+    "correct": false,
+    "tool_usage": {
+      "browser_navigate": 1,
+      "browser_click": 3,
+      "browser_evaluate": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "npm_package_dependency",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2537,
+        "output_tokens": 26,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7030000000377186,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 3140,
+        "output_tokens": 16,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5780000000377186,
+        "tools_called": [
+          "browser_wait_for"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 4475,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 1.577999999979511,
+        "tools_called": [
+          "browser_snapshot"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 4852,
+        "output_tokens": 31,
+        "tool_calls": 1,
+        "wall_clock_s": 2.0,
+        "tools_called": [
+          "browser_evaluate"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 5059,
+        "output_tokens": 17,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5619999999762513,
+        "tools_called": [
+          "browser_wait_for"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 2417,
+        "output_tokens": 0,
+        "tool_calls": 0,
+        "wall_clock_s": 13.59299999999348,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 22480,
+    "total_output_tokens": 100,
+    "total_tool_calls": 5,
+    "total_wall_clock_s": 22.01400000002468,
+    "final_answer": "0",
+    "correct": true,
+    "tool_usage": {
+      "browser_navigate": 1,
+      "browser_wait_for": 2,
+      "browser_snapshot": 1,
+      "browser_evaluate": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "docs_search_and_navigate",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2539,
+        "output_tokens": 23,
+        "tool_calls": 1,
+        "wall_clock_s": 1.6719999999622814,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 24619,
+        "output_tokens": 18,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5310000000172295,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 39387,
+        "output_tokens": 26,
+        "tool_calls": 1,
+        "wall_clock_s": 1.9849999999860302,
+        "tools_called": [
+          "browser_type"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 39530,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 1.4060000000172295,
+        "tools_called": [
+          "browser_snapshot"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 65908,
+        "output_tokens": 19,
+        "tool_calls": 1,
+        "wall_clock_s": 10.84399999998277,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 63345,
+        "output_tokens": 64,
+        "tool_calls": 0,
+        "wall_clock_s": 16.40600000001723,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 235328,
+    "total_output_tokens": 160,
+    "total_tool_calls": 5,
+    "total_wall_clock_s": 33.84399999998277,
+    "final_answer": "In the latest version of the Next.js documentation (v16), Middleware has been renamed to **Proxy**. According to the \"Proxy\" documentation (and the \"middleware to proxy\" upgrade guide), the file should be defined in a file named:\n\n**proxy.js** (or **proxy.ts**)",
+    "correct": false,
+    "tool_usage": {
+      "browser_navigate": 1,
+      "browser_click": 2,
+      "browser_type": 1,
+      "browser_snapshot": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "expand_accordion_content",
+    "condition": "playwright_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 2544,
+        "output_tokens": 34,
+        "tool_calls": 1,
+        "wall_clock_s": 1.547000000020489,
+        "tools_called": [
+          "browser_navigate"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 11892,
+        "output_tokens": 18,
+        "tool_calls": 1,
+        "wall_clock_s": 2.6410000000032596,
+        "tools_called": [
+          "browser_click"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 13202,
+        "output_tokens": 58,
+        "tool_calls": 0,
+        "wall_clock_s": 3.5469999999622814,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 27638,
+    "total_output_tokens": 110,
+    "total_tool_calls": 2,
+    "total_wall_clock_s": 7.73499999998603,
+    "final_answer": "The text content inside the 'Section 2' accordion is:\n\n\"Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\"",
+    "correct": false,
+    "tool_usage": {
+      "browser_navigate": 1,
+      "browser_click": 1
+    },
+    "error_traceback": null
+  }
+]

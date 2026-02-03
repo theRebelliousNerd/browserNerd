@@ -2,6 +2,26 @@
 
 Detached Rod + Mangle MCP server for browser automation. Ships session management, CDP ingestion (network/console/navigation/DOM), React Fiber reification, Docker log correlation, and logic-based assertions via Google Mangle.
 
+## Benchmarks (vs Other Browser MCP Servers)
+
+Evaluation on 8 navigation tasks using Gemini 3 Flash (February 2026):
+
+| MCP Server          | Success Rate  | Avg Tokens  | Avg Tool Calls | Avg Time |
+| ------------------- | ------------- | ----------- | -------------- | -------- |
+| **BrowserNERD**     | **4/8 (50%)** | **137,945** | 9.6            | 23.0s    |
+| Chrome DevTools MCP | 3/8 (38%)     | 142,054     | 4.2            | 11.0s    |
+| Playwright MCP      | 3/8 (38%)     | 156,945     | 3.2            | 15.6s    |
+
+**Key findings:**
+
+- **Highest success rate** - BrowserNERD outperforms both competitors by 12 percentage points
+- **Best token efficiency** - Uses fewer tokens despite more tool calls, due to sparse JSON responses (v0.0.3 `omitempty` optimization)
+- **Granular control** - Many specialized tools (`evaluate-js`, `get-navigation-links`, `get-interactive-elements`) vs monolithic DOM snapshots
+
+**Per-task highlights:**
+- `mdn_navigate_to_fetch`: BrowserNERD 245K tokens vs Playwright 456K tokens (46% more efficient)
+- `wikipedia_linked_article`: BrowserNERD 103K tokens vs Playwright 255K tokens (60% more efficient)
+
 ## Features
 
 - **MCP Transport**: stdio (Claude Code) or SSE (multi-client) via `mark3labs/mcp-go`
@@ -33,7 +53,7 @@ All settings go in `config.yaml`. See `config.example.yaml` for a minimal templa
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | `"browsernerd-mcp"` | MCP server name |
-| `version` | string | `"0.0.2"` | Server version |
+| `version` | string | `"0.0.3"` | Server version |
 | `log_file` | string | `"browsernerd-mcp.log"` | Log file path (required for stdio mode to avoid stderr pollution) |
 
 ### browser

@@ -1,0 +1,9 @@
+task_id,condition,run,input_tokens,output_tokens,total_tokens,tool_calls,wall_clock_s,num_turns,correct
+mdn_navigate_to_fetch,chrome_devtools_mcp,0,223882,97,223979,5,12.25,6,False
+github_repo_license,chrome_devtools_mcp,0,33566,39,33605,2,3.92,3,True
+wikipedia_linked_article,chrome_devtools_mcp,0,395019,68,395087,4,8.63,5,True
+hn_second_page_story,chrome_devtools_mcp,0,88235,72,88307,4,6.84,5,False
+react_docs_nested_page,chrome_devtools_mcp,0,114843,83,114926,5,9.69,6,False
+npm_package_dependency,chrome_devtools_mcp,0,25761,87,25848,5,10.98,6,True
+docs_search_and_navigate,chrome_devtools_mcp,0,91846,84,91930,5,23.92,6,False
+expand_accordion_content,chrome_devtools_mcp,0,162616,130,162746,4,11.41,5,False

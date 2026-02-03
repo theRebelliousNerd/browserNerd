@@ -1,0 +1,9 @@
+task_id,condition,run,input_tokens,output_tokens,total_tokens,tool_calls,wall_clock_s,num_turns,correct
+mdn_navigate_to_fetch,browsernerd_mcp,0,244237,1326,245563,15,36.67,16,False
+github_repo_license,browsernerd_mcp,0,47450,243,47693,4,9.27,5,True
+wikipedia_linked_article,browsernerd_mcp,0,103042,507,103549,8,16.39,9,True
+hn_second_page_story,browsernerd_mcp,0,76715,413,77128,6,13.20,7,True
+react_docs_nested_page,browsernerd_mcp,0,227904,1274,229178,15,42.13,16,False
+npm_package_dependency,browsernerd_mcp,0,103108,602,103710,8,17.25,9,True
+docs_search_and_navigate,browsernerd_mcp,0,225676,1183,226859,15,35.34,16,False
+expand_accordion_content,browsernerd_mcp,0,69494,384,69878,6,13.64,7,False

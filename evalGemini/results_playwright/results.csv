@@ -1,0 +1,9 @@
+task_id,condition,run,input_tokens,output_tokens,total_tokens,tool_calls,wall_clock_s,num_turns,correct
+mdn_navigate_to_fetch,playwright_mcp,0,456591,89,456680,4,20.69,5,False
+github_repo_license,playwright_mcp,0,22650,29,22679,1,3.16,2,False
+wikipedia_linked_article,playwright_mcp,0,255293,49,255342,2,6.11,3,True
+hn_second_page_story,playwright_mcp,0,67903,59,67962,2,6.06,3,True
+react_docs_nested_page,playwright_mcp,0,166943,139,167082,5,24.94,6,False
+npm_package_dependency,playwright_mcp,0,22480,100,22580,5,22.01,6,True
+docs_search_and_navigate,playwright_mcp,0,235328,160,235488,5,33.84,6,False
+expand_accordion_content,playwright_mcp,0,27638,110,27748,2,7.73,3,False

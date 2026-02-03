@@ -1,0 +1,1014 @@
+[
+  {
+    "task_id": "mdn_navigate_to_fetch",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9100,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 4.125,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9561,
+        "output_tokens": 32,
+        "tool_calls": 1,
+        "wall_clock_s": 1.187999999965541,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9824,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5160000000032596,
+        "tools_called": [
+          "get-navigation-links"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 12238,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 2.4060000000172295,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 14736,
+        "output_tokens": 67,
+        "tool_calls": 1,
+        "wall_clock_s": 2.405999999959022,
+        "tools_called": [
+          "interact"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 14996,
+        "output_tokens": 82,
+        "tool_calls": 1,
+        "wall_clock_s": 4.14100000000326,
+        "tools_called": [
+          "navigate-url"
+        ]
+      },
+      {
+        "turn": 6,
+        "input_tokens": 15492,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7339999999967404,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 7,
+        "input_tokens": 17885,
+        "output_tokens": 102,
+        "tool_calls": 1,
+        "wall_clock_s": 2.3439999999827705,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 8,
+        "input_tokens": 18118,
+        "output_tokens": 86,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7339999999967404,
+        "tools_called": [
+          "navigate-url"
+        ]
+      },
+      {
+        "turn": 9,
+        "input_tokens": 18277,
+        "output_tokens": 100,
+        "tool_calls": 1,
+        "wall_clock_s": 1.922000000020489,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 10,
+        "input_tokens": 18490,
+        "output_tokens": 86,
+        "tool_calls": 1,
+        "wall_clock_s": 1.875,
+        "tools_called": [
+          "navigate-url"
+        ]
+      },
+      {
+        "turn": 11,
+        "input_tokens": 18649,
+        "output_tokens": 210,
+        "tool_calls": 1,
+        "wall_clock_s": 3.25,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 12,
+        "input_tokens": 18970,
+        "output_tokens": 85,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7349999999860302,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 13,
+        "input_tokens": 19131,
+        "output_tokens": 207,
+        "tool_calls": 1,
+        "wall_clock_s": 2.5160000000032596,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 14,
+        "input_tokens": 19401,
+        "output_tokens": 99,
+        "tool_calls": 1,
+        "wall_clock_s": 1.702999999979511,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 15,
+        "input_tokens": 9369,
+        "output_tokens": 1,
+        "tool_calls": 0,
+        "wall_clock_s": 2.077999999979511,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 244237,
+    "total_output_tokens": 1326,
+    "total_tool_calls": 15,
+    "total_wall_clock_s": 36.672999999893364,
+    "final_answer": "resource",
+    "correct": false,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "get-navigation-links": 1,
+      "get-interactive-elements": 2,
+      "interact": 1,
+      "navigate-url": 3,
+      "evaluate-js": 6
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "github_repo_license",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9085,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 2.125,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9308,
+        "output_tokens": 24,
+        "tool_calls": 1,
+        "wall_clock_s": 1.3600000000442378,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9552,
+        "output_tokens": 12,
+        "tool_calls": 1,
+        "wall_clock_s": 1.297000000020489,
+        "tools_called": [
+          "await-stable-state"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 9611,
+        "output_tokens": 192,
+        "tool_calls": 1,
+        "wall_clock_s": 2.7660000000032596,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 9894,
+        "output_tokens": 5,
+        "tool_calls": 0,
+        "wall_clock_s": 1.7189999999827705,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 47450,
+    "total_output_tokens": 243,
+    "total_tool_calls": 4,
+    "total_wall_clock_s": 9.267000000050757,
+    "final_answer": "Apache 2.0",
+    "correct": true,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "await-stable-state": 1,
+      "evaluate-js": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "wikipedia_linked_article",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9091,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 2.1089999999967404,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9346,
+        "output_tokens": 26,
+        "tool_calls": 1,
+        "wall_clock_s": 1.1709999999729916,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9596,
+        "output_tokens": 56,
+        "tool_calls": 1,
+        "wall_clock_s": 2.5160000000032596,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 12101,
+        "output_tokens": 64,
+        "tool_calls": 1,
+        "wall_clock_s": 1.3910000000032596,
+        "tools_called": [
+          "interact"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 12244,
+        "output_tokens": 126,
+        "tool_calls": 1,
+        "wall_clock_s": 2.4060000000172295,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 12445,
+        "output_tokens": 21,
+        "tool_calls": 1,
+        "wall_clock_s": 1.4690000000409782,
+        "tools_called": [
+          "await-stable-state"
+        ]
+      },
+      {
+        "turn": 6,
+        "input_tokens": 12560,
+        "output_tokens": 50,
+        "tool_calls": 1,
+        "wall_clock_s": 1.452999999979511,
+        "tools_called": [
+          "get-page-state"
+        ]
+      },
+      {
+        "turn": 7,
+        "input_tokens": 12710,
+        "output_tokens": 150,
+        "tool_calls": 1,
+        "wall_clock_s": 2.14000000001397,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 8,
+        "input_tokens": 12949,
+        "output_tokens": 4,
+        "tool_calls": 0,
+        "wall_clock_s": 1.7339999999967404,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 103042,
+    "total_output_tokens": 507,
+    "total_tool_calls": 8,
+    "total_wall_clock_s": 16.38900000002468,
+    "final_answer": "1961",
+    "correct": true,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "get-interactive-elements": 1,
+      "interact": 1,
+      "evaluate-js": 2,
+      "await-stable-state": 1,
+      "get-page-state": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "hn_second_page_story",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9087,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 2.3439999999827705,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9328,
+        "output_tokens": 24,
+        "tool_calls": 1,
+        "wall_clock_s": 1.1719999999622814,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9570,
+        "output_tokens": 58,
+        "tool_calls": 1,
+        "wall_clock_s": 1.6719999999622814,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 11884,
+        "output_tokens": 107,
+        "tool_calls": 1,
+        "wall_clock_s": 2.3589999999967404,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 12098,
+        "output_tokens": 12,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5,
+        "tools_called": [
+          "await-stable-state"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 12234,
+        "output_tokens": 181,
+        "tool_calls": 1,
+        "wall_clock_s": 2.8589999999967404,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 6,
+        "input_tokens": 12514,
+        "output_tokens": 21,
+        "tool_calls": 0,
+        "wall_clock_s": 1.2969999999622814,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 76715,
+    "total_output_tokens": 413,
+    "total_tool_calls": 6,
+    "total_wall_clock_s": 13.202999999863096,
+    "final_answer": "Show HN: PII-Shield \u2013 Log Sanitization Sidecar with JSON Integrity (Go, Entropy)",
+    "correct": true,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "get-interactive-elements": 1,
+      "evaluate-js": 2,
+      "await-stable-state": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "react_docs_nested_page",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9097,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7810000000172295,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9322,
+        "output_tokens": 20,
+        "tool_calls": 1,
+        "wall_clock_s": 1.1869999999762513,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9564,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 2.202999999979511,
+        "tools_called": [
+          "get-navigation-links"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 10928,
+        "output_tokens": 72,
+        "tool_calls": 1,
+        "wall_clock_s": 1.437999999965541,
+        "tools_called": [
+          "navigate-url"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 11073,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5630000000237487,
+        "tools_called": [
+          "get-navigation-links"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 12201,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 2.0310000000172295,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 6,
+        "input_tokens": 14906,
+        "output_tokens": 73,
+        "tool_calls": 1,
+        "wall_clock_s": 1.875,
+        "tools_called": [
+          "interact"
+        ]
+      },
+      {
+        "turn": 7,
+        "input_tokens": 15085,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 2.4540000000270084,
+        "tools_called": [
+          "get-navigation-links"
+        ]
+      },
+      {
+        "turn": 8,
+        "input_tokens": 16296,
+        "output_tokens": 79,
+        "tool_calls": 1,
+        "wall_clock_s": 1.6400000000139698,
+        "tools_called": [
+          "navigate-url"
+        ]
+      },
+      {
+        "turn": 9,
+        "input_tokens": 16463,
+        "output_tokens": 53,
+        "tool_calls": 1,
+        "wall_clock_s": 1.6869999999762513,
+        "tools_called": [
+          "get-navigation-links"
+        ]
+      },
+      {
+        "turn": 10,
+        "input_tokens": 17558,
+        "output_tokens": 82,
+        "tool_calls": 1,
+        "wall_clock_s": 1.9380000000237487,
+        "tools_called": [
+          "navigate-url"
+        ]
+      },
+      {
+        "turn": 11,
+        "input_tokens": 17737,
+        "output_tokens": 98,
+        "tool_calls": 1,
+        "wall_clock_s": 2.172000000020489,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 12,
+        "input_tokens": 18101,
+        "output_tokens": 141,
+        "tool_calls": 1,
+        "wall_clock_s": 3.4689999999827705,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 13,
+        "input_tokens": 18648,
+        "output_tokens": 185,
+        "tool_calls": 1,
+        "wall_clock_s": 3.3589999999967404,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 14,
+        "input_tokens": 19075,
+        "output_tokens": 191,
+        "tool_calls": 1,
+        "wall_clock_s": 3.0310000000172295,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 15,
+        "input_tokens": 11850,
+        "output_tokens": 58,
+        "tool_calls": 0,
+        "wall_clock_s": 10.297000000020489,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 227904,
+    "total_output_tokens": 1274,
+    "total_tool_calls": 15,
+    "total_wall_clock_s": 42.12500000005821,
+    "final_answer": "On the \"Passing Props to a Component\" page of the React documentation, the first code example appears in the \"Familiar props\" section. This example demonstrates how props are passed to a standard HTML tag like `<img>`. The first prop name used in that code snippet is:\n\nperson",
+    "correct": false,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "get-navigation-links": 4,
+      "navigate-url": 3,
+      "get-interactive-elements": 1,
+      "interact": 1,
+      "evaluate-js": 4
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "npm_package_dependency",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9085,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 2.0160000000032596,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9353,
+        "output_tokens": 26,
+        "tool_calls": 1,
+        "wall_clock_s": 1.3130000000237487,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9604,
+        "output_tokens": 55,
+        "tool_calls": 1,
+        "wall_clock_s": 1.437000000034459,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 12064,
+        "output_tokens": 68,
+        "tool_calls": 1,
+        "wall_clock_s": 2.030999999959022,
+        "tools_called": [
+          "interact"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 12275,
+        "output_tokens": 88,
+        "tool_calls": 1,
+        "wall_clock_s": 2.0619999999762513,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 12419,
+        "output_tokens": 92,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7810000000172295,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 6,
+        "input_tokens": 12568,
+        "output_tokens": 99,
+        "tool_calls": 1,
+        "wall_clock_s": 2.0,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 7,
+        "input_tokens": 12752,
+        "output_tokens": 163,
+        "tool_calls": 1,
+        "wall_clock_s": 3.4689999999827705,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 8,
+        "input_tokens": 12988,
+        "output_tokens": 1,
+        "tool_calls": 0,
+        "wall_clock_s": 1.1410000000032596,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 103108,
+    "total_output_tokens": 602,
+    "total_tool_calls": 8,
+    "total_wall_clock_s": 17.25,
+    "final_answer": "0",
+    "correct": true,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "get-interactive-elements": 1,
+      "interact": 1,
+      "evaluate-js": 4
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "docs_search_and_navigate",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9087,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 2.1560000000172295,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9349,
+        "output_tokens": 23,
+        "tool_calls": 1,
+        "wall_clock_s": 1.1100000000442378,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9596,
+        "output_tokens": 52,
+        "tool_calls": 1,
+        "wall_clock_s": 1.3589999999967404,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 12417,
+        "output_tokens": 72,
+        "tool_calls": 1,
+        "wall_clock_s": 1.9380000000237487,
+        "tools_called": [
+          "interact"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 12563,
+        "output_tokens": 69,
+        "tool_calls": 1,
+        "wall_clock_s": 2.702999999979511,
+        "tools_called": [
+          "interact"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 12817,
+        "output_tokens": 62,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5309999999590218,
+        "tools_called": [
+          "press-key"
+        ]
+      },
+      {
+        "turn": 6,
+        "input_tokens": 12921,
+        "output_tokens": 58,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5320000000065193,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 7,
+        "input_tokens": 13136,
+        "output_tokens": 52,
+        "tool_calls": 1,
+        "wall_clock_s": 1.922000000020489,
+        "tools_called": [
+          "get-page-state"
+        ]
+      },
+      {
+        "turn": 8,
+        "input_tokens": 13352,
+        "output_tokens": 113,
+        "tool_calls": 1,
+        "wall_clock_s": 2.5939999999827705,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 9,
+        "input_tokens": 13545,
+        "output_tokens": 58,
+        "tool_calls": 1,
+        "wall_clock_s": 1.3910000000032596,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 10,
+        "input_tokens": 13812,
+        "output_tokens": 177,
+        "tool_calls": 1,
+        "wall_clock_s": 2.625,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 11,
+        "input_tokens": 14114,
+        "output_tokens": 52,
+        "tool_calls": 1,
+        "wall_clock_s": 1.4689999999827705,
+        "tools_called": [
+          "get-navigation-links"
+        ]
+      },
+      {
+        "turn": 12,
+        "input_tokens": 15372,
+        "output_tokens": 58,
+        "tool_calls": 1,
+        "wall_clock_s": 2.51500000001397,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 13,
+        "input_tokens": 18290,
+        "output_tokens": 276,
+        "tool_calls": 1,
+        "wall_clock_s": 3.530999999959022,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 14,
+        "input_tokens": 18680,
+        "output_tokens": 48,
+        "tool_calls": 1,
+        "wall_clock_s": 1.7810000000172295,
+        "tools_called": [
+          "screenshot"
+        ]
+      },
+      {
+        "turn": 15,
+        "input_tokens": 26625,
+        "output_tokens": 3,
+        "tool_calls": 0,
+        "wall_clock_s": 5.186999999976251,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 225676,
+    "total_output_tokens": 1183,
+    "total_tool_calls": 15,
+    "total_wall_clock_s": 35.34399999998277,
+    "final_answer": "middleware.ts",
+    "correct": false,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "get-interactive-elements": 4,
+      "interact": 2,
+      "press-key": 1,
+      "get-page-state": 1,
+      "evaluate-js": 3,
+      "get-navigation-links": 1,
+      "screenshot": 1
+    },
+    "error_traceback": null
+  },
+  {
+    "task_id": "expand_accordion_content",
+    "condition": "browsernerd_mcp",
+    "run": 0,
+    "turns": [
+      {
+        "turn": 0,
+        "input_tokens": 9092,
+        "output_tokens": 10,
+        "tool_calls": 1,
+        "wall_clock_s": 2.2660000000032596,
+        "tools_called": [
+          "launch-browser"
+        ]
+      },
+      {
+        "turn": 1,
+        "input_tokens": 9398,
+        "output_tokens": 34,
+        "tool_calls": 1,
+        "wall_clock_s": 1.6709999999729916,
+        "tools_called": [
+          "create-session"
+        ]
+      },
+      {
+        "turn": 2,
+        "input_tokens": 9664,
+        "output_tokens": 12,
+        "tool_calls": 1,
+        "wall_clock_s": 1.2810000000172295,
+        "tools_called": [
+          "await-stable-state"
+        ]
+      },
+      {
+        "turn": 3,
+        "input_tokens": 9739,
+        "output_tokens": 58,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5310000000172295,
+        "tools_called": [
+          "get-interactive-elements"
+        ]
+      },
+      {
+        "turn": 4,
+        "input_tokens": 10330,
+        "output_tokens": 66,
+        "tool_calls": 1,
+        "wall_clock_s": 1.5939999999827705,
+        "tools_called": [
+          "interact"
+        ]
+      },
+      {
+        "turn": 5,
+        "input_tokens": 10471,
+        "output_tokens": 146,
+        "tool_calls": 1,
+        "wall_clock_s": 3.6089999999967404,
+        "tools_called": [
+          "evaluate-js"
+        ]
+      },
+      {
+        "turn": 6,
+        "input_tokens": 10800,
+        "output_tokens": 58,
+        "tool_calls": 0,
+        "wall_clock_s": 1.6880000000237487,
+        "tools_called": []
+      }
+    ],
+    "total_input_tokens": 69494,
+    "total_output_tokens": 384,
+    "total_tool_calls": 6,
+    "total_wall_clock_s": 13.64000000001397,
+    "final_answer": "The text content inside the 'Section 2' accordion is:\n\n\"Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\"",
+    "correct": false,
+    "tool_usage": {
+      "launch-browser": 1,
+      "create-session": 1,
+      "await-stable-state": 1,
+      "get-interactive-elements": 1,
+      "interact": 1,
+      "evaluate-js": 1
+    },
+    "error_traceback": null
+  }
+]

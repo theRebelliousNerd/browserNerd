@@ -73,19 +73,20 @@ func (t *eventThrottler) Allow(key string) bool {
 
 // ElementFingerprint captures identifying properties of an element for reliable re-identification.
 // This enables detection of stale element references when the DOM changes.
+// Uses omitempty for sparse JSON serialization to reduce token bloat.
 type ElementFingerprint struct {
-	Ref          string             `json:"ref"`           // Generated reference string
-	TagName      string             `json:"tag_name"`      // Lowercase tag name (button, input, etc.)
-	ID           string             `json:"id"`            // Element ID attribute (if any)
-	Name         string             `json:"name"`          // Name attribute (if any)
-	Classes      []string           `json:"classes"`       // CSS class list
-	TextContent  string             `json:"text_content"`  // First 100 chars of text content
-	AriaLabel    string             `json:"aria_label"`    // aria-label attribute
-	DataTestID   string             `json:"data_testid"`   // data-testid attribute
-	Role         string             `json:"role"`          // ARIA role attribute
-	BoundingBox  map[string]float64 `json:"bounding_box"`  // x, y, width, height
-	AltSelectors []string           `json:"alt_selectors"` // Alternative CSS selectors for fallback
-	GeneratedAt  time.Time          `json:"generated_at"`  // When the element was discovered
+	Ref          string             `json:"ref"`                      // Generated reference string
+	TagName      string             `json:"tag_name"`                 // Lowercase tag name (button, input, etc.)
+	ID           string             `json:"id,omitempty"`             // Element ID attribute (if any)
+	Name         string             `json:"name,omitempty"`           // Name attribute (if any)
+	Classes      []string           `json:"classes,omitempty"`        // CSS class list
+	TextContent  string             `json:"text_content,omitempty"`   // First 100 chars of text content
+	AriaLabel    string             `json:"aria_label,omitempty"`     // aria-label attribute
+	DataTestID   string             `json:"data_testid,omitempty"`    // data-testid attribute
+	Role         string             `json:"role,omitempty"`           // ARIA role attribute
+	BoundingBox  map[string]float64 `json:"bounding_box,omitempty"`   // x, y, width, height
+	AltSelectors []string           `json:"alt_selectors,omitempty"`  // Alternative CSS selectors for fallback
+	GeneratedAt  time.Time          `json:"generated_at,omitempty"`   // When the element was discovered
 }
 
 // ElementRegistry provides a per-session cache of discovered elements with fingerprints.

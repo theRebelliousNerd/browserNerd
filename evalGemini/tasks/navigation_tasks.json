@@ -1,0 +1,81 @@
+{
+  "defaults": {
+    "model": "gemini-3-flash-preview",
+    "max_turns": 15,
+    "num_runs": 1
+  },
+  "tasks": [
+    {
+      "id": "mdn_navigate_to_fetch",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
+      "prompt": "Navigate to the 'fetch()' API reference page (under Web APIs or References section) and tell me what the first parameter of fetch() is called. Return only the parameter name.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer mentions 'resource' or 'input' as the first parameter name for fetch()."
+      }
+    },
+    {
+      "id": "github_repo_license",
+      "url": "https://github.com/google/mangle",
+      "prompt": "Navigate to find what license this repository uses. Return only the license name (e.g., 'MIT', 'Apache 2.0').",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer contains a valid open source license name like Apache, MIT, BSD, GPL, etc."
+      }
+    },
+    {
+      "id": "wikipedia_linked_article",
+      "url": "https://en.wikipedia.org/wiki/JavaScript",
+      "prompt": "Click on the link to 'Brendan Eich' (the creator of JavaScript) and tell me what year he was born. Return only the four-digit year.",
+      "ground_truth": {
+        "type": "contains",
+        "value": "1961"
+      }
+    },
+    {
+      "id": "hn_second_page_story",
+      "url": "https://news.ycombinator.com",
+      "prompt": "Click 'More' at the bottom to go to page 2, then tell me the title of story #31. Return only the story title.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer contains a plausible Hacker News story title (a short phrase or sentence, not HTML)."
+      }
+    },
+    {
+      "id": "react_docs_nested_page",
+      "url": "https://react.dev",
+      "prompt": "Navigate to the 'Learn' section, then find and go to the 'Passing Props to a Component' page. What is the first prop name used in the first code example on that page? Return only the prop name.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer contains a valid React prop name (single word, typically camelCase like 'person', 'size', 'name', etc.)."
+      }
+    },
+    {
+      "id": "npm_package_dependency",
+      "url": "https://www.npmjs.com/package/react",
+      "prompt": "Find and click on the 'Dependencies' tab for the React package. How many production dependencies does React have? Return only the number.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer is a number (could be 0, 1, 2, or a small number) representing React's production dependencies."
+      }
+    },
+    {
+      "id": "docs_search_and_navigate",
+      "url": "https://nextjs.org/docs",
+      "prompt": "Use the search functionality to search for 'middleware', then navigate to the Middleware documentation page. What file name should middleware be defined in? Return only the filename.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer mentions 'middleware.ts' or 'middleware.js' as the filename."
+      }
+    },
+    {
+      "id": "expand_accordion_content",
+      "url": "https://www.w3schools.com/howto/howto_js_accordion.asp",
+      "prompt": "Click on 'Section 2' accordion to expand it and tell me what text content is inside. Return the main text content.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer contains text about Lorem ipsum or placeholder content from Section 2 of an accordion."
+      }
+    }
+  ]
+}

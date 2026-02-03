@@ -1,0 +1,45 @@
+{
+  "defaults": {
+    "model": "gemini-3-flash-preview",
+    "max_turns": 10,
+    "num_runs": 1
+  },
+  "tasks": [
+    {
+      "id": "react_docs_hook",
+      "url": "https://react.dev/reference/react/useState",
+      "prompt": "What is the first code example on this page showing? Describe what the useState hook does in one sentence.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer mentions useState and describes it as a React hook for managing state or state variables in functional components."
+      }
+    },
+    {
+      "id": "vercel_product",
+      "url": "https://vercel.com",
+      "prompt": "What is the main tagline or headline on the Vercel homepage? Return only the headline text.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer contains a plausible marketing headline about deployment, frontend, or web development."
+      }
+    },
+    {
+      "id": "nextjs_version",
+      "url": "https://nextjs.org/docs",
+      "prompt": "What version of Next.js is documented on this page? Return only the version number.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer contains a version number like 14, 15, or similar (just the number or with minor version)."
+      }
+    },
+    {
+      "id": "tanstack_query_title",
+      "url": "https://tanstack.com/query/latest",
+      "prompt": "What is the name of this library as shown on the page? Return only the library name.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer mentions TanStack Query or React Query."
+      }
+    }
+  ]
+}
