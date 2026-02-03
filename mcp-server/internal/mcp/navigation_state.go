@@ -26,13 +26,6 @@ func (t *GetPageStateTool) Description() string {
 
 TOKEN COST: Low (use this FIRST before heavier tools)
 
-RETURNS:
-- url: Current page URL
-- title: Page title
-- loading: true if still loading
-- hasDialog: true if modal is open
-- scrollY: Current scroll position
-
 USE THIS FIRST TO:
 - Verify navigation succeeded (check URL)
 - Confirm page finished loading
@@ -43,6 +36,27 @@ THEN USE IF NEEDED:
 - get-interactive-elements (if you need to interact)
 - get-navigation-links (if you need links)
 - screenshot (only for visual debugging)
+
+EXAMPLE OUTPUT:
+{
+  "url": "https://github.com/anthropics/claude-code",
+  "title": "GitHub - anthropics/claude-code",
+  "loading": false,
+  "activeElement": "search-input",
+  "hasDialog": false,
+  "scrollY": 0,
+  "viewportHeight": 900
+}
+
+EXAMPLE (with modal open):
+{
+  "url": "https://app.example.com/settings",
+  "title": "Settings",
+  "loading": false,
+  "hasDialog": true,
+  "scrollY": 250,
+  "viewportHeight": 900
+}
 
 AVOID: Taking screenshots just to check page state.`
 }
@@ -125,10 +139,24 @@ WAIT OPTIONS:
 - networkidle: Wait until no network activity for 500ms (thorough)
 - none: Return immediately (for SPAs that load async)
 
-EXAMPLE:
-navigate-url(session_id, url: "https://app.com/dashboard", wait_until: "networkidle")
+EXAMPLE OUTPUT:
+{
+  "success": true,
+  "url": "https://github.com/anthropics",
+  "title": "Anthropic - GitHub",
+  "wait_used": "load"
+}
 
-Emits navigation_event fact. Returns final URL (may differ due to redirects).`
+EXAMPLE (with redirect):
+{
+  "success": true,
+  "url": "https://www.example.com/",
+  "title": "Example Domain",
+  "wait_used": "networkidle",
+  "redirected_from": "http://example.com"
+}
+
+Emits navigation_event fact for Mangle reasoning.`
 }
 func (t *NavigateURLTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{

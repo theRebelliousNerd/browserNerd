@@ -23,7 +23,15 @@ WHEN TO USE:
 - After creating sessions to confirm they exist
 - Before closing sessions to get accurate IDs
 
-Returns: Array of {id, url, title} for each active session.`
+EXAMPLE OUTPUT:
+{
+  "sessions": [
+    {"id": "ABC123DEF456", "url": "https://github.com/dashboard", "title": "GitHub Dashboard"},
+    {"id": "XYZ789GHI012", "url": "https://docs.python.org/3/", "title": "Python Docs"}
+  ]
+}
+
+Empty if no sessions: {"sessions": []}`
 }
 func (t *ListSessionsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -55,7 +63,16 @@ WORKFLOW:
 2. create-session (with optional starting URL)
 3. Use returned session_id for all interaction tools
 
-Returns: {session: {id, url, title}} - Use the ID for subsequent tool calls.`
+EXAMPLE OUTPUT:
+{
+  "session": {
+    "id": "ABC123DEF456",
+    "url": "https://example.com",
+    "title": "Example Domain"
+  }
+}
+
+Use the "id" field for all subsequent tool calls (navigate-url, get-interactive-elements, interact, etc.)`
 }
 func (t *CreateSessionTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -315,7 +332,17 @@ TYPICAL WORKFLOW:
 3. navigate-url/interact  -> Automate
 4. shutdown-browser       -> Cleanup (optional)
 
-Returns: {status: "started"|"already_connected", control_url}`
+EXAMPLE OUTPUT (fresh start):
+{
+  "status": "started",
+  "control_url": "ws://127.0.0.1:9222/devtools/browser/abc123"
+}
+
+EXAMPLE OUTPUT (already running):
+{
+  "status": "already_connected",
+  "control_url": "ws://127.0.0.1:9222/devtools/browser/abc123"
+}`
 }
 func (t *LaunchBrowserTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -360,7 +387,13 @@ WHAT IT DOES:
 - Clears session state (NOT Mangle facts)
 
 NOTE: Mangle fact buffer persists after shutdown.
-Use this when you're done with browser automation.`
+Use this when you're done with browser automation.
+
+EXAMPLE OUTPUT:
+{
+  "status": "shutdown_complete",
+  "sessions_closed": 2
+}`
 }
 func (t *ShutdownBrowserTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{

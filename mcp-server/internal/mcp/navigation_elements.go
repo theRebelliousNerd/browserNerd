@@ -24,16 +24,7 @@ func (t *GetInteractiveElementsTool) Name() string { return "get-interactive-ele
 func (t *GetInteractiveElementsTool) Description() string {
 	return `Discover all clickable/typeable elements on the page.
 
-TOKEN COST: Medium (returns compact element list)
-
-RETURNS (sparse - only non-empty fields):
-- ref: ID to use with interact tool
-- type: button|input|link|select|checkbox|radio
-- label: Human-readable text (if present)
-- action: Suggested action (click|type|select|toggle)
-- value: Current value (inputs only, if non-empty)
-- checked: true/false (checkboxes/radios only)
-- disabled: true (only if element is disabled)
+TOKEN COST: Medium (returns compact element list with sparse JSON - empty fields omitted)
 
 WHEN TO USE:
 - Need to interact with forms, buttons, or inputs
@@ -43,12 +34,32 @@ WHEN TO USE:
 WHEN TO USE SOMETHING ELSE:
 - Just need links/navigation -> get-navigation-links (lighter)
 - Just need page status -> get-page-state (lightest)
-- Need visual verification -> screenshot (but avoid if possible)
+
+EXAMPLE OUTPUT:
+{
+  "summary": {"total": 5, "types": {"button": 2, "input": 2, "link": 1}},
+  "elements": [
+    {"ref": "btn-0", "type": "button", "label": "Sign In", "action": "click"},
+    {"ref": "input-1", "type": "input", "label": "Email", "action": "type"},
+    {"ref": "input-2", "type": "input", "label": "Password", "action": "type", "value": ""},
+    {"ref": "chk-3", "type": "checkbox", "label": "Remember me", "action": "toggle"},
+    {"ref": "link-4", "type": "link", "label": "Forgot password?", "action": "click"}
+  ]
+}
+
+SPARSE FIELDS (only included when non-empty):
+- ref: ID to use with interact tool (always present)
+- type: button|input|link|select|checkbox|radio (always present)
+- label: Human-readable text
+- action: Suggested action (click|type|select|toggle)
+- value: Current value (inputs only)
+- checked: true (checkboxes/radios only when checked)
+- disabled: true (only when disabled)
 
 OPTIONS:
-- verbose: Include fingerprint data for debugging (default: false)
 - filter: 'all', 'buttons', 'inputs', 'links', 'selects'
 - limit: Max elements (default: 50)
+- verbose: Include fingerprint data (default: false, saves tokens)
 
 Emits interactive() facts for Mangle reasoning.`
 }
@@ -531,22 +542,30 @@ func (t *InteractTool) Description() string {
 
 TOKEN COST: Low (single action)
 
-GET REFS FROM: get-interactive-elements (run it first)
+GET REFS FROM: get-interactive-elements (run it first to get element refs)
 
 ACTIONS:
 - click: Click button/link
 - type: Enter text in input (clears first)
-- select: Choose dropdown option
+- select: Choose dropdown option by visible text
 - toggle: Check/uncheck checkbox or radio
 - clear: Clear input field
 
-EXAMPLE:
-interact(session_id, ref: "email-input", action: "type", value: "user@test.com")
-interact(session_id, ref: "submit-btn", action: "click")
+EXAMPLE OUTPUT (click):
+{"success": true, "ref": "btn-0", "action": "click"}
+
+EXAMPLE OUTPUT (type):
+{"success": true, "ref": "input-1", "action": "type", "value": "user@example.com"}
+
+EXAMPLE OUTPUT (toggle checkbox):
+{"success": true, "ref": "chk-3", "action": "toggle", "checked": true}
+
+EXAMPLE OUTPUT (select dropdown):
+{"success": true, "ref": "select-5", "action": "select", "value": "Option 2"}
 
 FOR MULTIPLE FIELDS: Use fill-form instead (more efficient).
 
-Emits user_click/user_type/user_select facts.`
+Emits user_click/user_type/user_select/user_toggle facts for Mangle.`
 }
 func (t *InteractTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{

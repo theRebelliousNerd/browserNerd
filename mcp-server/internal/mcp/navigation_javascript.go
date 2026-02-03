@@ -38,7 +38,22 @@ SCRIPT FORMATS:
 - IIFE: "() => { return document.querySelectorAll('li').length; }"
 - With element: "el => el.getBoundingClientRect()" (pass element_ref)
 
-PREFER THESE TOOLS INSTEAD:
+EXAMPLE OUTPUT (simple expression):
+Input: script="document.title"
+{"success": true, "result": "GitHub - Dashboard"}
+
+EXAMPLE OUTPUT (IIFE returning object):
+Input: script="() => ({count: document.querySelectorAll('a').length, ready: document.readyState})"
+{"success": true, "result": {"count": 42, "ready": "complete"}}
+
+EXAMPLE OUTPUT (with element_ref):
+Input: script="el => el.textContent", element_ref="btn-0"
+{"success": true, "result": "Submit Form"}
+
+EXAMPLE OUTPUT (error):
+{"success": false, "error": "ReferenceError: foo is not defined", "error_type": "script"}
+
+PREFER THESE TOOLS INSTEAD when possible:
 - get-interactive-elements for finding elements
 - interact for clicking/typing
 - fill-form for forms
@@ -158,7 +173,40 @@ type FillFormTool struct {
 
 func (t *FillFormTool) Name() string { return "fill-form" }
 func (t *FillFormTool) Description() string {
-	return "Fill multiple form fields and optionally submit. Much more token-efficient than individual type/click calls. Fields are identified by ref (from get-interactive-elements), name, or id."
+	return `Fill multiple form fields in a single call - much more efficient than individual interact() calls.
+
+USE THIS WHEN:
+- Filling login forms, signup forms, or any multi-field form
+- Need to submit after filling
+
+TOKEN COST: Low (batches multiple field operations)
+
+EXAMPLE CALL:
+{
+  "session_id": "ABC123",
+  "fields": [
+    {"ref": "input-0", "value": "user@example.com"},
+    {"ref": "input-1", "value": "secretpassword"}
+  ],
+  "submit_button": "btn-2"
+}
+
+EXAMPLE OUTPUT:
+{
+  "success": true,
+  "filled": 2,
+  "submitted": true,
+  "results": [
+    {"ref": "input-0", "success": true},
+    {"ref": "input-1", "success": true}
+  ]
+}
+
+SUBMIT OPTIONS:
+- submit: true - Press Enter after last field
+- submit_button: "btn-ref" - Click specific button after filling
+
+Fields identified by: ref (from get-interactive-elements), element name, or id.`
 }
 func (t *FillFormTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{

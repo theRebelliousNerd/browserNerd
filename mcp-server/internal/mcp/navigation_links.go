@@ -23,9 +23,9 @@ type GetNavigationLinksTool struct {
 
 func (t *GetNavigationLinksTool) Name() string { return "get-navigation-links" }
 func (t *GetNavigationLinksTool) Description() string {
-	return `Get site navigation links grouped by area.
+	return `Get site navigation links grouped by page area (nav, sidebar, main, footer).
 
-TOKEN COST: Low (lighter than get-interactive-elements)
+TOKEN COST: Low (lighter than get-interactive-elements - use for navigation discovery)
 
 USE THIS WHEN:
 - You need to find where to navigate (links only)
@@ -36,18 +36,34 @@ USE get-interactive-elements INSTEAD WHEN:
 - You need to interact with buttons, inputs, or forms
 - You need non-link clickable elements
 
-RETURNS (compact dict format):
+EXAMPLE OUTPUT:
 {
-  "nav": {"Dashboard": "/dash", "Settings": "/set"},
-  "main": {"Article": "/article/1"},
-  "counts": {total: 15, internal: 12, external: 3}
+  "nav": {
+    "Home": "/",
+    "Dashboard": "/dashboard",
+    "Settings": "/settings",
+    "Documentation": "https://docs.example.com"
+  },
+  "side": {
+    "Profile": "/profile",
+    "Billing": "/billing"
+  },
+  "main": {
+    "Getting Started Guide": "/docs/getting-started",
+    "API Reference": "/docs/api"
+  },
+  "foot": {
+    "Privacy Policy": "/privacy",
+    "Terms of Service": "/terms"
+  },
+  "counts": {"total": 10, "internal": 8, "external": 2}
 }
 
-Areas: nav (header/menu), side (sidebar), main (content), foot (footer)
+Areas: nav (header/menu), side (sidebar), main (content area), foot (footer)
 
 OPTIONS:
-- internal_only: true to exclude external links
-- max_per_area: limit per section (default: 20)`
+- internal_only: true to exclude external links (default: false)
+- max_per_area: limit links per section (default: 20)`
 }
 
 func (t *GetNavigationLinksTool) InputSchema() map[string]interface{} {
