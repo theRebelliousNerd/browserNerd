@@ -1,0 +1,54 @@
+{
+  "defaults": {
+    "model": "claude-sonnet-4-20250514",
+    "max_turns": 10,
+    "num_runs": 3
+  },
+  "tasks": [
+    {
+      "id": "hn_top_story_title",
+      "url": "https://news.ycombinator.com",
+      "prompt": "What is the title of the #1 story on the front page? Return only the title text.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer contains a plausible Hacker News story title (a short phrase or sentence, not HTML or boilerplate)."
+      }
+    },
+    {
+      "id": "wikipedia_python_year",
+      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "prompt": "In what year was Python first released? Return only the four-digit year.",
+      "ground_truth": {
+        "type": "contains",
+        "value": "1991"
+      }
+    },
+    {
+      "id": "example_domain_heading",
+      "url": "https://example.com",
+      "prompt": "What is the main heading on this page? Return only the heading text.",
+      "ground_truth": {
+        "type": "exact",
+        "value": "Example Domain"
+      }
+    },
+    {
+      "id": "github_trending_language",
+      "url": "https://github.com/trending",
+      "prompt": "What programming language is the first trending repository written in? Return only the language name.",
+      "ground_truth": {
+        "type": "llm_judge",
+        "value": "The answer is a single programming language name (e.g. Python, JavaScript, Rust, Go, TypeScript, etc.)."
+      }
+    },
+    {
+      "id": "httpbin_ip_format",
+      "url": "https://httpbin.org/html",
+      "prompt": "What is the title of the story in the HTML returned by this page? Return only the title.",
+      "ground_truth": {
+        "type": "contains",
+        "value": "Herman Melville"
+      }
+    }
+  ]
+}
