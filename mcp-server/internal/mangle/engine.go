@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +59,8 @@ type Engine struct {
 	// Mangle core components
 	programInfo *analysis.ProgramInfo
 	store       factstore.FactStore
+	schemaUnits []parse.SourceUnit
+	ruleUnits   []parse.SourceUnit
 
 	// Fact buffer for temporal queries
 	facts []Fact
@@ -66,13 +69,13 @@ type Engine struct {
 	index map[string][]int
 
 	// Adaptive sampling state (PRD Section 3.5)
-	samplingRate     float64            // Current sampling rate (1.0 = accept all)
-	predicateCounts  map[string]int     // Count of facts per predicate in current window
-	lowValuePredicates map[string]bool  // Predicates considered low-value for sampling
+	samplingRate       float64         // Current sampling rate (1.0 = accept all)
+	predicateCounts    map[string]int  // Count of facts per predicate in current window
+	lowValuePredicates map[string]bool // Predicates considered low-value for sampling
 
 	// Watch mode subscriptions (PRD Section 5.2)
 	subscriptions map[string][]chan WatchEvent // predicate -> list of subscriber channels
-	subMu         sync.RWMutex                  // Separate mutex for subscription management
+	subMu         sync.RWMutex                 // Separate mutex for subscription management
 }
 
 // WatchEvent is emitted when a watched predicate derives new facts.
@@ -88,6 +91,8 @@ func NewEngine(cfg config.MangleConfig) (*Engine, error) {
 		facts:              make([]Fact, 0, cfg.FactBufferLimit),
 		index:              make(map[string][]int),
 		store:              factstore.NewSimpleInMemoryStore(),
+		schemaUnits:        make([]parse.SourceUnit, 0, 1),
+		ruleUnits:          make([]parse.SourceUnit, 0),
 		samplingRate:       1.0,
 		predicateCounts:    make(map[string]int),
 		lowValuePredicates: defaultLowValuePredicates(),
@@ -117,18 +122,15 @@ func (e *Engine) LoadSchema(path string) error {
 		return fmt.Errorf("parse schema: %w", err)
 	}
 
-	// Analyze the program (stratification, safety checks)
-	// extraPredicates is empty map for base schema
-	programInfo, err := analysis.AnalyzeOneUnit(sourceUnit, make(map[ast.PredicateSym]ast.Decl))
-	if err != nil {
-		return fmt.Errorf("analyze schema: %w", err)
-	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.programInfo = programInfo
-	e.schemaLoaded = true
+	e.schemaUnits = []parse.SourceUnit{sourceUnit}
+	e.ruleUnits = nil
+
+	if err := e.rebuildProgramInfoLocked(); err != nil {
+		return fmt.Errorf("analyze schema: %w", err)
+	}
 
 	return nil
 }
@@ -146,31 +148,29 @@ func (e *Engine) AddRule(ruleSource string) error {
 		return fmt.Errorf("parse rule: %w", err)
 	}
 
-	// Analyze with existing program's declarations as context
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	existingDecls := make(map[ast.PredicateSym]ast.Decl)
-	if e.programInfo != nil && e.programInfo.Decls != nil {
-		// Convert pointer map to value map
-		for k, v := range e.programInfo.Decls {
-			if v != nil {
-				existingDecls[k] = *v
-			}
-		}
-	}
+	prevRules := append([]parse.SourceUnit(nil), e.ruleUnits...)
+	prevProgram := e.programInfo
+	prevLoaded := e.schemaLoaded
 
-	newProgramInfo, err := analysis.AnalyzeOneUnit(sourceUnit, existingDecls)
-	if err != nil {
+	e.ruleUnits = append(e.ruleUnits, sourceUnit)
+	if err := e.rebuildProgramInfoLocked(); err != nil {
+		e.ruleUnits = prevRules
+		e.programInfo = prevProgram
+		e.schemaLoaded = prevLoaded
 		return fmt.Errorf("analyze rule: %w", err)
 	}
 
-	// Merge declarations from new program into existing
-	if e.programInfo == nil {
-		e.programInfo = newProgramInfo
-	} else {
-		for k, v := range newProgramInfo.Decls {
-			e.programInfo.Decls[k] = v
+	// Materialize derivations immediately so evaluate-rule / wait-for-condition
+	// can see the new rule without waiting for another fact insertion.
+	if e.programInfo != nil {
+		if err := engine.EvalProgram(e.programInfo, e.store); err != nil {
+			e.ruleUnits = prevRules
+			e.programInfo = prevProgram
+			e.schemaLoaded = prevLoaded
+			return fmt.Errorf("eval program after rule insertion: %w", err)
 		}
 	}
 
@@ -395,6 +395,14 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 		return nil, fmt.Errorf("engine not ready")
 	}
 
+	queryStr = strings.TrimSpace(queryStr)
+	if queryStr == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	if !strings.HasSuffix(queryStr, ".") {
+		queryStr += "."
+	}
+
 	// Parse the query
 	sourceUnit, err := parse.Unit(bytes.NewReader([]byte(queryStr)))
 	if err != nil {
@@ -409,6 +417,7 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 	clause := sourceUnit.Clauses[0]
 	// In Mangle v0.4.0, queries are just Clauses with a Head atom
 	queryAtom := clause.Head
+	queryAtom = normalizeAnonymousVariables(queryAtom)
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -418,20 +427,36 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 
 	err = e.store.GetFacts(queryAtom, func(atom ast.Atom) error {
 		result := make(QueryResult)
+		matched := true
 
 		// Bind variables from the query to fact arguments
 		for i, arg := range queryAtom.Args {
 			if i >= len(atom.Args) {
+				matched = false
 				break
 			}
 
-			// If query arg is a variable, bind it
+			val := e.convertConstant(atom.Args[i])
 			if varArg, ok := arg.(ast.Variable); ok {
-				result[varArg.Symbol] = e.convertConstant(atom.Args[i])
+				if existing, exists := result[varArg.Symbol]; exists && !valuesEquivalent(existing, val) {
+					matched = false
+					break
+				}
+				result[varArg.Symbol] = val
+				continue
+			}
+
+			if constArg, ok := arg.(ast.Constant); ok {
+				if !valuesEquivalent(e.convertConstant(constArg), val) {
+					matched = false
+					break
+				}
 			}
 		}
 
-		results = append(results, result)
+		if matched {
+			results = append(results, result)
+		}
 		return nil
 	})
 
@@ -476,18 +501,21 @@ func (e *Engine) queryBufferDirect(predicate string, queryArgs []ast.BaseTerm) [
 
 		for i, qArg := range queryArgs {
 			if i >= len(f.Args) {
+				matches = false
 				break
 			}
 
-			// Check if query arg is a variable (starts with uppercase in Mangle convention)
 			if varArg, ok := qArg.(ast.Variable); ok {
-				// Bind variable to fact value
-				result[varArg.Symbol] = f.Args[i]
+				if existing, exists := result[varArg.Symbol]; exists {
+					if !valuesEquivalent(existing, f.Args[i]) {
+						matches = false
+						break
+					}
+				} else {
+					result[varArg.Symbol] = f.Args[i]
+				}
 			} else if constArg, ok := qArg.(ast.Constant); ok {
-				// Constant - must match exactly
-				factVal := fmt.Sprintf("%v", f.Args[i])
-				queryVal := e.convertConstant(constArg)
-				if factVal != fmt.Sprintf("%v", queryVal) {
+				if !valuesEquivalent(e.convertConstant(constArg), f.Args[i]) {
 					matches = false
 					break
 				}
@@ -742,7 +770,10 @@ func (e *Engine) convertConstant(c ast.BaseTerm) interface{} {
 			val, _ := term.StringValue()
 			return val
 		} else if term.Type == ast.NumberType {
-			return term.NumberValue
+			// ast.Constant.NumberValue is a method; returning it (without calling) leaks a func() (int64, error)
+			// into query bindings, which then breaks JSON marshaling downstream.
+			val, _ := term.NumberValue()
+			return val
 		} else if term.Type == ast.Float64Type {
 			if val, err := term.Float64Value(); err == nil {
 				return val
@@ -762,4 +793,46 @@ func (e *Engine) rebuildIndex() {
 	for i, f := range e.facts {
 		e.index[f.Predicate] = append(e.index[f.Predicate], i)
 	}
+}
+
+func (e *Engine) rebuildProgramInfoLocked() error {
+	units := make([]parse.SourceUnit, 0, len(e.schemaUnits)+len(e.ruleUnits))
+	units = append(units, e.schemaUnits...)
+	units = append(units, e.ruleUnits...)
+	if len(units) == 0 {
+		return fmt.Errorf("no schema or rules loaded")
+	}
+
+	programInfo, err := analysis.Analyze(units, make(map[ast.PredicateSym]ast.Decl))
+	if err != nil {
+		return err
+	}
+
+	e.programInfo = programInfo
+	e.schemaLoaded = true
+	return nil
+}
+
+func normalizeAnonymousVariables(atom ast.Atom) ast.Atom {
+	if len(atom.Args) == 0 {
+		return atom
+	}
+
+	args := make([]ast.BaseTerm, len(atom.Args))
+	anonCount := 0
+	for i, arg := range atom.Args {
+		if varArg, ok := arg.(ast.Variable); ok && varArg.Symbol == "_" {
+			args[i] = ast.Variable{Symbol: fmt.Sprintf("__anon_%d", anonCount)}
+			anonCount++
+			continue
+		}
+		args[i] = arg
+	}
+
+	atom.Args = args
+	return atom
+}
+
+func valuesEquivalent(a, b interface{}) bool {
+	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
@@ -29,7 +30,7 @@ func (t *EvaluateJSTool) Description() string {
 PROGRESSIVE DISCLOSURE GATE:
 This tool is intentionally gated so agents prefer structured tools first.
 Use one of:
-- gate_reason="explicit_user_intent" (manual override)
+- gate_reason="explicit_user_intent" (manual override; requires approved_by_handle from browser-reason)
 - gate_reason="low_confidence" (after browser-reason signals uncertainty)
 - gate_reason="contradiction_detected" (after browser-reason detects conflicts)
 - gate_reason="no_matching_tool" (structured tools are insufficient)
@@ -93,7 +94,7 @@ func (t *EvaluateJSTool) InputSchema() map[string]interface{} {
 			},
 			"gate_reason": map[string]interface{}{
 				"type":        "string",
-				"description": "Progressive disclosure gate reason",
+				"description": "Progressive disclosure gate reason (explicit_user_intent requires approved_by_handle)",
 				"enum":        []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
 			},
 			"approved_by_handle": map[string]interface{}{
@@ -145,7 +146,7 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 		return map[string]interface{}{"success": false, "error": "session_id and script are required", "error_type": "validation"}, nil
 	}
 
-	if ok, reason := t.evaluateJSGateOpen(sessionID, gateReason, approvedHandle); !ok {
+	if ok, reason := t.evaluateJSGateOpen(sessionID, gateReason, approvedHandle, t.Name()); !ok {
 		return map[string]interface{}{
 			"success":            false,
 			"gated":              true,
@@ -167,6 +168,7 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 
 	// Get element registry for fingerprint-based lookup
 	registry := t.sessions.Registry(sessionID)
+	scriptToEval := normalizeEvalScriptForRod(script, elementRef != "")
 
 	if elementRef != "" {
 		// Execute on specific element
@@ -174,7 +176,7 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 		if findErr != nil {
 			return map[string]interface{}{"success": false, "error": fmt.Sprintf("element not found: %s", elementRef), "error_type": "element"}, nil
 		}
-		evalResult, evalErr := element.Timeout(timeout).Eval(script)
+		evalResult, evalErr := element.Timeout(timeout).Eval(scriptToEval)
 		if evalErr != nil {
 			err = evalErr
 			errorType = classifyJSError(evalErr)
@@ -183,7 +185,7 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 		}
 	} else {
 		// Execute on page with timeout
-		evalResult, evalErr := page.Timeout(timeout).Eval(script)
+		evalResult, evalErr := page.Timeout(timeout).Eval(scriptToEval)
 		if evalErr != nil {
 			err = evalErr
 			errorType = classifyJSError(evalErr)
@@ -223,7 +225,7 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 	}, nil
 }
 
-func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandle string) (bool, string) {
+func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandle, toolName string) (bool, string) {
 	validReasons := map[string]bool{
 		"explicit_user_intent":   true,
 		"low_confidence":         true,
@@ -231,8 +233,12 @@ func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandl
 		"no_matching_tool":       true,
 	}
 
-	if approvedHandle == "" && gateReason == "" {
-		return false, "evaluate-js is gated; provide gate_reason or approved_by_handle"
+	if gateReason != "" && !validReasons[gateReason] {
+		return false, fmt.Sprintf("invalid gate_reason: %s", gateReason)
+	}
+
+	if gateReason == "explicit_user_intent" && approvedHandle == "" {
+		return false, `gate_reason "explicit_user_intent" requires approved_by_handle from browser-reason`
 	}
 
 	if approvedHandle != "" {
@@ -242,12 +248,11 @@ func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandl
 		return false, fmt.Sprintf("approved_by_handle not found or expired: %s", approvedHandle)
 	}
 
-	if !validReasons[gateReason] {
-		return false, fmt.Sprintf("invalid gate_reason: %s", gateReason)
-	}
-
-	if gateReason == "explicit_user_intent" {
-		return true, ""
+	if gateReason == "" {
+		if strings.TrimSpace(toolName) == "" {
+			toolName = "evaluate-js"
+		}
+		return false, fmt.Sprintf("%s is gated; provide gate_reason or approved_by_handle", toolName)
 	}
 
 	if hasRecentGateFact(t.engine, "js_gate_open", sessionID, gateReason, jsGateTTL) {
@@ -255,6 +260,28 @@ func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandl
 	}
 
 	return false, fmt.Sprintf("gate_reason %q is not currently authorized; call browser-reason first", gateReason)
+}
+
+func normalizeEvalScriptForRod(script string, withElement bool) string {
+	trimmed := strings.TrimSpace(script)
+	if trimmed == "" {
+		return trimmed
+	}
+	if isFunctionLikeJavaScript(trimmed) {
+		return trimmed
+	}
+	if withElement {
+		return fmt.Sprintf("el => (%s)", trimmed)
+	}
+	return fmt.Sprintf("() => (%s)", trimmed)
+}
+
+func isFunctionLikeJavaScript(script string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(script))
+	if strings.HasPrefix(trimmed, "function") || strings.HasPrefix(trimmed, "async function") {
+		return true
+	}
+	return strings.Contains(script, "=>")
 }
 
 func shapeEvaluateJSResult(result interface{}, mode string, maxBytes int) (interface{}, bool, int) {

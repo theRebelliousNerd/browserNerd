@@ -379,7 +379,7 @@ func (t *WaitForConditionTool) Execute(ctx context.Context, args map[string]inte
 
 	for {
 		// Check if condition is satisfied
-		facts := t.engine.FactsByPredicate(predicate)
+		facts, source := t.resolvePredicateFacts(ctx, predicate)
 
 		for _, f := range facts {
 			if len(matchArgs) == 0 {
@@ -388,6 +388,7 @@ func (t *WaitForConditionTool) Execute(ctx context.Context, args map[string]inte
 					"success":   true,
 					"matched":   true,
 					"fact":      f,
+					"source":    source,
 					"waited_ms": time.Since(startTime).Milliseconds(),
 				}, nil
 			}
@@ -409,6 +410,7 @@ func (t *WaitForConditionTool) Execute(ctx context.Context, args map[string]inte
 					"success":   true,
 					"matched":   true,
 					"fact":      f,
+					"source":    source,
 					"waited_ms": time.Since(startTime).Milliseconds(),
 				}, nil
 			}
@@ -427,6 +429,21 @@ func (t *WaitForConditionTool) Execute(ctx context.Context, args map[string]inte
 		case <-ticker.C:
 		}
 	}
+}
+
+func (t *WaitForConditionTool) resolvePredicateFacts(ctx context.Context, predicate string) ([]mangle.Fact, string) {
+	facts := t.engine.FactsByPredicate(predicate)
+	if len(facts) > 0 {
+		return facts, "fact_buffer"
+	}
+
+	// Derived predicates are not always present in the temporal buffer.
+	// Fall back to program evaluation so submit-rule + wait-for-condition works.
+	derived, err := t.engine.Evaluate(ctx, predicate)
+	if err != nil || len(derived) == 0 {
+		return facts, "fact_buffer"
+	}
+	return derived, "derived_eval"
 }
 
 // =============================================================================
@@ -1070,23 +1087,21 @@ func (t *DiagnosePageTool) InputSchema() map[string]interface{} {
 	}
 }
 func (t *DiagnosePageTool) Execute(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
-	// 1. Check for root causes (high confidence)
-	rootCauses, err := t.engine.Query(ctx, "root_cause(Msg, Source, Cause).")
-	if err != nil {
-		return nil, err
+	if t.engine == nil {
+		return map[string]interface{}{
+			"status":          "error",
+			"root_causes":     []map[string]interface{}{},
+			"failed_requests": []map[string]interface{}{},
+			"slow_apis":       []map[string]interface{}{},
+			"summary":         "mangle engine unavailable",
+		}, nil
 	}
 
-	// 2. Check for failed requests
-	failedReqs, err := t.engine.Query(ctx, "failed_request(Id, Url, Status).")
-	if err != nil {
-		return nil, err
-	}
-
-	// 3. Check for slow APIs
-	slowApis, err := t.engine.Query(ctx, "slow_api(Id, Url, Duration).")
-	if err != nil {
-		return nil, err
-	}
+	// Keep this resilient: query errors should degrade to empty rows rather
+	// than causing an empty or failed tool payload.
+	rootCauses := queryToRows(ctx, t.engine, "root_cause(Msg, Source, Cause).")
+	failedReqs := queryToRows(ctx, t.engine, "failed_request(Id, Url, Status).")
+	slowApis := queryToRows(ctx, t.engine, "slow_api(Id, Url, Duration).")
 
 	status := "ok"
 	if len(rootCauses) > 0 || len(failedReqs) > 0 {
@@ -1100,6 +1115,18 @@ func (t *DiagnosePageTool) Execute(ctx context.Context, _ map[string]interface{}
 		"root_causes":     rootCauses,
 		"failed_requests": failedReqs,
 		"slow_apis":       slowApis,
+		"counts": map[string]interface{}{
+			"root_causes":     len(rootCauses),
+			"failed_requests": len(failedReqs),
+			"slow_apis":       len(slowApis),
+		},
+		"summary": fmt.Sprintf(
+			"status=%s root_causes=%d failed_requests=%d slow_apis=%d",
+			status,
+			len(rootCauses),
+			len(failedReqs),
+			len(slowApis),
+		),
 	}, nil
 }
 

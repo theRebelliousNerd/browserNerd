@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/mangle"
 )
 
 // TestIntegrationExecutePlan tests multi-step automation with a real browser
@@ -55,6 +56,12 @@ func TestIntegrationExecutePlan(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 	sessionID := session.ID
+	jsHandle := "reason:" + sessionID + ":root_causes"
+	_ = engine.AddFacts(ctx, []mangle.Fact{{
+		Predicate: "disclosure_handle",
+		Args:      []interface{}{sessionID, jsHandle, "reason", time.Now().UnixMilli()},
+		Timestamp: time.Now(),
+	}})
 
 	page, _ := sessions.Page(sessionID)
 	dataURL := "data:text/html;charset=utf-8," + testHTML
@@ -114,11 +121,11 @@ func TestIntegrationExecutePlan(t *testing.T) {
 
 		// Verify form was submitted
 		time.Sleep(200 * time.Millisecond)
-		evalTool := &EvaluateJSTool{sessions: sessions}
+		evalTool := &EvaluateJSTool{sessions: sessions, engine: engine}
 		evalResult, _ := evalTool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"script":      "() => document.getElementById('status').textContent",
-			"gate_reason": "explicit_user_intent",
+			"session_id":         sessionID,
+			"script":             "() => document.getElementById('status').textContent",
+			"approved_by_handle": jsHandle,
 		})
 		evalMap := evalResult.(map[string]interface{})
 		status := evalMap["result"].(string)

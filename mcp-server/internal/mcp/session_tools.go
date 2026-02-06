@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/mangle"
 )
 
 type ListSessionsTool struct {
@@ -201,11 +202,21 @@ func (t *ForkSessionTool) Execute(ctx context.Context, args map[string]interface
 
 type ReifyReactTool struct {
 	sessions *browser.SessionManager
+	engine   *mangle.Engine
 }
 
 func (t *ReifyReactTool) Name() string { return "reify-react" }
 func (t *ReifyReactTool) Description() string {
 	return `Extract React component tree structure into Mangle facts for analysis.
+
+PROGRESSIVE DISCLOSURE GATE:
+This deep extraction tool is intentionally gated.
+Use one of:
+- gate_reason="explicit_user_intent" with approved_by_handle
+- gate_reason="low_confidence" after browser-reason
+- gate_reason="contradiction_detected" after browser-reason
+- gate_reason="no_matching_tool" after browser-reason
+- approved_by_handle from browser-reason evidence handles
 
 WHAT IT DOES:
 - Traverses React's internal Fiber tree
@@ -233,6 +244,15 @@ func (t *ReifyReactTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "Target session to introspect",
 			},
+			"gate_reason": map[string]interface{}{
+				"type":        "string",
+				"description": "Progressive disclosure gate reason (explicit_user_intent requires approved_by_handle)",
+				"enum":        []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
+			},
+			"approved_by_handle": map[string]interface{}{
+				"type":        "string",
+				"description": "Evidence handle from browser-reason that authorizes deep extraction fallback",
+			},
 		},
 		"required": []string{"session_id"},
 	}
@@ -242,12 +262,27 @@ func (t *ReifyReactTool) Execute(ctx context.Context, args map[string]interface{
 	if sessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
+	gateReason := getStringArg(args, "gate_reason")
+	approvedHandle := getStringArg(args, "approved_by_handle")
+
+	gateTool := &EvaluateJSTool{engine: t.engine}
+	if ok, reason := gateTool.evaluateJSGateOpen(sessionID, gateReason, approvedHandle, t.Name()); !ok {
+		return map[string]interface{}{
+			"success":            false,
+			"gated":              true,
+			"error":              reason,
+			"recommended_tool":   "browser-reason",
+			"required_reasons":   []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
+			"approved_by_handle": approvedHandle,
+		}, nil
+	}
 
 	facts, err := t.sessions.ReifyReact(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{
+		"success":    true,
 		"session_id": sessionID,
 		"facts":      len(facts),
 	}, nil
@@ -255,11 +290,21 @@ func (t *ReifyReactTool) Execute(ctx context.Context, args map[string]interface{
 
 type SnapshotDOMTool struct {
 	sessions *browser.SessionManager
+	engine   *mangle.Engine
 }
 
 func (t *SnapshotDOMTool) Name() string { return "snapshot-dom" }
 func (t *SnapshotDOMTool) Description() string {
 	return `Capture current DOM structure as Mangle facts for logic-based analysis.
+
+PROGRESSIVE DISCLOSURE GATE:
+This deep extraction tool is intentionally gated.
+Use one of:
+- gate_reason="explicit_user_intent" with approved_by_handle
+- gate_reason="low_confidence" after browser-reason
+- gate_reason="contradiction_detected" after browser-reason
+- gate_reason="no_matching_tool" after browser-reason
+- approved_by_handle from browser-reason evidence handles
 
 WHEN TO USE:
 - Before writing Mangle rules that query DOM structure
@@ -287,6 +332,15 @@ func (t *SnapshotDOMTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "Target session to snapshot",
 			},
+			"gate_reason": map[string]interface{}{
+				"type":        "string",
+				"description": "Progressive disclosure gate reason (explicit_user_intent requires approved_by_handle)",
+				"enum":        []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
+			},
+			"approved_by_handle": map[string]interface{}{
+				"type":        "string",
+				"description": "Evidence handle from browser-reason that authorizes deep extraction fallback",
+			},
 		},
 		"required": []string{"session_id"},
 	}
@@ -296,10 +350,25 @@ func (t *SnapshotDOMTool) Execute(ctx context.Context, args map[string]interface
 	if sessionID == "" {
 		return nil, fmt.Errorf("session_id is required")
 	}
+	gateReason := getStringArg(args, "gate_reason")
+	approvedHandle := getStringArg(args, "approved_by_handle")
+
+	gateTool := &EvaluateJSTool{engine: t.engine}
+	if ok, reason := gateTool.evaluateJSGateOpen(sessionID, gateReason, approvedHandle, t.Name()); !ok {
+		return map[string]interface{}{
+			"success":            false,
+			"gated":              true,
+			"error":              reason,
+			"recommended_tool":   "browser-reason",
+			"required_reasons":   []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
+			"approved_by_handle": approvedHandle,
+		}, nil
+	}
 	if err := t.sessions.SnapshotDOM(ctx, sessionID); err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{
+		"success":    true,
 		"session_id": sessionID,
 		"status":     "captured",
 	}, nil
@@ -409,4 +478,3 @@ func (t *ShutdownBrowserTool) Execute(ctx context.Context, _ map[string]interfac
 		"status": "stopped",
 	}, nil
 }
-

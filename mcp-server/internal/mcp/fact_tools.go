@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"browsernerd-mcp-server/internal/mangle"
@@ -189,6 +190,10 @@ func (t *QueryFactsTool) Execute(ctx context.Context, args map[string]interface{
 	if query == "" {
 		return nil, fmt.Errorf("query is required")
 	}
+	query = strings.TrimSpace(query)
+	if !strings.HasSuffix(query, ".") {
+		query += "."
+	}
 
 	results, err := t.engine.Query(ctx, query)
 	if err != nil {
@@ -196,8 +201,24 @@ func (t *QueryFactsTool) Execute(ctx context.Context, args map[string]interface{
 	}
 	return map[string]interface{}{
 		"count":   len(results),
-		"results": results,
+		"results": normalizeQueryBindings(results),
 	}, nil
+}
+
+func normalizeQueryBindings(results []mangle.QueryResult) []map[string]interface{} {
+	normalized := make([]map[string]interface{}, 0, len(results))
+	for _, row := range results {
+		out := make(map[string]interface{}, len(row))
+		for k, v := range row {
+			if strings.HasPrefix(k, "__anon_") {
+				out["_"+strings.TrimPrefix(k, "__anon_")] = v
+			} else {
+				out[k] = v
+			}
+		}
+		normalized = append(normalized, out)
+	}
+	return normalized
 }
 
 // SubmitRuleTool adds a new rule to the running Mangle program.
@@ -639,4 +660,3 @@ func (t *AwaitConditionsTool) Execute(ctx context.Context, args map[string]inter
 		}
 	}
 }
-

@@ -31,6 +31,12 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 	sessionID := session.ID
+	jsHandle := "reason:" + sessionID + ":root_causes"
+	_ = engine.AddFacts(ctx, []mangle.Fact{{
+		Predicate: "disclosure_handle",
+		Args:      []interface{}{sessionID, jsHandle, "reason", time.Now().UnixMilli()},
+		Timestamp: time.Now(),
+	}})
 
 	// Navigate to test page with content
 	testHTML := `<!DOCTYPE html>
@@ -180,12 +186,12 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	})
 
 	t.Run("EvaluateJSTool", func(t *testing.T) {
-		tool := &EvaluateJSTool{sessions: sessions}
+		tool := &EvaluateJSTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"script":      "() => { return document.title; }",
-			"gate_reason": "explicit_user_intent",
+			"session_id":         sessionID,
+			"script":             "() => { return document.title; }",
+			"approved_by_handle": jsHandle,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -201,12 +207,12 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	})
 
 	t.Run("EvaluateJSTool error handling", func(t *testing.T) {
-		tool := &EvaluateJSTool{sessions: sessions}
+		tool := &EvaluateJSTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"script":      "() => { throw new Error('test error'); }",
-			"gate_reason": "explicit_user_intent",
+			"session_id":         sessionID,
+			"script":             "() => { throw new Error('test error'); }",
+			"approved_by_handle": jsHandle,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -378,6 +384,12 @@ func TestIntegrationInteractionTools(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 	sessionID := session.ID
+	jsHandle := "reason:" + sessionID + ":root_causes"
+	_ = engine.AddFacts(ctx, []mangle.Fact{{
+		Predicate: "disclosure_handle",
+		Args:      []interface{}{sessionID, jsHandle, "reason", time.Now().UnixMilli()},
+		Timestamp: time.Now(),
+	}})
 
 	page, _ := sessions.Page(sessionID)
 	dataURL := "data:text/html;charset=utf-8," + testHTML
@@ -409,11 +421,11 @@ func TestIntegrationInteractionTools(t *testing.T) {
 
 		// Verify click happened
 		time.Sleep(100 * time.Millisecond)
-		evalTool := &EvaluateJSTool{sessions: sessions}
+		evalTool := &EvaluateJSTool{sessions: sessions, engine: engine}
 		evalResult, _ := evalTool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"script":      "() => document.getElementById('result').textContent",
-			"gate_reason": "explicit_user_intent",
+			"session_id":         sessionID,
+			"script":             "() => document.getElementById('result').textContent",
+			"approved_by_handle": jsHandle,
 		})
 		evalMap := evalResult.(map[string]interface{})
 		if evalMap["result"] != "Clicks: 1" {
@@ -441,11 +453,11 @@ func TestIntegrationInteractionTools(t *testing.T) {
 
 		// Verify text was typed
 		time.Sleep(100 * time.Millisecond)
-		evalTool := &EvaluateJSTool{sessions: sessions}
+		evalTool := &EvaluateJSTool{sessions: sessions, engine: engine}
 		evalResult, _ := evalTool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"script":      "() => document.getElementById('text-input').value",
-			"gate_reason": "explicit_user_intent",
+			"session_id":         sessionID,
+			"script":             "() => document.getElementById('text-input').value",
+			"approved_by_handle": jsHandle,
 		})
 		evalMap := evalResult.(map[string]interface{})
 		if evalMap["result"] != "Hello World" {
@@ -592,7 +604,7 @@ func setupIntegrationBrowser(t *testing.T, cfg config.Config, engine *mangle.Eng
 
 	err := sessions.Start(ctx)
 	if err != nil {
-		t.Fatalf("Failed to start browser: %v", err)
+		t.Skipf("Failed to start browser (Chrome not available or not configured): %v", err)
 	}
 	return sessions
 }

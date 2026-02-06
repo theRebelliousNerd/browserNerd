@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +17,9 @@ import (
 
 const (
 	defaultProgressiveMaxItems = 20
+	defaultObserveMaxRecs      = 3
+	defaultReasonMaxRecs       = 4
+	defaultReasonTimeWindowMs  = 300000
 	jsGateTTL                  = 10 * time.Minute
 )
 
@@ -51,6 +57,11 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "Target session",
 			},
+			"intent": map[string]interface{}{
+				"type":        "string",
+				"description": "Token-aware intent preset that applies progressive defaults when explicit knobs are omitted",
+				"enum":        []string{"quick_status", "find_actions", "map_navigation", "hidden_content", "deep_audit"},
+			},
 			"mode": map[string]interface{}{
 				"type":        "string",
 				"description": "Observation mode",
@@ -82,6 +93,14 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 				"type":        "boolean",
 				"description": "Emit derived facts where supported (default true)",
 			},
+			"include_action_plan": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Include Mangle-derived action candidates and browser-act recommendations (default true)",
+			},
+			"max_recommendations": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum recommendation rows to return (default 3)",
+			},
 		},
 		"required": []string{"session_id"},
 	}
@@ -92,23 +111,59 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	if sessionID == "" {
 		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
 	}
-	mode := getStringArg(args, "mode")
-	if mode == "" {
-		mode = "composite"
-	}
+	intent := normalizeObserveIntent(getStringArg(args, "intent"))
+	intentCfg, hasIntent := resolveObserveIntentDefaults(intent)
+
+	mode := strings.ToLower(getStringArg(args, "mode"))
 	view := normalizeProgressiveView(getStringArg(args, "view"))
 	maxItems := getIntArg(args, "max_items", defaultProgressiveMaxItems)
-	if maxItems <= 0 {
-		maxItems = defaultProgressiveMaxItems
-	}
-
-	filter := getStringArg(args, "filter")
-	if filter == "" {
-		filter = "all"
-	}
+	filter := strings.ToLower(getStringArg(args, "filter"))
 	visibleOnly := getBoolArg(args, "visible_only", true)
 	internalOnly := getBoolArg(args, "internal_only", false)
 	emitFacts := getBoolArg(args, "emit_facts", true)
+	includeActionPlan := getBoolArg(args, "include_action_plan", true)
+	maxRecommendations := getIntArg(args, "max_recommendations", defaultObserveMaxRecs)
+	if maxRecommendations <= 0 {
+		maxRecommendations = defaultObserveMaxRecs
+	}
+
+	intentApplied := false
+	if hasIntent {
+		if !argHasNonEmptyString(args, "mode") && intentCfg.mode != "" {
+			mode = intentCfg.mode
+			intentApplied = true
+		}
+		if !argHasNonEmptyString(args, "view") && intentCfg.view != "" {
+			view = intentCfg.view
+			intentApplied = true
+		}
+		if !argHasInt(args, "max_items") && intentCfg.maxItems > 0 {
+			maxItems = intentCfg.maxItems
+			intentApplied = true
+		}
+		if !argHasNonEmptyString(args, "filter") && intentCfg.filter != "" {
+			filter = intentCfg.filter
+			intentApplied = true
+		}
+		if !argPresent(args, "visible_only") {
+			visibleOnly = intentCfg.visibleOnly
+			intentApplied = true
+		}
+		if !argPresent(args, "internal_only") {
+			internalOnly = intentCfg.internalOnly
+			intentApplied = true
+		}
+	}
+
+	if mode == "" {
+		mode = "composite"
+	}
+	if maxItems <= 0 {
+		maxItems = defaultProgressiveMaxItems
+	}
+	if filter == "" {
+		filter = "all"
+	}
 
 	stateTool := &GetPageStateTool{sessions: t.sessions}
 	navTool := &GetNavigationLinksTool{sessions: t.sessions, engine: t.engine}
@@ -186,6 +241,19 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		handles = append(handles, "observe:"+sessionID+":hidden")
 	}
 
+	actionCandidates := []map[string]interface{}{}
+	recommendations := []map[string]interface{}{}
+	if includeActionPlan && t.engine != nil && (fetchInteractive || fetchNav || mode == "composite") {
+		actionCandidates = queryActionCandidates(ctx, t.engine, sessionID, maxItems)
+		currentURL := getStringFromMap(stateData, "url")
+		if currentURL == "" {
+			currentURL = resolveCurrentURL(ctx, t.engine, sessionID)
+		}
+		recommendations = buildActionPlanRecommendations(actionCandidates, maxRecommendations, sessionID, originFromURL(currentURL))
+		handles = append(handles, "observe:"+sessionID+":action_candidates")
+		handles = append(handles, "observe:"+sessionID+":recommendations")
+	}
+
 	switch view {
 	case "summary":
 		if fetchState {
@@ -209,6 +277,10 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		if fetchHidden {
 			data["hidden_count"] = countHiddenElements(hiddenData)
 		}
+		if includeActionPlan {
+			data["action_candidate_count"] = len(actionCandidates)
+			data["recommendation_count"] = len(recommendations)
+		}
 	case "compact":
 		if fetchState {
 			data["state"] = stateData
@@ -221,6 +293,10 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		}
 		if fetchHidden {
 			data["hidden"] = compactHiddenData(hiddenData, maxItems)
+		}
+		if includeActionPlan {
+			data["action_candidates"] = limitMapSlice(actionCandidates, maxItems)
+			data["recommendations"] = recommendations
 		}
 	default: // full
 		if fetchState {
@@ -235,6 +311,10 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		if fetchHidden {
 			data["hidden"] = hiddenData
 		}
+		if includeActionPlan {
+			data["action_candidates"] = actionCandidates
+			data["recommendations"] = recommendations
+		}
 	}
 
 	summary := buildObserveSummary(data)
@@ -243,10 +323,13 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	return map[string]interface{}{
 		"success":          true,
 		"status":           "ok",
+		"intent":           ternaryStatus(hasIntent, intent, "custom"),
+		"intent_applied":   intentApplied,
 		"mode":             mode,
 		"view":             view,
 		"summary":          summary,
 		"data":             data,
+		"next_step":        suggestObserveNextStep(sessionID, data, mode, view, recommendations),
 		"evidence_handles": handles,
 		"truncated":        false,
 	}, nil
@@ -502,6 +585,11 @@ func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "Session context for gating and handles",
 			},
+			"intent": map[string]interface{}{
+				"type":        "string",
+				"description": "Reasoning preset that applies topic/view defaults when explicit knobs are omitted",
+				"enum":        []string{"triage", "act_now", "debug_failure", "unblock"},
+			},
 			"topic": map[string]interface{}{
 				"type":        "string",
 				"description": "Reasoning topic",
@@ -521,6 +609,18 @@ func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
 				"description": "Only expand matching evidence handles",
 				"items":       map[string]interface{}{"type": "string"},
 			},
+			"include_action_plan": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Include Mangle-derived browser-act operation recommendations (default true)",
+			},
+			"max_recommendations": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum recommendation rows to return (default 4)",
+			},
+			"time_window_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "Only include evidence newer than now-window (default 300000; set 0 for all history)",
+			},
 		},
 		"required": []string{"session_id"},
 	}
@@ -536,21 +636,64 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
 	}
 
-	topic := getStringArg(args, "topic")
+	intent := normalizeReasonIntent(getStringArg(args, "intent"))
+	intentCfg, hasIntent := resolveReasonIntentDefaults(intent)
+	topic := strings.ToLower(getStringArg(args, "topic"))
+	view := normalizeProgressiveView(getStringArg(args, "view"))
+	if hasIntent {
+		if !argHasNonEmptyString(args, "topic") && intentCfg.topic != "" {
+			topic = intentCfg.topic
+		}
+		if !argHasNonEmptyString(args, "view") && intentCfg.view != "" {
+			view = intentCfg.view
+		}
+	}
 	if topic == "" {
 		topic = "health"
 	}
-	view := normalizeProgressiveView(getStringArg(args, "view"))
 	maxItems := getIntArg(args, "max_items", defaultProgressiveMaxItems)
 	if maxItems <= 0 {
 		maxItems = defaultProgressiveMaxItems
 	}
+	includeActionPlan := getBoolArg(args, "include_action_plan", true)
+	maxRecommendations := getIntArg(args, "max_recommendations", defaultReasonMaxRecs)
+	if maxRecommendations <= 0 {
+		maxRecommendations = defaultReasonMaxRecs
+	}
+	timeWindowMs := getIntArg(args, "time_window_ms", defaultReasonTimeWindowMs)
+	if timeWindowMs < 0 {
+		timeWindowMs = 0
+	}
+	if timeWindowMs > 86400000 {
+		timeWindowMs = 86400000
+	}
+	sinceMs := int64(0)
+	if timeWindowMs > 0 {
+		sinceMs = time.Now().UnixMilli() - int64(timeWindowMs)
+	}
 
-	rootCauses := queryToRows(ctx, t.engine, "root_cause(ConsoleMsg, Source, Cause).")
-	failedReqs := queryToRows(ctx, t.engine, "failed_request(ReqId, Url, Status).")
-	slowApis := queryToRows(ctx, t.engine, "slow_api(ReqId, Url, Duration).")
-	blockingIssues := queryToRows(ctx, t.engine, "interaction_blocked(SessionId, Reason).")
+	rootCauses := queryToRows(ctx, t.engine, "root_cause_at(ConsoleMsg, Source, Cause, Ts).")
+	if len(rootCauses) == 0 {
+		rootCauses = queryToRows(ctx, t.engine, "root_cause(ConsoleMsg, Source, Cause).")
+	}
+	failedReqs := queryToRows(ctx, t.engine, "failed_request_at(ReqId, Url, Status, ReqTs).")
+	if len(failedReqs) == 0 {
+		failedReqs = queryToRows(ctx, t.engine, "failed_request(ReqId, Url, Status).")
+	}
+	slowApis := queryToRows(ctx, t.engine, "slow_api_at(ReqId, Url, Duration, ReqTs).")
+	if len(slowApis) == 0 {
+		slowApis = queryToRows(ctx, t.engine, "slow_api(ReqId, Url, Duration).")
+	}
+	blockingIssues := filterRowsByField(queryToRows(ctx, t.engine, "interaction_blocked(SessionId, Reason)."), "SessionId", sessionID)
 	userVisibleErrors := queryToRows(ctx, t.engine, "user_visible_error(Source, Message, Timestamp).")
+	actionCandidates := queryActionCandidates(ctx, t.engine, sessionID, maxItems)
+
+	if sinceMs > 0 {
+		rootCauses = filterRowsSince(rootCauses, []string{"Ts", "Timestamp"}, sinceMs)
+		failedReqs = filterRowsSince(failedReqs, []string{"ReqTs", "Timestamp"}, sinceMs)
+		slowApis = filterRowsSince(slowApis, []string{"ReqTs", "Timestamp"}, sinceMs)
+		userVisibleErrors = filterRowsSince(userVisibleErrors, []string{"Timestamp", "Ts"}, sinceMs)
+	}
 
 	contradictions := detectContradictions(t.engine)
 
@@ -562,7 +705,12 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		status = "warning"
 	}
 
-	recommendations := recommendNextActions(topic, status, len(failedReqs), len(rootCauses), len(contradictions), confidence)
+	baseOrigin := originFromURL(resolveCurrentURL(ctx, t.engine, sessionID))
+	recommendations := recommendNextActions(sessionID, topic, status, len(failedReqs), len(rootCauses), len(contradictions), confidence)
+	if includeActionPlan {
+		recommendations = append(buildActionPlanRecommendations(actionCandidates, maxRecommendations, sessionID, baseOrigin), recommendations...)
+	}
+	recommendations = limitMapSlice(recommendations, maxRecommendations)
 
 	data := map[string]interface{}{
 		"failed_requests":     failedReqs,
@@ -571,7 +719,11 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		"blocking_issues":     blockingIssues,
 		"user_visible_errors": userVisibleErrors,
 		"contradictions":      contradictions,
+		"action_candidates":   actionCandidates,
 		"recommendations":     recommendations,
+	}
+	if topic == "what_changed_since" {
+		data["changes"] = buildReasonChangeFeed(rootCauses, failedReqs, slowApis, userVisibleErrors, blockingIssues, maxItems)
 	}
 
 	handles := []string{
@@ -580,7 +732,11 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		"reason:" + sessionID + ":slow_apis",
 		"reason:" + sessionID + ":blocking_issues",
 		"reason:" + sessionID + ":contradictions",
+		"reason:" + sessionID + ":action_candidates",
 		"reason:" + sessionID + ":recommendations",
+	}
+	if topic == "what_changed_since" {
+		handles = append(handles, "reason:"+sessionID+":changes")
 	}
 	selectedData := applyHandleFilter(data, args["expand_handles"])
 
@@ -619,6 +775,7 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 
 	response := map[string]interface{}{
 		"success":             true,
+		"intent":              ternaryStatus(hasIntent, intent, "custom"),
 		"topic":               topic,
 		"status":              status,
 		"confidence":          confidence,
@@ -626,6 +783,7 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		"evidence_handles":    handles,
 		"expansion_suggested": confidence < 0.70 || len(contradictions) > 0,
 		"view":                view,
+		"time_window_ms":      timeWindowMs,
 	}
 
 	switch view {
@@ -724,6 +882,13 @@ func buildObserveSummary(data map[string]interface{}) string {
 			}
 		}
 	}
+	if candidateCount := asInt(data["action_candidate_count"]); candidateCount > 0 {
+		parts = append(parts, fmt.Sprintf("candidates=%d", candidateCount))
+	} else if candidates, ok := data["action_candidates"].([]map[string]interface{}); ok {
+		parts = append(parts, fmt.Sprintf("candidates=%d", len(candidates)))
+	} else if candidatesAny, ok := data["action_candidates"].([]interface{}); ok && len(candidatesAny) > 0 {
+		parts = append(parts, fmt.Sprintf("candidates=%d", len(candidatesAny)))
+	}
 	if len(parts) == 0 {
 		return "observation complete"
 	}
@@ -797,7 +962,7 @@ func computeReasonConfidence(rootCauses, failedReqs, slowApis, contradictions in
 	return math.Max(0.10, math.Min(0.99, score))
 }
 
-func recommendNextActions(topic, status string, failedReqs, rootCauses, contradictions int, confidence float64) []map[string]interface{} {
+func recommendNextActions(sessionID, topic, status string, failedReqs, rootCauses, contradictions int, confidence float64) []map[string]interface{} {
 	_ = topic
 	recs := make([]map[string]interface{}, 0, 3)
 	if status == "ok" {
@@ -805,8 +970,9 @@ func recommendNextActions(topic, status string, failedReqs, rootCauses, contradi
 			"tool":   "browser-observe",
 			"reason": "No critical issues detected; continue with focused observation.",
 			"args": map[string]interface{}{
-				"mode": "interactive",
-				"view": "compact",
+				"session_id": sessionID,
+				"mode":       "interactive",
+				"view":       "compact",
 			},
 		})
 	}
@@ -815,8 +981,9 @@ func recommendNextActions(topic, status string, failedReqs, rootCauses, contradi
 			"tool":   "browser-reason",
 			"reason": "Expand failure evidence for targeted remediation.",
 			"args": map[string]interface{}{
-				"topic": "why_failed",
-				"view":  "full",
+				"session_id": sessionID,
+				"topic":      "why_failed",
+				"view":       "full",
 			},
 		})
 	}
@@ -825,6 +992,7 @@ func recommendNextActions(topic, status string, failedReqs, rootCauses, contradi
 			"tool":   "evaluate-js",
 			"reason": "Contradiction detected; JS inspection is now permitted.",
 			"args": map[string]interface{}{
+				"session_id":  sessionID,
 				"gate_reason": "contradiction_detected",
 			},
 		})
@@ -834,6 +1002,7 @@ func recommendNextActions(topic, status string, failedReqs, rootCauses, contradi
 			"tool":   "evaluate-js",
 			"reason": "Low confidence reasoning result; permit targeted JS fallback.",
 			"args": map[string]interface{}{
+				"session_id":  sessionID,
 				"gate_reason": "low_confidence",
 			},
 		})
@@ -886,10 +1055,14 @@ func applyHandleFilter(data map[string]interface{}, rawHandles interface{}) map[
 			selected["blocking_issues"] = true
 		case strings.Contains(handle, "contradictions"):
 			selected["contradictions"] = true
+		case strings.Contains(handle, "action_candidates"):
+			selected["action_candidates"] = true
 		case strings.Contains(handle, "recommendations"):
 			selected["recommendations"] = true
 		case strings.Contains(handle, "user_visible_errors"):
 			selected["user_visible_errors"] = true
+		case strings.Contains(handle, "changes"):
+			selected["changes"] = true
 		}
 	}
 	if len(selected) == 0 {
@@ -943,6 +1116,689 @@ func hasRecentGateFact(engine *mangle.Engine, predicate, sessionID, matchValue s
 		}
 	}
 	return false
+}
+
+type observeIntentDefaults struct {
+	mode         string
+	view         string
+	maxItems     int
+	filter       string
+	visibleOnly  bool
+	internalOnly bool
+}
+
+func normalizeObserveIntent(intent string) string {
+	return strings.ToLower(strings.TrimSpace(intent))
+}
+
+func resolveObserveIntentDefaults(intent string) (observeIntentDefaults, bool) {
+	switch intent {
+	case "quick_status":
+		return observeIntentDefaults{
+			mode:         "state",
+			view:         "summary",
+			maxItems:     5,
+			filter:       "all",
+			visibleOnly:  true,
+			internalOnly: false,
+		}, true
+	case "find_actions":
+		return observeIntentDefaults{
+			mode:         "interactive",
+			view:         "compact",
+			maxItems:     12,
+			filter:       "all",
+			visibleOnly:  true,
+			internalOnly: false,
+		}, true
+	case "map_navigation":
+		return observeIntentDefaults{
+			mode:         "nav",
+			view:         "compact",
+			maxItems:     20,
+			filter:       "all",
+			visibleOnly:  true,
+			internalOnly: true,
+		}, true
+	case "hidden_content":
+		return observeIntentDefaults{
+			mode:         "hidden",
+			view:         "compact",
+			maxItems:     20,
+			filter:       "all",
+			visibleOnly:  true,
+			internalOnly: false,
+		}, true
+	case "deep_audit":
+		return observeIntentDefaults{
+			mode:         "composite",
+			view:         "full",
+			maxItems:     50,
+			filter:       "all",
+			visibleOnly:  true,
+			internalOnly: false,
+		}, true
+	default:
+		return observeIntentDefaults{}, false
+	}
+}
+
+type reasonIntentDefaults struct {
+	topic string
+	view  string
+}
+
+func normalizeReasonIntent(intent string) string {
+	return strings.ToLower(strings.TrimSpace(intent))
+}
+
+func resolveReasonIntentDefaults(intent string) (reasonIntentDefaults, bool) {
+	switch intent {
+	case "triage":
+		return reasonIntentDefaults{topic: "health", view: "compact"}, true
+	case "act_now":
+		return reasonIntentDefaults{topic: "next_best_action", view: "compact"}, true
+	case "debug_failure":
+		return reasonIntentDefaults{topic: "why_failed", view: "full"}, true
+	case "unblock":
+		return reasonIntentDefaults{topic: "blocking_issue", view: "compact"}, true
+	default:
+		return reasonIntentDefaults{}, false
+	}
+}
+
+func argPresent(args map[string]interface{}, key string) bool {
+	_, ok := args[key]
+	return ok
+}
+
+func argHasNonEmptyString(args map[string]interface{}, key string) bool {
+	raw, ok := args[key]
+	if !ok {
+		return false
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(value) != ""
+}
+
+func argHasInt(args map[string]interface{}, key string) bool {
+	raw, ok := args[key]
+	if !ok {
+		return false
+	}
+	switch raw.(type) {
+	case int, int8, int16, int32, int64, float32, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func suggestObserveNextStep(sessionID string, data map[string]interface{}, mode, view string, recommendations []map[string]interface{}) map[string]interface{} {
+	_ = mode
+	_ = view
+	if state, ok := data["state"].(map[string]interface{}); ok {
+		if loading, exists := state["loading"].(bool); exists && loading {
+			return map[string]interface{}{
+				"tool": "await-stable-state",
+				"args": map[string]interface{}{"timeout_ms": 10000},
+			}
+		}
+	}
+
+	if len(recommendations) > 0 {
+		first := recommendations[0]
+		next := map[string]interface{}{}
+		toolName := strings.TrimSpace(getStringFromMap(first, "tool"))
+		if toolName != "" {
+			next["tool"] = toolName
+		}
+		if args, ok := first["args"].(map[string]interface{}); ok {
+			if toolRequiresSessionID(toolName) && sessionID != "" {
+				args["session_id"] = sessionID
+			}
+			next["args"] = args
+		}
+		if reason, ok := first["reason"].(string); ok {
+			next["reason"] = reason
+		}
+		if len(next) > 0 {
+			return next
+		}
+	}
+
+	if interactive, ok := data["interactive"].(map[string]interface{}); ok {
+		if summary, ok := interactive["summary"].(map[string]interface{}); ok {
+			if total := asInt(summary["total"]); total > 0 {
+				return map[string]interface{}{
+					"tool": "browser-reason",
+					"args": map[string]interface{}{
+						"session_id": sessionID,
+						"topic":      "next_best_action",
+						"view":       "compact",
+					},
+				}
+			}
+		}
+	}
+	if interSummary, ok := data["interactive_summary"].(map[string]interface{}); ok {
+		if total := asInt(interSummary["total"]); total > 0 {
+			return map[string]interface{}{
+				"tool": "browser-reason",
+				"args": map[string]interface{}{
+					"session_id": sessionID,
+					"topic":      "next_best_action",
+					"view":       "compact",
+				},
+			}
+		}
+	}
+
+	if navCounts, ok := data["nav_counts"].(map[string]interface{}); ok {
+		if total := asInt(navCounts["total"]); total > 0 {
+			return map[string]interface{}{
+				"tool": "browser-observe",
+				"args": map[string]interface{}{
+					"session_id": sessionID,
+					"mode":       "interactive",
+					"view":       "compact",
+				},
+			}
+		}
+	}
+	if nav, ok := data["nav"].(map[string]interface{}); ok {
+		if counts, ok := nav["counts"].(map[string]interface{}); ok {
+			if total := asInt(counts["total"]); total > 0 {
+				return map[string]interface{}{
+					"tool": "browser-observe",
+					"args": map[string]interface{}{
+						"session_id": sessionID,
+						"mode":       "interactive",
+						"view":       "compact",
+					},
+				}
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"tool": "browser-reason",
+		"args": map[string]interface{}{
+			"session_id": sessionID,
+			"topic":      "next_best_action",
+			"view":       "compact",
+		},
+	}
+}
+
+func toolRequiresSessionID(tool string) bool {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "attach-session",
+		"browser-act",
+		"browser-history",
+		"browser-observe",
+		"browser-reason",
+		"create-session",
+		"discover-hidden-content",
+		"evaluate-js",
+		"fill-form",
+		"fork-session",
+		"get-interactive-elements",
+		"get-navigation-links",
+		"get-page-state",
+		"interact",
+		"launch-browser",
+		"list-sessions",
+		"navigate-url",
+		"press-key",
+		"reify-react",
+		"screenshot",
+		"snapshot-dom":
+		return true
+	default:
+		return false
+	}
+}
+
+func resolveCurrentURL(ctx context.Context, engine *mangle.Engine, sessionID string) string {
+	if engine == nil || sessionID == "" {
+		return ""
+	}
+	rows := filterRowsByField(queryToRows(ctx, engine, "current_url(SessionId, Url)."), "SessionId", sessionID)
+	if len(rows) == 0 {
+		return ""
+	}
+	// Prefer the newest binding if there are multiple.
+	return fmt.Sprintf("%v", rows[len(rows)-1]["Url"])
+}
+
+func originFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func filterRowsByField(rows []map[string]interface{}, field, expected string) []map[string]interface{} {
+	if expected == "" {
+		return rows
+	}
+	filtered := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		if fmt.Sprintf("%v", row[field]) == expected {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func filterRowsSince(rows []map[string]interface{}, timestampFields []string, sinceMs int64) []map[string]interface{} {
+	if sinceMs <= 0 || len(rows) == 0 {
+		return rows
+	}
+	filtered := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		ts, hasTimestamp := rowTimestampMs(row, timestampFields)
+		if !hasTimestamp || ts >= sinceMs {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
+}
+
+func rowTimestampMs(row map[string]interface{}, timestampFields []string) (int64, bool) {
+	for _, field := range timestampFields {
+		value, exists := row[field]
+		if !exists {
+			continue
+		}
+		ts := asInt64(value)
+		if ts > 0 {
+			return ts, true
+		}
+	}
+	return 0, false
+}
+
+func buildReasonChangeFeed(
+	rootCauses []map[string]interface{},
+	failedReqs []map[string]interface{},
+	slowApis []map[string]interface{},
+	userVisibleErrors []map[string]interface{},
+	blockingIssues []map[string]interface{},
+	maxItems int,
+) []map[string]interface{} {
+	changes := make([]map[string]interface{}, 0, len(failedReqs)+len(slowApis)+len(userVisibleErrors)+len(blockingIssues)+len(rootCauses))
+
+	for _, row := range failedReqs {
+		changes = append(changes, map[string]interface{}{
+			"type":      "failed_request",
+			"key":       fmt.Sprintf("%v", row["ReqId"]),
+			"detail":    fmt.Sprintf("%v (%v)", row["Url"], row["Status"]),
+			"timestamp": asInt64(row["ReqTs"]),
+		})
+	}
+	for _, row := range slowApis {
+		changes = append(changes, map[string]interface{}{
+			"type":      "slow_api",
+			"key":       fmt.Sprintf("%v", row["ReqId"]),
+			"detail":    fmt.Sprintf("%v (%vms)", row["Url"], row["Duration"]),
+			"timestamp": asInt64(row["ReqTs"]),
+		})
+	}
+	for _, row := range userVisibleErrors {
+		changes = append(changes, map[string]interface{}{
+			"type":      "user_visible_error",
+			"key":       fmt.Sprintf("%v", row["Source"]),
+			"detail":    fmt.Sprintf("%v", row["Message"]),
+			"timestamp": asInt64(row["Timestamp"]),
+		})
+	}
+	for _, row := range blockingIssues {
+		changes = append(changes, map[string]interface{}{
+			"type":      "blocking_issue",
+			"key":       fmt.Sprintf("%v", row["SessionId"]),
+			"detail":    fmt.Sprintf("%v", row["Reason"]),
+			"timestamp": 0,
+		})
+	}
+	for _, row := range rootCauses {
+		changes = append(changes, map[string]interface{}{
+			"type":      "root_cause",
+			"key":       fmt.Sprintf("%v", row["Source"]),
+			"detail":    fmt.Sprintf("%v", row["Cause"]),
+			"timestamp": asInt64(row["Ts"]),
+		})
+	}
+
+	sort.SliceStable(changes, func(i, j int) bool {
+		return asInt64(changes[i]["timestamp"]) > asInt64(changes[j]["timestamp"])
+	})
+
+	return limitMapSlice(changes, maxItems)
+}
+
+func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID string, maxItems int) []map[string]interface{} {
+	if engine == nil || strings.TrimSpace(sessionID) == "" {
+		return []map[string]interface{}{}
+	}
+
+	type candidate struct {
+		Action   string
+		Ref      string
+		Label    string
+		Priority int
+		Reason   string
+		Source   string
+	}
+
+	best := make(map[string]candidate)
+
+	dedupKey := func(isGlobal bool, action, ref, label string) string {
+		a := strings.ToLower(strings.TrimSpace(action))
+		r := strings.ToLower(strings.TrimSpace(ref))
+		l := strings.ToLower(strings.TrimSpace(label))
+
+		if isGlobal {
+			if a == "" {
+				return "global|unknown"
+			}
+			return "global|" + a
+		}
+
+		switch a {
+		case "navigate":
+			// For navigate, label holds the target href; multiple refs can point to the same href.
+			if l != "" {
+				return a + "|" + l
+			}
+			if r != "" {
+				return a + "|" + r
+			}
+			return a + "|unknown"
+		default:
+			// For clicks/typing/toggling, ref is the stable key.
+			if r != "" {
+				return a + "|" + r
+			}
+			if l != "" {
+				return a + "|" + l
+			}
+			if a != "" {
+				return a + "|" + a
+			}
+			return "unknown|unknown"
+		}
+	}
+
+	upsert := func(isGlobal bool, action, ref, label string, priority int, reason, source string) {
+		key := dedupKey(isGlobal, action, ref, label)
+		c := candidate{
+			Action:   action,
+			Ref:      ref,
+			Label:    label,
+			Priority: priority,
+			Reason:   reason,
+			Source:   source,
+		}
+		if prev, ok := best[key]; ok {
+			// Keep the highest-priority candidate for the same semantic action.
+			if c.Priority <= prev.Priority {
+				return
+			}
+		}
+		best[key] = c
+	}
+
+	rows := queryToRows(ctx, engine, fmt.Sprintf("action_candidate(%q, Ref, Label, Action, Priority, Reason).", sessionID))
+	for _, row := range rows {
+		upsert(false,
+			fmt.Sprintf("%v", row["Action"]),
+			fmt.Sprintf("%v", row["Ref"]),
+			fmt.Sprintf("%v", row["Label"]),
+			asInt(row["Priority"]),
+			fmt.Sprintf("%v", row["Reason"]),
+			"mangle",
+		)
+	}
+
+	globalRows := queryToRows(ctx, engine, "global_action(Action, Priority, Reason).")
+	for _, row := range globalRows {
+		upsert(true,
+			fmt.Sprintf("%v", row["Action"]),
+			"",
+			"",
+			asInt(row["Priority"]),
+			fmt.Sprintf("%v", row["Reason"]),
+			"mangle",
+		)
+	}
+
+	candidates := make([]candidate, 0, len(best))
+	for _, c := range best {
+		candidates = append(candidates, c)
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Priority != candidates[j].Priority {
+			return candidates[i].Priority > candidates[j].Priority
+		}
+		ai := strings.ToLower(strings.TrimSpace(candidates[i].Action))
+		aj := strings.ToLower(strings.TrimSpace(candidates[j].Action))
+		if ai != aj {
+			return ai < aj
+		}
+		li := strings.ToLower(strings.TrimSpace(candidates[i].Label))
+		lj := strings.ToLower(strings.TrimSpace(candidates[j].Label))
+		if li != lj {
+			return li < lj
+		}
+		ri := strings.ToLower(strings.TrimSpace(candidates[i].Ref))
+		rj := strings.ToLower(strings.TrimSpace(candidates[j].Ref))
+		if ri != rj {
+			return ri < rj
+		}
+		reasonI := strings.ToLower(strings.TrimSpace(candidates[i].Reason))
+		reasonJ := strings.ToLower(strings.TrimSpace(candidates[j].Reason))
+		return reasonI < reasonJ
+	})
+
+	out := make([]map[string]interface{}, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, map[string]interface{}{
+			"action":   c.Action,
+			"ref":      c.Ref,
+			"label":    c.Label,
+			"priority": c.Priority,
+			"reason":   c.Reason,
+			"source":   c.Source,
+		})
+	}
+
+	return limitMapSlice(out, maxItems)
+}
+
+func buildActionPlanRecommendations(candidates []map[string]interface{}, max int, sessionID, baseOrigin string) []map[string]interface{} {
+	if len(candidates) == 0 {
+		return nil
+	}
+	recs := make([]map[string]interface{}, 0, len(candidates))
+
+	for _, candidate := range candidates {
+		action := strings.ToLower(fmt.Sprintf("%v", candidate["action"]))
+		ref := fmt.Sprintf("%v", candidate["ref"])
+		label := fmt.Sprintf("%v", candidate["label"])
+		reason := fmt.Sprintf("%v", candidate["reason"])
+		priority := asInt(candidate["priority"])
+
+		var ops []map[string]interface{}
+		requiresUserInput := false
+		switch action {
+		case "navigate":
+			target := strings.TrimSpace(label)
+			if target == "" {
+				continue
+			}
+			if strings.HasPrefix(target, "/") && baseOrigin != "" {
+				target = strings.TrimRight(baseOrigin, "/") + target
+			}
+			ops = []map[string]interface{}{
+				{"type": "navigate", "url": target, "wait_until": "networkidle"},
+			}
+		case "click":
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			ops = []map[string]interface{}{
+				{"type": "interact", "action": "click", "ref": ref},
+			}
+		case "press_escape":
+			ops = []map[string]interface{}{
+				{"type": "key", "key": "Escape"},
+			}
+		case "type":
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			suggested := suggestInputValue(label)
+			if strings.HasPrefix(suggested, "<") {
+				requiresUserInput = true
+			}
+			ops = []map[string]interface{}{
+				{"type": "interact", "action": "type", "ref": ref, "value": suggested},
+			}
+		case "select":
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			requiresUserInput = true
+			ops = []map[string]interface{}{
+				{"type": "interact", "action": "select", "ref": ref, "value": "<option>"},
+			}
+		case "toggle":
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			ops = []map[string]interface{}{
+				{"type": "interact", "action": "toggle", "ref": ref},
+			}
+		default:
+			continue
+		}
+
+		recs = append(recs, map[string]interface{}{
+			"tool": "browser-act",
+			"reason": fmt.Sprintf(
+				"Candidate action from Mangle (priority=%d, reason=%s, label=%s).",
+				priority,
+				reason,
+				label,
+			),
+			"args": map[string]interface{}{
+				"session_id":    sessionID,
+				"operations":    ops,
+				"stop_on_error": true,
+				"view":          "compact",
+			},
+			"candidate":           candidate,
+			"requires_user_input": requiresUserInput,
+		})
+	}
+
+	return limitMapSlice(recs, max)
+}
+
+func asInt(v interface{}) int {
+	switch value := v.(type) {
+	case int:
+		return value
+	case int8:
+		return int(value)
+	case int16:
+		return int(value)
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case float32:
+		return int(value)
+	case float64:
+		return int(value)
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return 0
+		}
+		if i, err := strconv.Atoi(trimmed); err == nil {
+			return i
+		}
+		if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return int(f)
+		}
+		return 0
+	default:
+		return 0
+	}
+}
+
+func asInt64(v interface{}) int64 {
+	switch value := v.(type) {
+	case int:
+		return int64(value)
+	case int8:
+		return int64(value)
+	case int16:
+		return int64(value)
+	case int32:
+		return int64(value)
+	case int64:
+		return value
+	case float32:
+		return int64(value)
+	case float64:
+		return int64(value)
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return 0
+		}
+		if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return i
+		}
+		if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return int64(f)
+		}
+		return 0
+	default:
+		return 0
+	}
+}
+
+func suggestInputValue(label string) string {
+	lower := strings.ToLower(label)
+	switch {
+	case strings.Contains(lower, "email"):
+		return "user@example.com"
+	case strings.Contains(lower, "password"):
+		return "<password>"
+	case strings.Contains(lower, "phone"):
+		return "<phone>"
+	case strings.Contains(lower, "name"):
+		return "<name>"
+	default:
+		return "<value>"
+	}
 }
 
 func ternaryStatus(ok bool, yes, no string) string {

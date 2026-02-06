@@ -28,7 +28,7 @@ func TestVisualizeFactsLogic(t *testing.T) {
 	facts := []mangle.Fact{
 		{
 			Predicate: "interactive",
-			Args:      []interface{}{"btn-1", "button", "Submit", "click"},
+			Args:      []interface{}{"s-viz", "btn-1", "button", "Submit", "click"},
 			Timestamp: time.Now(),
 		},
 		{
@@ -42,7 +42,7 @@ func TestVisualizeFactsLogic(t *testing.T) {
 	}
 
 	// Test the coordinate extraction logic (internal part of Execute)
-	queryStr := "interactive(Ref, \"button\", _, _)."
+	queryStr := "interactive(_, Ref, \"button\", _, _)."
 	variable := "Ref"
 
 	results, err := engine.Query(ctx, queryStr)

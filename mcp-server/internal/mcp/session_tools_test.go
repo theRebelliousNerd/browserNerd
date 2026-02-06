@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -256,6 +257,46 @@ func TestSessionToolsExecuteValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("ReifyReactTool is gated without disclosure metadata", func(t *testing.T) {
+		tool := &ReifyReactTool{sessions: nil}
+		ctx := context.Background()
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"session_id": "s-gated-react",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		resultMap, ok := result.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected map result, got %T", result)
+		}
+		if success, _ := resultMap["success"].(bool); success {
+			t.Fatalf("expected success=false for gated call")
+		}
+		if gated, _ := resultMap["gated"].(bool); !gated {
+			t.Fatalf("expected gated=true")
+		}
+	})
+
+	t.Run("ReifyReactTool explicit intent requires approved handle", func(t *testing.T) {
+		tool := &ReifyReactTool{sessions: nil}
+		ctx := context.Background()
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"session_id":  "s-react-intent",
+			"gate_reason": "explicit_user_intent",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		resultMap := result.(map[string]interface{})
+		msg, _ := resultMap["error"].(string)
+		if !strings.Contains(msg, "requires approved_by_handle") {
+			t.Fatalf("expected explicit handle guidance, got: %s", msg)
+		}
+	})
+
 	t.Run("SnapshotDOMTool requires session_id", func(t *testing.T) {
 		tool := &SnapshotDOMTool{sessions: nil}
 		ctx := context.Background()
@@ -266,6 +307,46 @@ func TestSessionToolsExecuteValidation(t *testing.T) {
 		}
 		if err.Error() != "session_id is required" {
 			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("SnapshotDOMTool is gated without disclosure metadata", func(t *testing.T) {
+		tool := &SnapshotDOMTool{sessions: nil}
+		ctx := context.Background()
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"session_id": "s-gated-dom",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		resultMap, ok := result.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected map result, got %T", result)
+		}
+		if success, _ := resultMap["success"].(bool); success {
+			t.Fatalf("expected success=false for gated call")
+		}
+		if gated, _ := resultMap["gated"].(bool); !gated {
+			t.Fatalf("expected gated=true")
+		}
+	})
+
+	t.Run("SnapshotDOMTool explicit intent requires approved handle", func(t *testing.T) {
+		tool := &SnapshotDOMTool{sessions: nil}
+		ctx := context.Background()
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"session_id":  "s-dom-intent",
+			"gate_reason": "explicit_user_intent",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		resultMap := result.(map[string]interface{})
+		msg, _ := resultMap["error"].(string)
+		if !strings.Contains(msg, "requires approved_by_handle") {
+			t.Fatalf("expected explicit handle guidance, got: %s", msg)
 		}
 	})
 }
@@ -331,6 +412,7 @@ func TestSessionToolSchemaDetails(t *testing.T) {
 	t.Run("ReifyReactTool schema has required session_id", func(t *testing.T) {
 		tool := &ReifyReactTool{}
 		schema := tool.InputSchema()
+		props := schema["properties"].(map[string]interface{})
 
 		required := schema["required"].([]string)
 		found := false
@@ -342,12 +424,19 @@ func TestSessionToolSchemaDetails(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected session_id in required fields")
+		}
+		if props["gate_reason"] == nil {
+			t.Error("expected gate_reason in schema")
+		}
+		if props["approved_by_handle"] == nil {
+			t.Error("expected approved_by_handle in schema")
 		}
 	})
 
 	t.Run("SnapshotDOMTool schema has required session_id", func(t *testing.T) {
 		tool := &SnapshotDOMTool{}
 		schema := tool.InputSchema()
+		props := schema["properties"].(map[string]interface{})
 
 		required := schema["required"].([]string)
 		found := false
@@ -359,6 +448,12 @@ func TestSessionToolSchemaDetails(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected session_id in required fields")
+		}
+		if props["gate_reason"] == nil {
+			t.Error("expected gate_reason in schema")
+		}
+		if props["approved_by_handle"] == nil {
+			t.Error("expected approved_by_handle in schema")
 		}
 	})
 

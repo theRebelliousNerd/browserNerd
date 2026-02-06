@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/config"
+	"github.com/google/mangle/ast"
 )
 
 func TestEngineLoadSchema(t *testing.T) {
@@ -202,6 +203,31 @@ critical_error(Msg, T) :-
 
 	if err := engine.AddRule(rule); err != nil {
 		t.Fatalf("AddRule failed: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now()
+	if err := engine.AddFacts(ctx, []Fact{
+		{
+			Predicate: "console_event",
+			Args:      []interface{}{"error", "backend exploded", now.UnixMilli()},
+			Timestamp: now,
+		},
+		{
+			Predicate: "net_response",
+			Args:      []interface{}{"req-critical", int64(503), int64(42), int64(150)},
+			Timestamp: now,
+		},
+	}); err != nil {
+		t.Fatalf("AddFacts failed: %v", err)
+	}
+
+	derived, err := engine.Evaluate(ctx, "critical_error")
+	if err != nil {
+		t.Fatalf("Evaluate failed: %v", err)
+	}
+	if len(derived) == 0 {
+		t.Fatalf("expected critical_error derivation after AddRule")
 	}
 }
 
@@ -1099,6 +1125,28 @@ func TestEngineAddFactsWithDifferentTypes(t *testing.T) {
 	})
 }
 
+func TestConvertConstantCallsNumberValue(t *testing.T) {
+	cfg := config.MangleConfig{
+		Enable:          true,
+		SchemaPath:      "../../schemas/browser.mg",
+		FactBufferLimit: 1000,
+	}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	got := engine.convertConstant(ast.Number(123))
+	gotNum, ok := got.(int64)
+	if !ok {
+		t.Fatalf("expected int64 from convertConstant(Number), got %T (%v)", got, got)
+	}
+	if gotNum != 123 {
+		t.Fatalf("expected 123, got %d", gotNum)
+	}
+}
+
 func TestEngineMatchesAllWithWildcards(t *testing.T) {
 	cfg := config.MangleConfig{
 		Enable:          true,
@@ -1564,4 +1612,172 @@ func TestEngineQueryBufferDirectWithConstants(t *testing.T) {
 			t.Errorf("Expected 0 results for nonexistent predicate, got %d", len(results))
 		}
 	})
+}
+
+func TestEngineQueryAnonymousWildcardsAndRepeatedVariables(t *testing.T) {
+	cfg := config.MangleConfig{
+		Enable:          true,
+		SchemaPath:      "../../schemas/browser.mg",
+		FactBufferLimit: 1000,
+	}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	ctx := context.Background()
+	_ = engine.AddFacts(ctx, []Fact{
+		{Predicate: "net_request", Args: []interface{}{"req-1", "GET", "/api/users", "fetch", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{"req-2", "POST", "/api/users", "xhr", int64(1001)}, Timestamp: time.Now()},
+	})
+
+	t.Run("anonymous underscores are treated as independent wildcards", func(t *testing.T) {
+		rows, err := engine.Query(ctx, `net_request(_, _, _, _, _).`)
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(rows) < 2 {
+			t.Fatalf("expected wildcard query to match all requests, got %d", len(rows))
+		}
+	})
+
+	t.Run("repeated named variable enforces equality", func(t *testing.T) {
+		rows, err := engine.Query(ctx, `net_request(X, X, _, _, _).`)
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(rows) != 0 {
+			t.Fatalf("expected 0 matches for repeated variable equality, got %d", len(rows))
+		}
+	})
+}
+
+func TestEngineKeyedAPIBackendCorrelation(t *testing.T) {
+	cfg := config.MangleConfig{
+		Enable:          true,
+		SchemaPath:      "../../schemas/browser.mg",
+		FactBufferLimit: 1000,
+	}
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now()
+
+	// One matching request/backend pair + one mismatched noise pair.
+	err = engine.AddFacts(ctx, []Fact{
+		{Predicate: "net_request", Args: []interface{}{"req-a", "GET", "/api/a", "fetch", int64(2000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{"req-a", int64(500), int64(20), int64(100)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{"req-a", "request_id", "rid-a"}, Timestamp: now},
+		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-a", int64(1985)}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-a", "backend panic rid-a", int64(1985)}, Timestamp: now},
+		{Predicate: "net_request", Args: []interface{}{"req-b", "GET", "/api/b", "fetch", int64(3000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{"req-b", int64(502), int64(20), int64(100)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{"req-b", "request_id", "rid-b"}, Timestamp: now},
+		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-z", int64(2990)}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-z", "backend panic rid-z", int64(2990)}, Timestamp: now},
+	})
+	if err != nil {
+		t.Fatalf("AddFacts failed: %v", err)
+	}
+
+	rows, err := engine.Query(ctx, `api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta).`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly 1 keyed correlation, got %d: %+v", len(rows), rows)
+	}
+
+	if got := rows[0]["ReqId"]; got != "req-a" {
+		t.Fatalf("expected ReqId=req-a, got %v", got)
+	}
+	if got := rows[0]["Url"]; got != "/api/a" {
+		t.Fatalf("expected Url=/api/a, got %v", got)
+	}
+
+	// Also verify numeric guards by constraining status in-query.
+	statusConstrained, err := engine.Query(ctx, `api_backend_correlation("req-a", "/api/a", 500, BackendMsg, TimeDelta).`)
+	if err != nil {
+		t.Fatalf("status-constrained query failed: %v", err)
+	}
+	if len(statusConstrained) != 1 {
+		t.Fatalf("expected 1 status-constrained keyed correlation, got %d: %+v", len(statusConstrained), statusConstrained)
+	}
+}
+
+func TestEngineAPIBackendCorrelationRequiresSharedKey(t *testing.T) {
+	cfg := config.MangleConfig{
+		Enable:          true,
+		SchemaPath:      "../../schemas/browser.mg",
+		FactBufferLimit: 1000,
+	}
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now()
+
+	err = engine.AddFacts(ctx, []Fact{
+		{Predicate: "net_request", Args: []interface{}{"req-c", "GET", "/api/c", "fetch", int64(4000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{"req-c", int64(500), int64(20), int64(100)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{"req-c", "request_id", "rid-c"}, Timestamp: now},
+		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-x", int64(3990)}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-x", "backend panic rid-x", int64(3990)}, Timestamp: now},
+	})
+	if err != nil {
+		t.Fatalf("AddFacts failed: %v", err)
+	}
+
+	rows, err := engine.Query(ctx, `api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta).`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected no correlation for mismatched keys, got %d: %+v", len(rows), rows)
+	}
+}
+
+func TestEngineSlowBackendCorrelationUsesKeyedJoin(t *testing.T) {
+	cfg := config.MangleConfig{
+		Enable:          true,
+		SchemaPath:      "../../schemas/browser.mg",
+		FactBufferLimit: 1000,
+	}
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now()
+
+	err = engine.AddFacts(ctx, []Fact{
+		{Predicate: "net_request", Args: []interface{}{"req-slow", "GET", "/api/slow", "fetch", int64(5000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{"req-slow", int64(200), int64(40), int64(2200)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{"req-slow", "trace_id", "trace-slow"}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "trace_id", "trace-slow", "db pool exhausted", int64(4995)}, Timestamp: now},
+	})
+	if err != nil {
+		t.Fatalf("AddFacts failed: %v", err)
+	}
+
+	rows, err := engine.Query(ctx, `slow_backend_correlation(ReqId, Url, Duration, BackendMsg).`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 slow backend correlation, got %d: %+v", len(rows), rows)
+	}
+	if got := rows[0]["ReqId"]; got != "req-slow" {
+		t.Fatalf("expected ReqId=req-slow, got %v", got)
+	}
+	if got := rows[0]["BackendMsg"]; got != "db pool exhausted" {
+		t.Fatalf("expected BackendMsg='db pool exhausted', got %v", got)
+	}
 }

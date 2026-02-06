@@ -248,6 +248,44 @@ func TestQueryFactsTool(t *testing.T) {
 			t.Error("expected at least 1 result")
 		}
 	})
+
+	t.Run("query tolerates missing trailing period", func(t *testing.T) {
+		ctx := context.Background()
+
+		result, err := tool.Execute(ctx, map[string]interface{}{"query": `console_event(Level, Msg, Ts)`})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+
+		resultMap := result.(map[string]interface{})
+		if resultMap["count"].(int) == 0 {
+			t.Error("expected at least 1 result without trailing period")
+		}
+	})
+
+	t.Run("anonymous wildcard bindings are normalized", func(t *testing.T) {
+		ctx := context.Background()
+		_ = engine.AddFacts(ctx, []mangle.Fact{
+			{Predicate: "net_request", Args: []interface{}{"req-anon", "GET", "/health", "fetch", int64(1010)}, Timestamp: time.Now()},
+		})
+
+		result, err := tool.Execute(ctx, map[string]interface{}{"query": `net_request(_, _, _, _, _).`})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+
+		resultMap := result.(map[string]interface{})
+		rows, ok := resultMap["results"].([]map[string]interface{})
+		if !ok {
+			t.Fatalf("expected []map[string]interface{} results, got %T", resultMap["results"])
+		}
+		if len(rows) == 0 {
+			t.Fatalf("expected at least one wildcard result")
+		}
+		if _, exists := rows[0]["_0"]; !exists {
+			t.Fatalf("expected normalized anonymous binding key _0 in first row, got keys=%v", rows[0])
+		}
+	})
 }
 
 func TestSubmitRuleTool(t *testing.T) {

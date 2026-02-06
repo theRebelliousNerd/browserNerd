@@ -16,7 +16,7 @@ Evaluation on 8 navigation tasks using Gemini 3 Flash (February 2026):
 
 - **Highest success rate** - BrowserNERD outperforms both competitors by 12 percentage points
 - **Best token efficiency** - Uses fewer tokens despite more tool calls, due to sparse JSON responses (v0.0.3 `omitempty` optimization)
-- **Granular control** - Many specialized tools (`evaluate-js`, `get-navigation-links`, `get-interactive-elements`) vs monolithic DOM snapshots
+- **Granular control** - Many specialized tools (`evaluate-js`, `reify-react`, `snapshot-dom`, `get-navigation-links`, `get-interactive-elements`) vs monolithic DOM snapshots
 
 **Per-task highlights:**
 - `mdn_navigate_to_fetch`: BrowserNERD 245K tokens vs Playwright 456K tokens (46% more efficient)
@@ -143,9 +143,9 @@ launch:
 - `browser-history` - Navigate back/forward
 
 **Progressive Disclosure (Consolidated):**
-- `browser-observe` - Unified observe tool (state/nav/interactive/hidden) with `summary|compact|full` views
+- `browser-observe` - Unified observe tool (state/nav/interactive/hidden) with `summary|compact|full` views and intent presets (`quick_status`, `find_actions`, `map_navigation`, `hidden_content`, `deep_audit`)
 - `browser-act` - Unified action tool for multi-step operations
-- `browser-reason` - Mangle-first reasoning with confidence, contradictions, and evidence handles
+- `browser-reason` - Mangle-first reasoning with confidence, contradictions, evidence handles, and action-plan recommendations from Mangle candidates
 
 **Diagnostics:**
 - `get-console-errors` - Browser console + Docker container errors
@@ -155,8 +155,8 @@ launch:
 - `evaluate-js` - Advanced JS escape hatch (now gated by progressive disclosure reason/handle)
 
 **React & DOM:**
-- `reify-react` - Extract React Fiber tree as facts
-- `snapshot-dom` - Capture DOM structure as facts
+- `reify-react` - Deep React Fiber extraction escape hatch (gated by progressive disclosure reason/handle)
+- `snapshot-dom` - Deep DOM extraction escape hatch (gated by progressive disclosure reason/handle)
 - `discover-hidden-content` - Find elements outside viewport
 
 **Mangle Facts & Rules:**
@@ -186,6 +186,7 @@ launch:
 - `navigation_event`, `current_url` - Page navigation
 - `docker_log`, `docker_log_correlation`, `backend_error`, `frontend_ssr_error` - Container logs + parsed correlation keys
 - `screen_blocked`, `is_main_content`, `primary_action` - Semantic UI macros
+- `action_candidate`, `global_action` - Mangle-native action planning candidates for browser-act
 
 **Causal Rules:**
 - `caused_by(ConsoleErr, ReqId)` - Console error caused by failed request
@@ -195,6 +196,7 @@ launch:
 - `full_stack_error(...)` - Complete error chain from browser to backend
 - `login_succeeded(SessionId)` - Universal login detection
 - `interaction_blocked(SessionId, Reason)` - Page interaction blocked by modal/overlay
+- `action_candidate(...)` - Ranked click candidates derived from semantic UI + nav + interactive facts
 
 ## Claude Code Integration
 

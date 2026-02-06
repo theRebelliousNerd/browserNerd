@@ -132,32 +132,32 @@ func TestSemanticMacros(t *testing.T) {
 		facts := []Fact{
 			{
 				Predicate: "interactive",
-				Args:      []interface{}{"btn-1", "button", "Submit", "click"},
+				Args:      []interface{}{"s-pa", "btn-1", "button", "Submit", "click"},
 				Timestamp: time.Now(),
 			},
 			{
-				Predicate: "dom_attr",
-				Args:      []interface{}{"btn-1", "type", "submit"},
-				Timestamp: time.Now(),
-			},
-			{
-				Predicate: "interactive",
-				Args:      []interface{}{"btn-2", "button", "Login", "click"},
-				Timestamp: time.Now(),
-			},
-			{
-				Predicate: "dom_attr",
-				Args:      []interface{}{"btn-2", "class", "btn-primary"},
+				Predicate: "elem_attr",
+				Args:      []interface{}{"s-pa", "btn-1", "button_type", "submit"},
 				Timestamp: time.Now(),
 			},
 			{
 				Predicate: "interactive",
-				Args:      []interface{}{"btn-3", "button", "Go", "click"},
+				Args:      []interface{}{"s-pa", "btn-2", "button", "Login", "click"},
 				Timestamp: time.Now(),
 			},
 			{
-				Predicate: "dom_attr",
-				Args:      []interface{}{"btn-3", "id", "submit-button"},
+				Predicate: "elem_attr",
+				Args:      []interface{}{"s-pa", "btn-2", "data_testid", "login-cta-btn"},
+				Timestamp: time.Now(),
+			},
+			{
+				Predicate: "interactive",
+				Args:      []interface{}{"s-pa", "btn-3", "button", "Go", "click"},
+				Timestamp: time.Now(),
+			},
+			{
+				Predicate: "elem_bbox",
+				Args:      []interface{}{"s-pa", "btn-3", 0, 0, 220, 44},
 				Timestamp: time.Now(),
 			},
 		}

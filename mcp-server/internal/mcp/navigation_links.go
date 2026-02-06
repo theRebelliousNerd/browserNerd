@@ -254,7 +254,7 @@ func (t *GetNavigationLinksTool) Execute(ctx context.Context, args map[string]in
 
 					facts = append(facts, mangle.Fact{
 						Predicate: "nav_link",
-						Args:      []interface{}{ref, href, area, isInternal},
+						Args:      []interface{}{sessionID, ref, href, area, isInternal},
 						Timestamp: now,
 					})
 				}

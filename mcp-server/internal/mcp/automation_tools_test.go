@@ -217,6 +217,38 @@ func TestWaitForConditionTool(t *testing.T) {
 		}
 	})
 
+	t.Run("matches derived predicate via rule evaluation", func(t *testing.T) {
+		ctx := context.Background()
+
+		_ = engine.AddFacts(ctx, []mangle.Fact{
+			{Predicate: "interactive", Args: []interface{}{"s-wait", "derived-ref", "button", "Derived", "click"}, Timestamp: time.Now()},
+		})
+
+		submitTool := &SubmitRuleTool{engine: engine}
+		if _, err := submitTool.Execute(ctx, map[string]interface{}{
+			"rule": "wait_ready(Ref) :- interactive(_, Ref, _, _, _).",
+		}); err != nil {
+			t.Fatalf("submit-rule failed: %v", err)
+		}
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"predicate":  "wait_ready",
+			"match_args": []interface{}{"derived-ref"},
+			"timeout_ms": 500,
+		})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+
+		resultMap := result.(map[string]interface{})
+		if !resultMap["matched"].(bool) {
+			t.Fatal("expected derived predicate to match")
+		}
+		if resultMap["source"] != "derived_eval" {
+			t.Fatalf("expected source=derived_eval, got %v", resultMap["source"])
+		}
+	})
+
 	t.Run("wildcard matching", func(t *testing.T) {
 		ctx := context.Background()
 

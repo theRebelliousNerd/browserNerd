@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
@@ -107,7 +108,11 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 		visibleOnly = v
 	}
 	limit := getIntArg(args, "limit", 50)
-	verbose := getBoolArg(args, "verbose", false)
+	requestedVerbose := getBoolArg(args, "verbose", false)
+	// Always extract richer metadata internally so Mangle can reason on it without
+	// bloating the tool output. We'll strip verbose fields before returning when
+	// requestedVerbose=false.
+	internalVerbose := true
 
 	page, ok := t.sessions.Page(sessionID)
 	if !ok {
@@ -258,6 +263,11 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 				if (dataTestId) elem.fingerprint.data_testid = dataTestId;
 				if (role) elem.fingerprint.role = role;
 				if (classes.length > 0) elem.fingerprint.classes = classes.slice(0, 5);
+				if (tag === 'input' && el.type) elem.fingerprint.input_type = el.type;
+				if (tag === 'button' && el.type) elem.fingerprint.button_type = el.type;
+				if (tag === 'input' && (el.type === 'submit' || el.type === 'button' || el.type === 'reset')) {
+					elem.fingerprint.button_type = el.type;
+				}
 
 				// Build alt_selectors only in verbose mode
 				const altSelectors = [];
@@ -290,7 +300,7 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 			elements
 		};
 	}
-	`, filter, visibleOnly, limit, verbose)
+	`, filter, visibleOnly, limit, internalVerbose)
 
 	result, err := page.Eval(js)
 	if err != nil {
@@ -301,7 +311,8 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 	if data, ok := result.Value.Val().(map[string]interface{}); ok {
 		if elems, ok := data["elements"].([]interface{}); ok {
 			now := time.Now()
-			facts := make([]mangle.Fact, 0, len(elems))
+			// We can emit multiple facts per element (enabled state, bbox, attrs, etc.).
+			facts := make([]mangle.Fact, 0, len(elems)*4)
 			fingerprints := make([]*browser.ElementFingerprint, 0, len(elems))
 
 			for _, e := range elems {
@@ -313,9 +324,36 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 
 					facts = append(facts, mangle.Fact{
 						Predicate: "interactive",
-						Args:      []interface{}{ref, elemType, label, action},
+						Args:      []interface{}{sessionID, ref, elemType, label, action},
 						Timestamp: now,
 					})
+
+					enabled := "true"
+					if disabledRaw, ok := elem["disabled"]; ok {
+						if disabled, ok := disabledRaw.(bool); ok && disabled {
+							enabled = "false"
+						}
+					}
+					facts = append(facts, mangle.Fact{
+						Predicate: "element_enabled",
+						Args:      []interface{}{sessionID, ref, enabled},
+						Timestamp: now,
+					})
+					if visibleOnly {
+						facts = append(facts, mangle.Fact{
+							Predicate: "element_visible",
+							Args:      []interface{}{sessionID, ref, "true"},
+							Timestamp: now,
+						})
+					}
+
+					if v := getStringFromMap(elem, "value"); v != "" {
+						facts = append(facts, mangle.Fact{
+							Predicate: "element_value",
+							Args:      []interface{}{sessionID, ref, v},
+							Timestamp: now,
+						})
+					}
 
 					fp := &browser.ElementFingerprint{
 						Ref:         ref,
@@ -330,21 +368,63 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 						fp.DataTestID = getStringFromMap(fpData, "data_testid")
 						fp.Role = getStringFromMap(fpData, "role")
 
+						appendAttr := func(attrName, attrValue string) {
+							if strings.TrimSpace(attrName) == "" || strings.TrimSpace(attrValue) == "" {
+								return
+							}
+							facts = append(facts, mangle.Fact{
+								Predicate: "elem_attr",
+								Args:      []interface{}{sessionID, ref, attrName, attrValue},
+								Timestamp: now,
+							})
+						}
+						appendAttr("id", fp.ID)
+						appendAttr("name", fp.Name)
+						appendAttr("aria_label", fp.AriaLabel)
+						appendAttr("data_testid", fp.DataTestID)
+						appendAttr("role", fp.Role)
+						appendAttr("input_type", getStringFromMap(fpData, "input_type"))
+						appendAttr("button_type", getStringFromMap(fpData, "button_type"))
+
 						if classesRaw, ok := fpData["classes"].([]interface{}); ok {
-							for _, c := range classesRaw {
+							for i, c := range classesRaw {
+								if i >= 5 {
+									break
+								}
 								if classStr, ok := c.(string); ok {
 									fp.Classes = append(fp.Classes, classStr)
+									facts = append(facts, mangle.Fact{
+										Predicate: "elem_class",
+										Args:      []interface{}{sessionID, ref, classStr},
+										Timestamp: now,
+									})
 								}
 							}
 						}
 
 						if bbData, ok := fpData["bounding_box"].(map[string]interface{}); ok {
 							fp.BoundingBox = make(map[string]float64)
+							var x, y, w, h int
 							for k, v := range bbData {
 								if fv, ok := v.(float64); ok {
 									fp.BoundingBox[k] = fv
+									switch k {
+									case "x":
+										x = int(fv)
+									case "y":
+										y = int(fv)
+									case "width":
+										w = int(fv)
+									case "height":
+										h = int(fv)
+									}
 								}
 							}
+							facts = append(facts, mangle.Fact{
+								Predicate: "elem_bbox",
+								Args:      []interface{}{sessionID, ref, x, y, w, h},
+								Timestamp: now,
+							})
 						}
 					}
 
@@ -357,6 +437,13 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 					}
 
 					fingerprints = append(fingerprints, fp)
+
+					// Maintain the original token-efficient output behavior.
+					// When requestedVerbose=false, strip internal verbose fields before returning.
+					if !requestedVerbose {
+						delete(elem, "fingerprint")
+						delete(elem, "alt_selectors")
+					}
 				}
 			}
 
@@ -701,16 +788,16 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 	switch action {
 	case "click":
 		predicate = "user_click"
-		factArgs = []interface{}{ref, now.UnixMilli()}
+		factArgs = []interface{}{sessionID, ref, now.UnixMilli()}
 	case "type":
 		predicate = "user_type"
-		factArgs = []interface{}{ref, value, now.UnixMilli()}
+		factArgs = []interface{}{sessionID, ref, value, now.UnixMilli()}
 	case "select":
 		predicate = "user_select"
-		factArgs = []interface{}{ref, value, now.UnixMilli()}
+		factArgs = []interface{}{sessionID, ref, value, now.UnixMilli()}
 	case "toggle":
 		predicate = "user_toggle"
-		factArgs = []interface{}{ref, now.UnixMilli()}
+		factArgs = []interface{}{sessionID, ref, now.UnixMilli()}
 	}
 	if predicate != "" {
 		_ = t.engine.AddFacts(ctx, []mangle.Fact{{Predicate: predicate, Args: factArgs, Timestamp: now}})

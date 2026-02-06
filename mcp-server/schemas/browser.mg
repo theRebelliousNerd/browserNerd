@@ -76,7 +76,10 @@ Decl cascading_failure(ChildReqId, ParentReqId).
 Decl race_condition_detected().
 Decl test_passed().
 Decl failed_request(RequestId, Url, Status).
+Decl failed_request_at(RequestId, Url, Status, RequestTimestamp).
+Decl slow_api_at(RequestId, Url, Duration, RequestTimestamp).
 Decl error_chain(ConsoleErr, RequestId, Url, Status).
+Decl root_cause_at(ConsoleMsg, Source, Cause, Timestamp).
 
 # Toast correlation predicates
 Decl toast_after_api_failure(ToastText, RequestId, Url, Status, TimeDelta).
@@ -95,9 +98,7 @@ Decl toast_error_chain(ToastText, RequestId, Url, Status).
 #   3. The time difference is less than 100ms (temporal proximity)
 caused_by(ConsoleErr, ReqId) :-
     console_event("error", ConsoleErr, TError),
-    net_response(ReqId, Status, _, _),
-    net_request(ReqId, _, _, _, TNet),
-    Status >= 400,
+    failed_request_at(ReqId, _, _, TNet),
     TNet < TError,
     fn:minus(TError, TNet) < 100.
 
@@ -112,10 +113,8 @@ slow_api(ReqId, Url, Duration) :-
 # A child request fails because its parent (initiator) also failed
 cascading_failure(ChildReqId, ParentReqId) :-
     request_initiator(ChildReqId, _, ParentReqId),
-    net_response(ChildReqId, ChildStatus, _, _),
-    net_response(ParentReqId, ParentStatus, _, _),
-    ChildStatus >= 400,
-    ParentStatus >= 400.
+    failed_request(ChildReqId, _, _),
+    failed_request(ParentReqId, _, _).
 
 # Rule 4: Race Condition Detection (PRD Section 5.3)
 # Detects when a submit button is clicked before the form state is ready
@@ -129,6 +128,11 @@ race_condition_detected() :-
 # Convenience predicate for listing all failed requests
 failed_request(ReqId, Url, Status) :-
     net_request(ReqId, _, Url, _, _),
+    net_response(ReqId, Status, _, _),
+    Status >= 400.
+
+failed_request_at(ReqId, Url, Status, ReqTs) :-
+    net_request(ReqId, _, Url, _, ReqTs),
     net_response(ReqId, Status, _, _),
     Status >= 400.
 
@@ -150,9 +154,7 @@ error_chain(ConsoleErr, ReqId, Url, Status) :-
 # This detects when the UI shows an error message due to a backend failure
 toast_after_api_failure(ToastText, ReqId, Url, Status, TimeDelta) :-
     error_toast(ToastText, _, TToast),
-    net_request(ReqId, _, Url, _, TReq),
-    net_response(ReqId, Status, _, _),
-    Status >= 400,
+    failed_request_at(ReqId, Url, Status, TReq),
     TToast > TReq,
     TimeDelta = fn:minus(TToast, TReq),
     TimeDelta < 5000.
@@ -205,18 +207,21 @@ test_passed() :-
 
 # Interactive elements extracted by get-interactive-elements tool
 # Ref is the element identifier (id, name, or selector)
-Decl interactive(Ref, Type, Label, Action).
+Decl interactive(SessionId, Ref, Type, Label, Action).
 
 # Element state for diagnostic purposes
-Decl element_visible(Ref, Visible).
-Decl element_enabled(Ref, Enabled).
-Decl element_value(Ref, Value).
+Decl element_visible(SessionId, Ref, Visible).
+Decl element_enabled(SessionId, Ref, Enabled).
+Decl element_value(SessionId, Ref, Value).
+Decl elem_attr(SessionId, Ref, AttrName, AttrValue).
+Decl elem_class(SessionId, Ref, Class).
+Decl elem_bbox(SessionId, Ref, X, Y, Width, Height).
 
 # User interaction events (emitted by interact tool)
-Decl user_click(Ref, Timestamp).
-Decl user_type(Ref, Value, Timestamp).
-Decl user_select(Ref, Option, Timestamp).
-Decl user_toggle(Ref, Timestamp).
+Decl user_click(SessionId, Ref, Timestamp).
+Decl user_type(SessionId, Ref, Value, Timestamp).
+Decl user_select(SessionId, Ref, Option, Timestamp).
+Decl user_toggle(SessionId, Ref, Timestamp).
 
 # =============================================================================
 # VECTOR 5b: HYPER-EFFICIENT NAVIGATION (get-navigation-links tool)
@@ -225,19 +230,19 @@ Decl user_toggle(Ref, Timestamp).
 # Navigation links extracted by get-navigation-links tool
 # Area is one of: "nav", "side", "main", "foot"
 # Internal is "true" or "false" string
-Decl nav_link(Ref, Href, Area, Internal).
+Decl nav_link(SessionId, Ref, Href, Area, Internal).
 
 # Derived: Count links by area
-Decl nav_area_has_links(Area).
-nav_area_has_links(Area) :- nav_link(_, _, Area, _).
+Decl nav_area_has_links(SessionId, Area).
+nav_area_has_links(SessionId, Area) :- nav_link(SessionId, _, _, Area, _).
 
 # Derived: Find internal navigation targets
-Decl internal_nav_target(Href).
-internal_nav_target(Href) :- nav_link(_, Href, _, "true").
+Decl internal_nav_target(SessionId, Href).
+internal_nav_target(SessionId, Href) :- nav_link(SessionId, _, Href, _, "true").
 
 # Derived: Find external links (potential security/UX concern)
-Decl external_link(Ref, Href, Area).
-external_link(Ref, Href, Area) :- nav_link(Ref, Href, Area, "false").
+Decl external_link(SessionId, Ref, Href, Area).
+external_link(SessionId, Ref, Href, Area) :- nav_link(SessionId, Ref, Href, Area, "false").
 
 # =============================================================================
 # INTERACTION DIAGNOSTIC RULES
@@ -245,16 +250,16 @@ external_link(Ref, Href, Area) :- nav_link(Ref, Href, Area, "false").
 
 # Rule: Click on non-visible element (potential failure)
 # Note: element_visible stores "true" or "false" as strings
-Decl click_on_hidden(Ref).
-click_on_hidden(Ref) :-
-    user_click(Ref, _),
-    element_visible(Ref, "false").
+Decl click_on_hidden(SessionId, Ref).
+click_on_hidden(SessionId, Ref) :-
+    user_click(SessionId, Ref, _),
+    element_visible(SessionId, Ref, "false").
 
 # Rule: Click on disabled element
-Decl click_on_disabled(Ref).
-click_on_disabled(Ref) :-
-    user_click(Ref, _),
-    element_enabled(Ref, "false").
+Decl click_on_disabled(SessionId, Ref).
+click_on_disabled(SessionId, Ref) :-
+    user_click(SessionId, Ref, _),
+    element_enabled(SessionId, Ref, "false").
 
 # Diagnostic predicates for code-level tracking
 # (Mangle's negation semantics differ from Prolog - track these via code)
@@ -295,11 +300,12 @@ Decl action(ActionType, Ref, Value).
 # Rule: Login form detected (common pattern)
 Decl login_form_detected(SessionId).
 login_form_detected(SessionId) :-
-    interactive(EmailRef, "input", _, _),
-    interactive(PasswordRef, "input", _, _),
-    dom_attr(_, "type", "email"),
-    dom_attr(_, "type", "password"),
-    current_url(SessionId, _).
+    current_url(SessionId, _),
+    interactive(SessionId, EmailRef, "input", _, _),
+    elem_attr(SessionId, EmailRef, "input_type", "email"),
+    interactive(SessionId, PasswordRef, "input", _, _),
+    elem_attr(SessionId, PasswordRef, "input_type", "password"),
+    EmailRef != PasswordRef.
 
 # Rule: Form ready for submission
 Decl form_ready(SessionId).
@@ -593,6 +599,14 @@ Decl root_cause(ConsoleMsg, Source, Cause).
 root_cause(ConsoleMsg, "backend", BackendMsg) :-
     full_stack_error(ConsoleMsg, _, _, BackendMsg).
 
+root_cause_at(ConsoleMsg, "backend", BackendMsg, ConsoleTs) :-
+    full_stack_error(ConsoleMsg, _, _, BackendMsg),
+    console_event("error", ConsoleMsg, ConsoleTs).
+
+slow_api_at(ReqId, Url, Duration, ReqTs) :-
+    slow_api(ReqId, Url, Duration),
+    net_request(ReqId, _, _, _, ReqTs).
+
 # Rule: Error requires investigation (no correlation found)
 Decl unresolved_error(Level, Message, Timestamp).
 unresolved_error(Level, Msg, Ts) :-
@@ -681,14 +695,14 @@ a11y_critical(SessionId, Rule, Element, Msg) :-
     a11y_issue(SessionId, "serious", Rule, Element, Msg, _).
 
 # --- Interactive element without label (common issue) ---
-Decl unlabeled_interactive(Ref).
-unlabeled_interactive(Ref) :-
-    interactive(Ref, _, "", _).
+Decl unlabeled_interactive(SessionId, Ref).
+unlabeled_interactive(SessionId, Ref) :-
+    interactive(SessionId, Ref, _, "", _).
 
 # --- Form input without accessible name ---
-Decl unlabeled_input(Ref).
-unlabeled_input(Ref) :-
-    interactive(Ref, "input", "", _).
+Decl unlabeled_input(SessionId, Ref).
+unlabeled_input(SessionId, Ref) :-
+    interactive(SessionId, Ref, "input", "", _).
 
 # =============================================================================
 # VECTOR 11: FORM VALIDATION DETECTION
@@ -719,27 +733,27 @@ missing_required_field(SessionId, FieldRef) :-
 # Tracks sequences of user interactions for reproducing test scenarios.
 
 # --- Derived: Actions taken on same element ---
-Decl repeated_action_on_element(Ref, ActionCount).
-repeated_action_on_element(Ref, Count) :-
-    user_click(Ref, _) |>
-    do fn:group_by(Ref),
+Decl repeated_action_on_element(SessionId, Ref, ActionCount).
+repeated_action_on_element(SessionId, Ref, Count) :-
+    user_click(SessionId, Ref, _) |>
+    do fn:group_by(SessionId, Ref),
     let Count = fn:count().
 
 # --- Derived: Click followed by type (common form pattern) ---
-Decl click_then_type(ClickRef, TypeRef, TimeDelta).
-click_then_type(ClickRef, TypeRef, Delta) :-
-    user_click(ClickRef, TClick),
-    user_type(TypeRef, _, TType),
+Decl click_then_type(SessionId, ClickRef, TypeRef, TimeDelta).
+click_then_type(SessionId, ClickRef, TypeRef, Delta) :-
+    user_click(SessionId, ClickRef, TClick),
+    user_type(SessionId, TypeRef, _, TType),
     TType > TClick,
     Delta = fn:minus(TType, TClick),
     Delta < 5000.
 
 # --- Derived: Navigation after button click ---
-Decl click_triggered_navigation(Ref, FromUrl, ToUrl, TimeDelta).
-click_triggered_navigation(Ref, FromUrl, ToUrl, Delta) :-
-    user_click(Ref, TClick),
-    navigation_event(_, ToUrl, TNav),
-    current_url(_, FromUrl),
+Decl click_triggered_navigation(SessionId, Ref, FromUrl, ToUrl, TimeDelta).
+click_triggered_navigation(SessionId, Ref, FromUrl, ToUrl, Delta) :-
+    user_click(SessionId, Ref, TClick),
+    navigation_event(SessionId, ToUrl, TNav),
+    current_url(SessionId, FromUrl),
     TNav > TClick,
     Delta = fn:minus(TNav, TClick),
     Delta < 5000,
@@ -751,18 +765,18 @@ click_triggered_navigation(Ref, FromUrl, ToUrl, Delta) :-
 # Common assertion patterns for frontend testing.
 
 # --- Element exists with its label text ---
-Decl element_has_text(Ref, Label).
-element_has_text(Ref, Label) :-
-    interactive(Ref, _, Label, _).
+Decl element_has_text(SessionId, Ref, Label).
+element_has_text(SessionId, Ref, Label) :-
+    interactive(SessionId, Ref, _, Label, _).
 
 # --- Element is in expected state ---
-Decl element_is_enabled(Ref).
-element_is_enabled(Ref) :-
-    element_enabled(Ref, "true").
+Decl element_is_enabled(SessionId, Ref).
+element_is_enabled(SessionId, Ref) :-
+    element_enabled(SessionId, Ref, "true").
 
-Decl element_is_disabled(Ref).
-element_is_disabled(Ref) :-
-    element_enabled(Ref, "false").
+Decl element_is_disabled(SessionId, Ref).
+element_is_disabled(SessionId, Ref) :-
+    element_enabled(SessionId, Ref, "false").
 
 # --- Page current URL (alias for queries) ---
 Decl at_route(SessionId, Url).
@@ -813,19 +827,23 @@ is_main_content(Id) :- dom_attr(Id, "role", "main").
 is_main_content(Id) :- dom_attr(Id, "class", "main-content").
 
 # --- Primary Action Detection ---
-Decl primary_action(Ref, Label).
-primary_action(Ref, Label) :- 
-    interactive(Ref, "button", Label, _), 
-    dom_attr(Ref, "type", "submit").
-primary_action(Ref, Label) :- 
-    interactive(Ref, "button", Label, _), 
-    dom_attr(Ref, "class", "btn-primary").
-primary_action(Ref, Label) :- 
-    interactive(Ref, "button", Label, _), 
-    dom_attr(Ref, "class", "primary-button").
-primary_action(Ref, Label) :- 
-    interactive(Ref, "button", Label, _), 
-    dom_attr(Ref, "id", "submit-button").
+Decl primary_action(SessionId, Ref, Label).
+primary_action(SessionId, Ref, Label) :- 
+    interactive(SessionId, Ref, "button", Label, _),
+    elem_attr(SessionId, Ref, "button_type", "submit").
+primary_action(SessionId, Ref, Label) :- 
+    interactive(SessionId, Ref, "button", Label, _),
+    elem_attr(SessionId, Ref, "data_testid", TestID),
+    :string:contains(TestID, "cta").
+primary_action(SessionId, Ref, Label) :- 
+    interactive(SessionId, Ref, "button", Label, _),
+    elem_bbox(SessionId, Ref, _, _, W, H),
+    W >= 200,
+    H >= 40.
+primary_action(SessionId, Ref, Label) :- 
+    interactive(SessionId, Ref, "button", Label, _),
+    elem_attr(SessionId, Ref, "id", Id),
+    :string:contains(Id, "submit").
 
 # =============================================================================
 # VECTOR 15: PROGRESSIVE DISCLOSURE + JS GATING
@@ -851,3 +869,76 @@ low_confidence_topic(SessionId, Topic) :-
 Decl disclosure_escalation(SessionId, Topic, Reason).
 disclosure_escalation(SessionId, Topic, "low_confidence") :-
     low_confidence_topic(SessionId, Topic).
+
+# =============================================================================
+# VECTOR 16: ACTION PLANNING CANDIDATES (MANGLE-NATIVE)
+# =============================================================================
+# Lets browser-reason produce browser-act operation plans with fewer tool calls.
+
+Decl action_candidate(SessionId, Ref, Label, Action, Priority, Reason).
+
+action_candidate(SessionId, Ref, Label, "click", 100, "primary_action") :-
+    primary_action(SessionId, Ref, Label).
+
+action_candidate(SessionId, Ref, Label, "click", 80, "enabled_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    element_enabled(SessionId, Ref, "true").
+
+action_candidate(SessionId, Ref, Label, "type", 78, "enabled_input") :-
+    interactive(SessionId, Ref, "input", Label, "type"),
+    element_enabled(SessionId, Ref, "true").
+
+action_candidate(SessionId, Ref, Label, "select", 72, "enabled_select") :-
+    interactive(SessionId, Ref, "select", Label, "select"),
+    element_enabled(SessionId, Ref, "true").
+
+action_candidate(SessionId, Ref, Label, "toggle", 68, "toggle_control") :-
+    interactive(SessionId, Ref, "checkbox", Label, "toggle").
+
+action_candidate(SessionId, Ref, Label, "toggle", 66, "radio_control") :-
+    interactive(SessionId, Ref, "radio", Label, "toggle").
+
+action_candidate(SessionId, Ref, Label, "click", 70, "button_click") :-
+    interactive(SessionId, Ref, "button", Label, "click").
+
+action_candidate(SessionId, Ref, Label, "click", 60, "link_click") :-
+    interactive(SessionId, Ref, "link", Label, "click").
+
+action_candidate(SessionId, Ref, Href, "navigate", 58, "internal_nav_link") :-
+    nav_link(SessionId, Ref, Href, _, "true").
+
+action_candidate(SessionId, Ref, Label, "click", 57, "close_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "Close".
+
+action_candidate(SessionId, Ref, Label, "click", 57, "close_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "close".
+
+action_candidate(SessionId, Ref, Label, "click", 56, "dismiss_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "Dismiss".
+
+action_candidate(SessionId, Ref, Label, "click", 56, "dismiss_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "dismiss".
+
+action_candidate(SessionId, Ref, Label, "click", 55, "cancel_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "Cancel".
+
+action_candidate(SessionId, Ref, Label, "click", 55, "cancel_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "cancel".
+
+action_candidate(SessionId, Ref, Label, "click", 54, "retry_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "Retry".
+
+action_candidate(SessionId, Ref, Label, "click", 54, "retry_button") :-
+    interactive(SessionId, Ref, "button", Label, "click"),
+    Label = "retry".
+
+Decl global_action(Action, Priority, Reason).
+global_action("press_escape", 110, Reason) :-
+    interaction_blocked(_, Reason).

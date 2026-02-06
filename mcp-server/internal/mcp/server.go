@@ -127,8 +127,8 @@ func (s *Server) registerAllTools() {
 	s.registerTool(&CreateSessionTool{sessions: s.sessions})
 	s.registerTool(&AttachSessionTool{sessions: s.sessions})
 	s.registerTool(&ForkSessionTool{sessions: s.sessions})
-	s.registerTool(&ReifyReactTool{sessions: s.sessions})
-	s.registerTool(&SnapshotDOMTool{sessions: s.sessions})
+	s.registerTool(&ReifyReactTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&SnapshotDOMTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&LaunchBrowserTool{sessions: s.sessions})
 	s.registerTool(&ShutdownBrowserTool{sessions: s.sessions})
 
@@ -203,10 +203,28 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 			}, nil
 		}
 
-		payload, _ := json.Marshal(result)
+		payload := marshalToolPayload(tool.Name(), result)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent(string(payload))},
 			IsError: false,
 		}, nil
 	}
+}
+
+func marshalToolPayload(toolName string, result interface{}) []byte {
+	payload, marshalErr := json.Marshal(result)
+	if marshalErr == nil {
+		return payload
+	}
+
+	fallback := map[string]interface{}{
+		"success": false,
+		"error":   fmt.Sprintf("tool %s returned non-serializable payload: %v", toolName, marshalErr),
+	}
+	payload, fallbackErr := json.Marshal(fallback)
+	if fallbackErr == nil {
+		return payload
+	}
+
+	return []byte(fmt.Sprintf(`{"success":false,"error":"tool %s failed to encode payload"}`, toolName))
 }

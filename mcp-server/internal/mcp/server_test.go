@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"math"
 	"testing"
 
 	"browsernerd-mcp-server/internal/browser"
@@ -234,6 +236,26 @@ func TestWrapTool(t *testing.T) {
 			t.Error("expected non-nil result")
 		}
 	})
+}
+
+func TestMarshalToolPayloadFallback(t *testing.T) {
+	payload := marshalToolPayload("test-tool", map[string]interface{}{
+		"bad": math.NaN(),
+	})
+	if len(payload) == 0 {
+		t.Fatal("expected non-empty payload")
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("payload should always be valid JSON: %v", err)
+	}
+	if success, _ := decoded["success"].(bool); success {
+		t.Fatalf("expected success=false fallback payload, got %v", decoded)
+	}
+	if decoded["error"] == nil {
+		t.Fatalf("expected fallback payload to include error, got %v", decoded)
+	}
 }
 
 func TestServerToolRegistration(t *testing.T) {

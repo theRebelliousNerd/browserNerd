@@ -27,23 +27,17 @@ func TestIntegrationSessionManager(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	t.Run("Start browser", func(t *testing.T) {
-		// Test requires Chrome binary to be available
-		// You may need to set cfg.Launch to point to your Chrome installation
-		err := manager.Start(ctx)
-		if err != nil {
-			t.Skipf("Browser start failed (Chrome not available?): %v", err)
-		}
-
-		if !manager.IsConnected() {
-			t.Error("expected IsConnected to return true after Start")
-		}
-
-		controlURL := manager.ControlURL()
-		if controlURL == "" {
-			t.Error("expected non-empty control URL after Start")
-		}
-	})
+	// Test requires Chrome binary to be available.
+	// If Chrome is not available or no launch/debugger_url is configured, skip the entire test.
+	if err := manager.Start(ctx); err != nil {
+		t.Skipf("Browser start failed (Chrome not available or not configured): %v", err)
+	}
+	if !manager.IsConnected() {
+		t.Fatal("expected IsConnected to return true after Start")
+	}
+	if manager.ControlURL() == "" {
+		t.Fatal("expected non-empty control URL after Start")
+	}
 
 	defer func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
