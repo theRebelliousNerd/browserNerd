@@ -26,6 +26,15 @@ func (t *EvaluateJSTool) Name() string { return "evaluate-js" }
 func (t *EvaluateJSTool) Description() string {
 	return `Execute JavaScript in the browser context for advanced operations.
 
+PROGRESSIVE DISCLOSURE GATE:
+This tool is intentionally gated so agents prefer structured tools first.
+Use one of:
+- gate_reason="explicit_user_intent" (manual override)
+- gate_reason="low_confidence" (after browser-reason signals uncertainty)
+- gate_reason="contradiction_detected" (after browser-reason detects conflicts)
+- gate_reason="no_matching_tool" (structured tools are insufficient)
+- approved_by_handle="<evidence handle from browser-reason>"
+
 WHEN TO USE (escape hatch for complex scenarios):
 - Extracting data not available via other tools
 - Complex DOM manipulations
@@ -82,6 +91,24 @@ func (t *EvaluateJSTool) InputSchema() map[string]interface{} {
 				"description": "Max execution time in milliseconds (default 5000, max 60000)",
 				"default":     5000,
 			},
+			"gate_reason": map[string]interface{}{
+				"type":        "string",
+				"description": "Progressive disclosure gate reason",
+				"enum":        []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
+			},
+			"approved_by_handle": map[string]interface{}{
+				"type":        "string",
+				"description": "Evidence handle from browser-reason that authorizes JS fallback",
+			},
+			"result_mode": map[string]interface{}{
+				"type":        "string",
+				"description": "Result shape: scalar|compact_json|raw (default compact_json)",
+				"enum":        []string{"scalar", "compact_json", "raw"},
+			},
+			"max_result_bytes": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum bytes allowed in the result payload before truncation (default 8192)",
+			},
 		},
 		"required": []string{"session_id", "script"},
 	}
@@ -91,6 +118,19 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 	script := getStringArg(args, "script")
 	elementRef := getStringArg(args, "element_ref")
 	timeoutMs := getIntArg(args, "timeout_ms", 5000)
+	gateReason := getStringArg(args, "gate_reason")
+	approvedHandle := getStringArg(args, "approved_by_handle")
+	resultMode := getStringArg(args, "result_mode")
+	if resultMode == "" {
+		resultMode = "compact_json"
+	}
+	maxResultBytes := getIntArg(args, "max_result_bytes", 8192)
+	if maxResultBytes < 256 {
+		maxResultBytes = 256
+	}
+	if maxResultBytes > 262144 {
+		maxResultBytes = 262144
+	}
 
 	// Clamp timeout to reasonable range
 	if timeoutMs < 100 {
@@ -103,6 +143,17 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 
 	if sessionID == "" || script == "" {
 		return map[string]interface{}{"success": false, "error": "session_id and script are required", "error_type": "validation"}, nil
+	}
+
+	if ok, reason := t.evaluateJSGateOpen(sessionID, gateReason, approvedHandle); !ok {
+		return map[string]interface{}{
+			"success":            false,
+			"gated":              true,
+			"error":              reason,
+			"recommended_tool":   "browser-reason",
+			"required_reasons":   []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
+			"approved_by_handle": approvedHandle,
+		}, nil
 	}
 
 	page, ok := t.sessions.Page(sessionID)
@@ -151,18 +202,97 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 		}, nil
 	}
 
+	finalResult, truncated, resultBytes := shapeEvaluateJSResult(result, resultMode, maxResultBytes)
+
 	// Emit Mangle fact
 	now := time.Now()
-	_ = t.engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "js_evaluated",
-		Args:      []interface{}{sessionID, len(script), now.UnixMilli()},
-		Timestamp: now,
-	}})
+	if t.engine != nil {
+		_ = t.engine.AddFacts(ctx, []mangle.Fact{{
+			Predicate: "js_evaluated",
+			Args:      []interface{}{sessionID, len(script), now.UnixMilli()},
+			Timestamp: now,
+		}})
+	}
 
 	return map[string]interface{}{
-		"success": true,
-		"result":  result,
+		"success":      true,
+		"result":       finalResult,
+		"result_mode":  resultMode,
+		"truncated":    truncated,
+		"result_bytes": resultBytes,
 	}, nil
+}
+
+func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandle string) (bool, string) {
+	validReasons := map[string]bool{
+		"explicit_user_intent":   true,
+		"low_confidence":         true,
+		"contradiction_detected": true,
+		"no_matching_tool":       true,
+	}
+
+	if approvedHandle == "" && gateReason == "" {
+		return false, "evaluate-js is gated; provide gate_reason or approved_by_handle"
+	}
+
+	if approvedHandle != "" {
+		if hasRecentGateFact(t.engine, "disclosure_handle", sessionID, approvedHandle, jsGateTTL) {
+			return true, ""
+		}
+		return false, fmt.Sprintf("approved_by_handle not found or expired: %s", approvedHandle)
+	}
+
+	if !validReasons[gateReason] {
+		return false, fmt.Sprintf("invalid gate_reason: %s", gateReason)
+	}
+
+	if gateReason == "explicit_user_intent" {
+		return true, ""
+	}
+
+	if hasRecentGateFact(t.engine, "js_gate_open", sessionID, gateReason, jsGateTTL) {
+		return true, ""
+	}
+
+	return false, fmt.Sprintf("gate_reason %q is not currently authorized; call browser-reason first", gateReason)
+}
+
+func shapeEvaluateJSResult(result interface{}, mode string, maxBytes int) (interface{}, bool, int) {
+	payload := fmt.Sprintf("%v", result)
+	switch mode {
+	case "scalar":
+		switch v := result.(type) {
+		case string:
+			if len(v) > maxBytes {
+				return v[:maxBytes], true, len(v)
+			}
+			return v, false, len(v)
+		case float64, bool, int, int64, nil:
+			return result, false, len(payload)
+		default:
+			return map[string]interface{}{
+				"type": "non_scalar",
+				"note": "result hidden in scalar mode; use compact_json or raw",
+			}, true, len(payload)
+		}
+	case "raw":
+		if len(payload) <= maxBytes {
+			return result, false, len(payload)
+		}
+		return map[string]interface{}{
+			"type":    fmt.Sprintf("%T", result),
+			"preview": payload[:maxBytes],
+		}, true, len(payload)
+	default: // compact_json
+		if len(payload) <= maxBytes {
+			return result, false, len(payload)
+		}
+		return map[string]interface{}{
+			"type":       fmt.Sprintf("%T", result),
+			"preview":    payload[:maxBytes],
+			"truncation": "result exceeded max_result_bytes",
+		}, true, len(payload)
+	}
 }
 
 // FillFormTool fills multiple form fields in a single call.
@@ -388,4 +518,3 @@ func (t *FillFormTool) Execute(ctx context.Context, args map[string]interface{})
 		"submitted":     submit || submitButton != "",
 	}, nil
 }
-

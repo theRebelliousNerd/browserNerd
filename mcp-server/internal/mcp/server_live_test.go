@@ -225,8 +225,9 @@ func TestLiveServerWithBrowser(t *testing.T) {
 
 	t.Run("EvaluateJS", func(t *testing.T) {
 		result, err := server.ExecuteTool("evaluate-js", map[string]interface{}{
-			"session_id": sessionID,
-			"script":     "document.title",
+			"session_id":  sessionID,
+			"script":      "document.title",
+			"gate_reason": "explicit_user_intent",
 		})
 		if err != nil {
 			t.Fatalf("evaluate-js failed: %v", err)
@@ -239,8 +240,9 @@ func TestLiveServerWithBrowser(t *testing.T) {
 
 	t.Run("EvaluateJSWithError", func(t *testing.T) {
 		result, err := server.ExecuteTool("evaluate-js", map[string]interface{}{
-			"session_id": sessionID,
-			"script":     "undefinedVariable.property",
+			"session_id":  sessionID,
+			"script":      "undefinedVariable.property",
+			"gate_reason": "explicit_user_intent",
 		})
 		if err != nil {
 			t.Fatalf("evaluate-js failed: %v", err)

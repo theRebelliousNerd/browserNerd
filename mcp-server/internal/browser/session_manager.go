@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/config"
+	"browsernerd-mcp-server/internal/correlation"
 	"browsernerd-mcp-server/internal/mangle"
 
 	"github.com/go-rod/rod"
@@ -75,18 +76,18 @@ func (t *eventThrottler) Allow(key string) bool {
 // This enables detection of stale element references when the DOM changes.
 // Uses omitempty for sparse JSON serialization to reduce token bloat.
 type ElementFingerprint struct {
-	Ref          string             `json:"ref"`                      // Generated reference string
-	TagName      string             `json:"tag_name"`                 // Lowercase tag name (button, input, etc.)
-	ID           string             `json:"id,omitempty"`             // Element ID attribute (if any)
-	Name         string             `json:"name,omitempty"`           // Name attribute (if any)
-	Classes      []string           `json:"classes,omitempty"`        // CSS class list
-	TextContent  string             `json:"text_content,omitempty"`   // First 100 chars of text content
-	AriaLabel    string             `json:"aria_label,omitempty"`     // aria-label attribute
-	DataTestID   string             `json:"data_testid,omitempty"`    // data-testid attribute
-	Role         string             `json:"role,omitempty"`           // ARIA role attribute
-	BoundingBox  map[string]float64 `json:"bounding_box,omitempty"`   // x, y, width, height
-	AltSelectors []string           `json:"alt_selectors,omitempty"`  // Alternative CSS selectors for fallback
-	GeneratedAt  time.Time          `json:"generated_at,omitempty"`   // When the element was discovered
+	Ref          string             `json:"ref"`                     // Generated reference string
+	TagName      string             `json:"tag_name"`                // Lowercase tag name (button, input, etc.)
+	ID           string             `json:"id,omitempty"`            // Element ID attribute (if any)
+	Name         string             `json:"name,omitempty"`          // Name attribute (if any)
+	Classes      []string           `json:"classes,omitempty"`       // CSS class list
+	TextContent  string             `json:"text_content,omitempty"`  // First 100 chars of text content
+	AriaLabel    string             `json:"aria_label,omitempty"`    // aria-label attribute
+	DataTestID   string             `json:"data_testid,omitempty"`   // data-testid attribute
+	Role         string             `json:"role,omitempty"`          // ARIA role attribute
+	BoundingBox  map[string]float64 `json:"bounding_box,omitempty"`  // x, y, width, height
+	AltSelectors []string           `json:"alt_selectors,omitempty"` // Alternative CSS selectors for fallback
+	GeneratedAt  time.Time          `json:"generated_at,omitempty"`  // When the element was discovered
 }
 
 // ElementRegistry provides a per-session cache of discovered elements with fingerprints.
@@ -949,20 +950,27 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 					})
 				}
 
-				if err := m.engine.AddFacts(ctx, facts); err != nil {
-					log.Printf("[session:%s] net_request fact error: %v", sessionID, err)
-				}
-
 				if captureHeaders && ev.Request != nil {
 					for k, v := range ev.Request.Headers {
-						if err := m.engine.AddFacts(ctx, []mangle.Fact{{
+						key := strings.ToLower(k)
+						value := fmt.Sprintf("%v", v)
+						facts = append(facts, mangle.Fact{
 							Predicate: "net_header",
-							Args:      []interface{}{string(ev.RequestID), "req", strings.ToLower(k), fmt.Sprintf("%v", v)},
+							Args:      []interface{}{string(ev.RequestID), "req", key, value},
 							Timestamp: now,
-						}}); err != nil {
-							log.Printf("[session:%s] net_header fact error: %v", sessionID, err)
+						})
+						for _, corr := range correlation.FromHeader(key, value) {
+							facts = append(facts, mangle.Fact{
+								Predicate: "net_correlation_key",
+								Args:      []interface{}{string(ev.RequestID), corr.Type, corr.Value},
+								Timestamp: now,
+							})
 						}
 					}
+				}
+
+				if err := m.engine.AddFacts(ctx, facts); err != nil {
+					log.Printf("[session:%s] net_request fact error: %v", sessionID, err)
 				}
 			},
 			func(ev *proto.NetworkResponseReceived) {
@@ -976,24 +984,33 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 					latency = int64(ev.Response.Timing.ReceiveHeadersEnd)
 					duration = int64(ev.Response.Timing.ConnectEnd)
 				}
-				if err := m.engine.AddFacts(ctx, []mangle.Fact{{
+				facts := []mangle.Fact{{
 					Predicate: "net_response",
 					Args:      []interface{}{string(ev.RequestID), ev.Response.Status, latency, duration},
 					Timestamp: now,
-				}}); err != nil {
-					log.Printf("[session:%s] net_response fact error: %v", sessionID, err)
-				}
+				}}
 
 				if captureHeaders && ev.Response != nil {
 					for k, v := range ev.Response.Headers {
-						if err := m.engine.AddFacts(ctx, []mangle.Fact{{
+						key := strings.ToLower(k)
+						value := fmt.Sprintf("%v", v)
+						facts = append(facts, mangle.Fact{
 							Predicate: "net_header",
-							Args:      []interface{}{string(ev.RequestID), "res", strings.ToLower(k), fmt.Sprintf("%v", v)},
+							Args:      []interface{}{string(ev.RequestID), "res", key, value},
 							Timestamp: now,
-						}}); err != nil {
-							log.Printf("[session:%s] res net_header fact error: %v", sessionID, err)
+						})
+						for _, corr := range correlation.FromHeader(key, value) {
+							facts = append(facts, mangle.Fact{
+								Predicate: "net_correlation_key",
+								Args:      []interface{}{string(ev.RequestID), corr.Type, corr.Value},
+								Timestamp: now,
+							})
 						}
 					}
+				}
+
+				if err := m.engine.AddFacts(ctx, facts); err != nil {
+					log.Printf("[session:%s] net_response fact error: %v", sessionID, err)
 				}
 			},
 			func(ev *proto.DOMDocumentUpdated) {

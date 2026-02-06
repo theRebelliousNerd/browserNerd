@@ -183,8 +183,9 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		tool := &EvaluateJSTool{sessions: sessions}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"script":     "() => { return document.title; }",
+			"session_id":  sessionID,
+			"script":      "() => { return document.title; }",
+			"gate_reason": "explicit_user_intent",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -203,8 +204,9 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		tool := &EvaluateJSTool{sessions: sessions}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"script":     "() => { throw new Error('test error'); }",
+			"session_id":  sessionID,
+			"script":      "() => { throw new Error('test error'); }",
+			"gate_reason": "explicit_user_intent",
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -409,8 +411,9 @@ func TestIntegrationInteractionTools(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		evalTool := &EvaluateJSTool{sessions: sessions}
 		evalResult, _ := evalTool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"script":     "() => document.getElementById('result').textContent",
+			"session_id":  sessionID,
+			"script":      "() => document.getElementById('result').textContent",
+			"gate_reason": "explicit_user_intent",
 		})
 		evalMap := evalResult.(map[string]interface{})
 		if evalMap["result"] != "Clicks: 1" {
@@ -440,8 +443,9 @@ func TestIntegrationInteractionTools(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		evalTool := &EvaluateJSTool{sessions: sessions}
 		evalResult, _ := evalTool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"script":     "() => document.getElementById('text-input').value",
+			"session_id":  sessionID,
+			"script":      "() => document.getElementById('text-input').value",
+			"gate_reason": "explicit_user_intent",
 		})
 		evalMap := evalResult.(map[string]interface{})
 		if evalMap["result"] != "Hello World" {

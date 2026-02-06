@@ -158,6 +158,11 @@ func (s *Server) registerAllTools() {
 	s.registerTool(&NavigateURLTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&PressKeyTool{sessions: s.sessions, engine: s.engine})
 
+	// Progressive disclosure consolidated tools (dual-run with existing tools)
+	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&BrowserActTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&BrowserReasonTool{engine: s.engine, dockerClient: s.dockerClient})
+
 	// Advanced tools - Screenshots, JS eval, batch operations
 	s.registerTool(&ScreenshotTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&BrowserHistoryTool{sessions: s.sessions, engine: s.engine})
@@ -198,7 +203,7 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 			}, nil
 		}
 
-		payload, _ := json.MarshalIndent(result, "", "  ")
+		payload, _ := json.Marshal(result)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent(string(payload))},
 			IsError: false,

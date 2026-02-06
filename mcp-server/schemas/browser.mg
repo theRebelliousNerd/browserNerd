@@ -41,6 +41,8 @@ Decl net_request(Id, Method, Url, InitiatorId, StartTime).
 Decl net_response(Id, Status, Latency, Duration).
 # Normalized headers (keys lowercased)
 Decl net_header(Id, Kind, Key, Value).
+# Correlation keys normalized from headers (request_id/correlation_id/trace_id)
+Decl net_correlation_key(Id, KeyType, KeyValue).
 # Critical for causality: what triggered this request?
 Decl request_initiator(Id, Type, ScriptId).
 
@@ -432,6 +434,8 @@ automation_error(SessionId, ReqId, Url) :-
 # Level: ERROR, WARNING, INFO, DEBUG, CRITICAL
 # Tag: Optional tag like [STARTUP], [AUDIT], [LIFESPAN], [TRACEBACK], [NEXTJS]
 Decl docker_log(Container, Level, Tag, Message, Timestamp).
+# Parsed correlation keys extracted from Docker log messages.
+Decl docker_log_correlation(Container, KeyType, KeyValue, Message, Timestamp).
 
 # --- Derived: Error-level logs by container ---
 Decl docker_error(Container, Message, Timestamp).
@@ -463,27 +467,29 @@ python_traceback(Container, Msg, Ts) :-
 # CROSS-LAYER CORRELATION RULES
 # =============================================================================
 
-# Rule: API failure correlates with backend error (within 3 seconds)
-# Links frontend API failures to backend exceptions that happened around the same time
-# Note: Using two rules for positive/negative delta since fn:abs not available
+# Rule: API failure correlates with backend error via shared correlation keys
+# Links frontend API failures to backend exceptions using shared correlation keys.
+Decl failed_api_request(ReqId, Url, Status, ReqTs).
+failed_api_request(ReqId, Url, Status, ReqTs) :-
+    net_request(ReqId, _, Url, _, ReqTs),
+    net_response(ReqId, Status, _, _),
+    Status >= 400.
+
+Decl failed_api_with_key(ReqId, Url, Status, ReqTs, KeyType, KeyValue).
+failed_api_with_key(ReqId, Url, Status, ReqTs, KeyType, KeyValue) :-
+    failed_api_request(ReqId, Url, Status, ReqTs),
+    net_correlation_key(ReqId, KeyType, KeyValue).
+
+Decl backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue).
+backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue) :-
+    backend_error(BackendMsg, BackendTs),
+    docker_log_correlation("symbiogen-backend", KeyType, KeyValue, BackendMsg, BackendTs).
+
 Decl api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta).
 api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta) :-
-    net_request(ReqId, _, Url, _, ReqTs),
-    net_response(ReqId, Status, _, _),
-    Status >= 400,
-    backend_error(BackendMsg, BackendTs),
-    TimeDelta = fn:minus(ReqTs, BackendTs),
-    TimeDelta >= 0,
-    TimeDelta < 3000.
-
-api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta) :-
-    net_request(ReqId, _, Url, _, ReqTs),
-    net_response(ReqId, Status, _, _),
-    Status >= 400,
-    backend_error(BackendMsg, BackendTs),
-    TimeDelta = fn:minus(ReqTs, BackendTs),
-    TimeDelta < 0,
-    TimeDelta > -3000.
+    failed_api_with_key(ReqId, Url, Status, ReqTs, KeyType, KeyValue),
+    backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue),
+    TimeDelta = fn:minus(ReqTs, BackendTs).
 
 # Rule: Console error traces to backend via API
 # Full chain: Browser console error -> Failed API -> Backend exception
@@ -519,24 +525,21 @@ ssr_hydration_correlation(SsrMsg, ConsoleMsg, TimeDelta) :-
     TimeDelta < 0,
     TimeDelta > -5000.
 
-# Rule: Slow API correlates with backend performance issues
-# Note: Using two rules for positive/negative delta since fn:abs not available
+# Rule: Slow API correlates with backend performance issues using shared keys.
+Decl slow_api_request(ReqId, Url, Duration, ReqTs).
+slow_api_request(ReqId, Url, Duration, ReqTs) :-
+    slow_api(ReqId, Url, Duration),
+    net_request(ReqId, _, _, _, ReqTs).
+
+Decl slow_api_with_key(ReqId, Url, Duration, ReqTs, KeyType, KeyValue).
+slow_api_with_key(ReqId, Url, Duration, ReqTs, KeyType, KeyValue) :-
+    slow_api_request(ReqId, Url, Duration, ReqTs),
+    net_correlation_key(ReqId, KeyType, KeyValue).
+
 Decl slow_backend_correlation(ReqId, Url, Duration, BackendMsg).
 slow_backend_correlation(ReqId, Url, Duration, BackendMsg) :-
-    slow_api(ReqId, Url, Duration),
-    docker_log("symbiogen-backend", _, _, BackendMsg, LogTs),
-    net_request(ReqId, _, _, _, ReqTs),
-    TimeDelta = fn:minus(ReqTs, LogTs),
-    TimeDelta >= 0,
-    TimeDelta < 5000.
-
-slow_backend_correlation(ReqId, Url, Duration, BackendMsg) :-
-    slow_api(ReqId, Url, Duration),
-    docker_log("symbiogen-backend", _, _, BackendMsg, LogTs),
-    net_request(ReqId, _, _, _, ReqTs),
-    TimeDelta = fn:minus(ReqTs, LogTs),
-    TimeDelta < 0,
-    TimeDelta > -5000.
+    slow_api_with_key(ReqId, Url, Duration, _, KeyType, KeyValue),
+    docker_log_correlation("symbiogen-backend", KeyType, KeyValue, BackendMsg, _).
 
 # =============================================================================
 # ERROR PATTERN DETECTION
@@ -823,3 +826,28 @@ primary_action(Ref, Label) :-
 primary_action(Ref, Label) :- 
     interactive(Ref, "button", Label, _), 
     dom_attr(Ref, "id", "submit-button").
+
+# =============================================================================
+# VECTOR 15: PROGRESSIVE DISCLOSURE + JS GATING
+# =============================================================================
+# Supports token-efficient tool responses and controlled escalation to JS.
+
+# Evidence handles emitted by consolidated tools.
+Decl disclosure_handle(SessionId, Handle, Reason, Timestamp).
+
+# Gate facts that authorize evaluate-js fallback.
+Decl js_gate_open(SessionId, Reason, Timestamp).
+
+# Confidence emitted by browser-reason for topic-level trust scoring.
+Decl confidence_score(SessionId, Topic, Score, Timestamp).
+
+# Derived low-confidence marker.
+Decl low_confidence_topic(SessionId, Topic).
+low_confidence_topic(SessionId, Topic) :-
+    confidence_score(SessionId, Topic, Score, _),
+    Score < 70.
+
+# Derived disclosure escalation signal.
+Decl disclosure_escalation(SessionId, Topic, Reason).
+disclosure_escalation(SessionId, Topic, "low_confidence") :-
+    low_confidence_topic(SessionId, Topic).

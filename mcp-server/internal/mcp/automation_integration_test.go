@@ -116,8 +116,9 @@ func TestIntegrationExecutePlan(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		evalTool := &EvaluateJSTool{sessions: sessions}
 		evalResult, _ := evalTool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"script":     "() => document.getElementById('status').textContent",
+			"session_id":  sessionID,
+			"script":      "() => document.getElementById('status').textContent",
+			"gate_reason": "explicit_user_intent",
 		})
 		evalMap := evalResult.(map[string]interface{})
 		status := evalMap["result"].(string)
@@ -260,11 +261,11 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"condition":   "element_exists",
-			"selector":    "#status",
-			"timeout_ms":  2000,
-			"poll_ms":     100,
+			"session_id": sessionID,
+			"condition":  "element_exists",
+			"selector":   "#status",
+			"timeout_ms": 2000,
+			"poll_ms":    100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -283,11 +284,11 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"condition":   "element_visible",
-			"selector":    "#content",
-			"timeout_ms":  2000,
-			"poll_ms":     100,
+			"session_id": sessionID,
+			"condition":  "element_visible",
+			"selector":   "#content",
+			"timeout_ms": 2000,
+			"poll_ms":    100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -306,12 +307,12 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"condition":   "text_contains",
-			"selector":    "#status",
-			"value":       "Ready",
-			"timeout_ms":  2000,
-			"poll_ms":     100,
+			"session_id": sessionID,
+			"condition":  "text_contains",
+			"selector":   "#status",
+			"value":      "Ready",
+			"timeout_ms": 2000,
+			"poll_ms":    100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -353,12 +354,12 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id":  sessionID,
-			"condition":   "text_contains",
-			"selector":    "#status",
-			"value":       "NonexistentText",
-			"timeout_ms":  500,
-			"poll_ms":     100,
+			"session_id": sessionID,
+			"condition":  "text_contains",
+			"selector":   "#status",
+			"value":      "NonexistentText",
+			"timeout_ms": 500,
+			"poll_ms":    100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)

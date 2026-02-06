@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/correlation"
 	"browsernerd-mcp-server/internal/docker"
 	"browsernerd-mcp-server/internal/mangle"
 
@@ -699,13 +700,38 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 				})
 
 				// Build docker error entry for response
-				dockerErrors = append(dockerErrors, map[string]interface{}{
+				errorEntry := map[string]interface{}{
 					"container": log.Container,
 					"level":     log.Level,
 					"tag":       log.Tag,
 					"message":   log.Message,
 					"timestamp": log.Timestamp.UnixMilli(),
-				})
+				}
+
+				correlationKeys := correlation.FromMessage(log.Message)
+				if len(correlationKeys) > 0 {
+					keyEntries := make([]map[string]string, 0, len(correlationKeys))
+					for _, key := range correlationKeys {
+						dockerFacts = append(dockerFacts, mangle.Fact{
+							Predicate: "docker_log_correlation",
+							Args: []interface{}{
+								log.Container,
+								key.Type,
+								key.Value,
+								log.Message,
+								log.Timestamp.UnixMilli(),
+							},
+							Timestamp: log.Timestamp,
+						})
+						keyEntries = append(keyEntries, map[string]string{
+							"key_type":  key.Type,
+							"key_value": key.Value,
+						})
+					}
+					errorEntry["correlation_keys"] = keyEntries
+				}
+
+				dockerErrors = append(dockerErrors, errorEntry)
 			}
 
 			// Push all docker_log facts to Mangle for correlation
@@ -714,15 +740,18 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 			}
 
 			// Query Mangle for backend correlations
-			// api_backend_correlation(ReqId, Container, BackendMsg, TimeDelta)
+			// api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta)
 			correlationFacts := t.engine.FactsByPredicate("api_backend_correlation")
 			for _, cf := range correlationFacts {
-				if len(cf.Args) >= 4 {
+				if len(cf.Args) >= 5 {
 					backendCorrelations = append(backendCorrelations, map[string]interface{}{
 						"request_id":    fmt.Sprintf("%v", cf.Args[0]),
-						"container":     fmt.Sprintf("%v", cf.Args[1]),
-						"backend_error": fmt.Sprintf("%v", cf.Args[2]),
-						"time_delta_ms": cf.Args[3],
+						"url":           fmt.Sprintf("%v", cf.Args[1]),
+						"status":        cf.Args[2],
+						"backend_error": fmt.Sprintf("%v", cf.Args[3]),
+						"time_delta_ms": cf.Args[4],
+						"container":     "symbiogen-backend",
+						"mode":          "keyed",
 					})
 				}
 			}

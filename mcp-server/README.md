@@ -108,9 +108,11 @@ launch:
 | `log_window` | string | `"30s"` | How far back to query logs when correlating errors |
 | `host` | string | `""` | Docker host (empty = local socket, or `tcp://host:2375`) |
 
-**Docker integration** correlates browser API failures with backend exceptions:
+**Docker integration** correlates browser API failures with backend exceptions using shared correlation keys:
 - `api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta)` - links failed requests to backend errors
 - `full_stack_error(ConsoleMsg, ReqId, Url, BackendMsg)` - complete chain from browser to backend
+- `net_correlation_key(ReqId, KeyType, KeyValue)` - normalized request/trace identifiers from headers
+- `docker_log_correlation(Container, KeyType, KeyValue, Message, Timestamp)` - parsed identifiers from backend logs
 
 ### mangle
 
@@ -140,11 +142,17 @@ launch:
 - `press-key` - Send keyboard input
 - `browser-history` - Navigate back/forward
 
+**Progressive Disclosure (Consolidated):**
+- `browser-observe` - Unified observe tool (state/nav/interactive/hidden) with `summary|compact|full` views
+- `browser-act` - Unified action tool for multi-step operations
+- `browser-reason` - Mangle-first reasoning with confidence, contradictions, and evidence handles
+
 **Diagnostics:**
 - `get-console-errors` - Browser console + Docker container errors
 - `get-page-state` - Current URL, title, cookies, storage
 - `screenshot` - Capture page screenshot
 - `diagnose-page` - Run all diagnostic Mangle queries
+- `evaluate-js` - Advanced JS escape hatch (now gated by progressive disclosure reason/handle)
 
 **React & DOM:**
 - `reify-react` - Extract React Fiber tree as facts
@@ -173,10 +181,10 @@ launch:
 **Core Predicates:**
 - `dom_node`, `dom_attr`, `dom_text`, `dom_layout` - DOM structure
 - `react_component`, `react_prop`, `react_state` - React Fiber tree
-- `net_request`, `net_response`, `net_header` - Network events
+- `net_request`, `net_response`, `net_header`, `net_correlation_key` - Network events + request correlation keys
 - `console_event`, `toast_notification` - Console and UI errors
 - `navigation_event`, `current_url` - Page navigation
-- `docker_log`, `backend_error`, `frontend_ssr_error` - Container logs
+- `docker_log`, `docker_log_correlation`, `backend_error`, `frontend_ssr_error` - Container logs + parsed correlation keys
 - `screen_blocked`, `is_main_content`, `primary_action` - Semantic UI macros
 
 **Causal Rules:**

@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
@@ -79,6 +80,15 @@ func (t *ScreenshotTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "Optional: Force save to this path. If omitted, defaults to ./screenshots/",
 			},
+			"format": map[string]interface{}{
+				"type":        "string",
+				"description": "Screenshot format: png or jpeg (default: png)",
+				"enum":        []string{"png", "jpeg"},
+			},
+			"quality": map[string]interface{}{
+				"type":        "integer",
+				"description": "JPEG quality 1-100 (default: 90). Ignored for png.",
+			},
 		},
 		"required": []string{"session_id"},
 	}
@@ -101,6 +111,17 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	elementRef := getStringArg(args, "element_ref")
 	fullPage := getBoolArg(args, "full_page", false)
 	savePath := getStringArg(args, "save_path")
+	format := strings.ToLower(getStringArg(args, "format"))
+	if format == "" {
+		format = "png"
+	}
+	quality := getIntArg(args, "quality", 90)
+	if quality < 1 {
+		quality = 1
+	}
+	if quality > 100 {
+		quality = 100
+	}
 
 	if sessionID == "" {
 		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
@@ -112,6 +133,9 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	screenshotFormat := proto.PageCaptureScreenshotFormatPng
+	if format == "jpeg" {
+		screenshotFormat = proto.PageCaptureScreenshotFormatJpeg
+	}
 
 	var imgData []byte
 	var err error
@@ -121,15 +145,13 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 		if findErr != nil {
 			return map[string]interface{}{"success": false, "error": fmt.Sprintf("element not found: %s", elementRef)}, nil
 		}
-		imgData, err = element.Screenshot(screenshotFormat, 100)
+		imgData, err = element.Screenshot(screenshotFormat, quality)
 	} else if fullPage {
-		quality := 100
 		imgData, err = page.Screenshot(true, &proto.PageCaptureScreenshot{
 			Format:  screenshotFormat,
 			Quality: &quality,
 		})
 	} else {
-		quality := 100
 		imgData, err = page.Screenshot(false, &proto.PageCaptureScreenshot{
 			Format:  screenshotFormat,
 			Quality: &quality,
@@ -185,7 +207,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 
 	result := map[string]interface{}{
 		"success":              true,
-		"format":               "png",
+		"format":               format,
 		"size_bytes":           sizeBytes,
 		"file_path":            savePath,
 		"elements_highlighted": len(boundingBoxes),
@@ -194,7 +216,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	now := time.Now()
-	factArgs := []interface{}{sessionID, "png", sizeBytes, now.UnixMilli(), savePath, len(boundingBoxes)}
+	factArgs := []interface{}{sessionID, format, sizeBytes, now.UnixMilli(), savePath, len(boundingBoxes)}
 	_ = t.engine.AddFacts(ctx, []mangle.Fact{{
 		Predicate: "screenshot_taken",
 		Args:      factArgs,
@@ -205,7 +227,9 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 }
 
 // extractBoundingBoxes uses the SAME selectors as get-interactive-elements for index correlation
-func (t *ScreenshotTool) extractBoundingBoxes(page interface{ Eval(string, ...interface{}) (*proto.RuntimeRemoteObject, error) }) ([]BoundingBox, error) {
+func (t *ScreenshotTool) extractBoundingBoxes(page interface {
+	Eval(string, ...interface{}) (*proto.RuntimeRemoteObject, error)
+}) ([]BoundingBox, error) {
 	// This JS matches get-interactive-elements exactly for consistent indexing
 	js := `
 	() => {
@@ -337,11 +361,11 @@ func drawBoundingBoxOverlays(imgData []byte, boxes []BoundingBox) ([]byte, error
 	draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
 
 	colors := map[string]color.RGBA{
-		"button": {255, 0, 0, 255},     // Red
-		"input":  {0, 100, 255, 255},   // Blue
-		"link":   {0, 200, 0, 255},     // Green
-		"select": {255, 165, 0, 255},   // Orange
-		"other":  {150, 0, 255, 255},   // Purple
+		"button": {255, 0, 0, 255},   // Red
+		"input":  {0, 100, 255, 255}, // Blue
+		"link":   {0, 200, 0, 255},   // Green
+		"select": {255, 165, 0, 255}, // Orange
+		"other":  {150, 0, 255, 255}, // Purple
 	}
 
 	for _, box := range boxes {
