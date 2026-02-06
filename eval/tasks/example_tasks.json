@@ -15,12 +15,12 @@
       }
     },
     {
-      "id": "wikipedia_python_year",
-      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
-      "prompt": "In what year was Python first released? Return only the four-digit year.",
+      "id": "mdn_js_year",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript",
+      "prompt": "According to this page, when was JavaScript first released (what year)? Return only the four-digit year.",
       "ground_truth": {
         "type": "contains",
-        "value": "1991"
+        "value": "1995"
       }
     },
     {
@@ -42,12 +42,12 @@
       }
     },
     {
-      "id": "httpbin_ip_format",
+      "id": "httpbin_story_title",
       "url": "https://httpbin.org/html",
       "prompt": "What is the title of the story in the HTML returned by this page? Return only the title.",
       "ground_truth": {
-        "type": "contains",
-        "value": "Herman Melville"
+        "type": "llm_judge",
+        "value": "The answer mentions 'Moby Dick' or 'Moby-Dick' (the famous Herman Melville novel title)."
       }
     }
   ]

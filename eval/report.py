@@ -130,6 +130,50 @@ def _write_report(metrics: list[TaskMetrics], path: Path) -> None:
             ratio = mean / raw_html_token_mean
             lines.append(f"| {cond} | {ratio:.2f}x |")
 
+    # Tool Usage Analysis (BrowserNERD specific)
+    if "browsernerd_mcp" in by_condition:
+        lines.append("\n## Tool Usage Analysis (BrowserNERD)\n")
+        lines.append("Shows which tools were called and how often.\n")
+
+        # Aggregate tool usage across all BrowserNERD runs
+        tool_totals: dict[str, int] = defaultdict(int)
+        for m in by_condition["browsernerd_mcp"]:
+            for tool_name, count in m.tool_usage.items():
+                tool_totals[tool_name] += count
+
+        if tool_totals:
+            # Sort by usage count descending
+            sorted_tools = sorted(tool_totals.items(), key=lambda x: -x[1])
+            total_calls = sum(tool_totals.values())
+
+            lines.append("| Tool | Calls | % of Total |")
+            lines.append("|---|---|---|")
+            for tool_name, count in sorted_tools:
+                pct = (count / total_calls * 100) if total_calls > 0 else 0
+                lines.append(f"| {tool_name} | {count} | {pct:.1f}% |")
+
+            # Token cost analysis
+            lines.append("\n### Token Cost Compliance\n")
+            high_cost_tools = {"screenshot"}
+            medium_cost_tools = {"get-interactive-elements", "snapshot-dom", "get-console-errors"}
+            low_cost_tools = {"get-page-state", "get-navigation-links", "evaluate-js", "diagnose-page"}
+
+            high_calls = sum(tool_totals.get(t, 0) for t in high_cost_tools)
+            medium_calls = sum(tool_totals.get(t, 0) for t in medium_cost_tools)
+            low_calls = sum(tool_totals.get(t, 0) for t in low_cost_tools)
+
+            if total_calls > 0:
+                lines.append(f"- LOW cost tools: {low_calls} calls ({low_calls/total_calls*100:.1f}%)")
+                lines.append(f"- MEDIUM cost tools: {medium_calls} calls ({medium_calls/total_calls*100:.1f}%)")
+                lines.append(f"- HIGH cost tools: {high_calls} calls ({high_calls/total_calls*100:.1f}%)")
+
+                if high_calls == 0:
+                    lines.append("\nExcellent: No high-cost screenshot calls!")
+                elif high_calls <= total_calls * 0.1:
+                    lines.append(f"\nGood: Screenshot usage is minimal ({high_calls/total_calls*100:.1f}%)")
+                else:
+                    lines.append(f"\nWarning: Consider reducing screenshot usage ({high_calls/total_calls*100:.1f}%)")
+
     # Per-task breakdown
     lines.append("\n## Per-Task Results\n")
     by_task: dict[str, list[TaskMetrics]] = defaultdict(list)

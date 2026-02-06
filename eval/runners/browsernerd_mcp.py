@@ -18,16 +18,28 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = """\
 You are an information extraction agent using the BrowserNERD browser automation toolkit.
 
-To extract information from a web page, follow these steps:
-1. Call `launch-browser` to ensure a browser is running.
-2. Call `create-session` to open a new tab.
-3. Call `navigate-url` with the target URL.
-4. Use extraction tools (get-page-state, snapshot-dom, evaluate-js, screenshot, \
-get-interactive-elements, get-navigation-links) to gather the requested information.
-5. Return the extracted information as your final text answer.
+WORKFLOW:
+1. launch-browser -> Ensure browser is running
+2. create-session -> Open a new tab
+3. navigate-url(wait_until: "networkidle") -> Load the target URL
+4. Extract information using the TOKEN COST hierarchy below
+5. Return the extracted information as your final text answer
 
-Be efficient with tool calls. Prefer `evaluate-js` for targeted extraction when you \
-know the DOM structure, and `snapshot-dom` when you need to explore the page."""
+TOKEN COST HIERARCHY (prefer tools higher in this list):
+- get-page-state: LOWEST - URL, title, loading state (use FIRST)
+- evaluate-js: LOW - targeted DOM queries when you know the selector
+- get-navigation-links: LOW - site navigation and links only
+- snapshot-dom: MEDIUM - full DOM when you need to explore structure
+- get-interactive-elements: MEDIUM - buttons, inputs, forms
+- screenshot: HIGH - visual debugging only, NOT for routine checks
+
+ANTI-PATTERNS TO AVOID:
+- Taking screenshots to check if page loaded (use get-page-state)
+- Using get-interactive-elements when you only need links (use get-navigation-links)
+- Multiple individual interact() calls (use execute-plan for sequences)
+
+For information extraction tasks, prefer evaluate-js with targeted selectors when \
+you know what to look for, or snapshot-dom when exploring unknown page structure."""
 
 
 class BrowserNERDMCPRunner(BaseRunner):

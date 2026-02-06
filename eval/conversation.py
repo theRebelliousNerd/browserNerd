@@ -44,6 +44,7 @@ async def run_mcp_conversation(
 
         # Count tool_use blocks in the response
         tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+        tool_names = [b.name for b in tool_use_blocks]
 
         turn = TurnMetrics(
             turn=turn_idx,
@@ -51,14 +52,16 @@ async def run_mcp_conversation(
             output_tokens=response.usage.output_tokens,
             tool_calls=len(tool_use_blocks),
             wall_clock_s=elapsed,
+            tools_called=tool_names,
         )
         task_metrics.turns.append(turn)
         logger.debug(
-            "Turn %d: %d input, %d output tokens, %d tool calls, %.1fs",
+            "Turn %d: %d input, %d output tokens, %d tool calls (%s), %.1fs",
             turn_idx,
             turn.input_tokens,
             turn.output_tokens,
             turn.tool_calls,
+            ", ".join(tool_names) if tool_names else "none",
             turn.wall_clock_s,
         )
 

@@ -223,18 +223,18 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 	for _, f := range filtered {
 		atom, err := e.factToAtom(f)
 		if err != nil {
-			fmt.Printf("[DEBUG] factToAtom failed for %s: %v\n", f.Predicate, err)
+			fmt.Fprintf(os.Stderr, "[DEBUG] factToAtom failed for %s: %v\n", f.Predicate, err)
 			continue // Skip malformed facts
 		}
 		added := e.store.Add(atom)
-		fmt.Printf("[DEBUG] Added fact to store: %s (Arity: %d) -> %v\n", f.Predicate, len(f.Args), added)
+		fmt.Fprintf(os.Stderr, "[DEBUG] Added fact to store: %s (Arity: %d) -> %v\n", f.Predicate, len(f.Args), added)
 	}
 
 	// Trigger incremental evaluation if schema loaded
 	if e.schemaLoaded && e.programInfo != nil {
 		// Incremental evaluation (semi-naive)
 		if err := engine.EvalProgram(e.programInfo, e.store); err != nil {
-			fmt.Printf("[DEBUG] EvalProgram failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[DEBUG] EvalProgram failed: %v\n", err)
 			return fmt.Errorf("eval program after fact insertion: %w", err)
 		}
 
