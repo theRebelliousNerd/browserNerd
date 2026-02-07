@@ -44,6 +44,16 @@ go build -o bin/browsernerd.exe ./cmd/server
 ./bin/browsernerd.exe --config config.yaml --sse-port 8080
 ```
 
+## Local Smoke Harness (No MCP Host Needed)
+
+BrowserNERD is a stdio MCP server (newline-delimited JSON-RPC over stdin/stdout). The easiest way to validate a freshly-built binary without restarting/reloading your MCP host is to use the smoke harness:
+
+```bash
+python scripts/mcp_smoke.py list
+python scripts/mcp_smoke.py smoke --url https://example.com/
+python scripts/mcp_smoke.py repl
+```
+
 ## Configuration Reference
 
 All settings go in `config.yaml`. See `config.example.yaml` for a minimal template.
