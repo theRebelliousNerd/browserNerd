@@ -9,6 +9,8 @@ import (
 	"github.com/google/mangle/ast"
 )
 
+const testSessionID = "session-1"
+
 func TestEngineLoadSchema(t *testing.T) {
 	cfg := config.MangleConfig{
 		Enable:          true,
@@ -42,17 +44,17 @@ func TestEngineAddFacts(t *testing.T) {
 	facts := []Fact{
 		{
 			Predicate: "console_event",
-			Args:      []interface{}{"error", "Failed to load resource", int64(1234567890)},
+			Args:      []interface{}{testSessionID, "error", "Failed to load resource", int64(1234567890)},
 			Timestamp: time.Now(),
 		},
 		{
 			Predicate: "net_request",
-			Args:      []interface{}{"req123", "GET", "https://api.example.com/data", "xhr", int64(1234567800)},
+			Args:      []interface{}{testSessionID, "req123", "GET", "https://api.example.com/data", "xhr", int64(1234567800)},
 			Timestamp: time.Now(),
 		},
 		{
 			Predicate: "net_response",
-			Args:      []interface{}{"req123", int64(404), int64(50), int64(100)},
+			Args:      []interface{}{testSessionID, "req123", int64(404), int64(50), int64(100)},
 			Timestamp: time.Now(),
 		},
 	}
@@ -92,12 +94,12 @@ func TestEngineQuery(t *testing.T) {
 	facts := []Fact{
 		{
 			Predicate: "net_request",
-			Args:      []interface{}{"req1", "GET", "https://slow-api.com/data", "fetch", int64(1000)},
+			Args:      []interface{}{testSessionID, "req1", "GET", "https://slow-api.com/data", "fetch", int64(1000)},
 			Timestamp: time.Now(),
 		},
 		{
 			Predicate: "net_response",
-			Args:      []interface{}{"req1", int64(200), int64(50), int64(1500)}, // 1.5 seconds (1500ms)
+			Args:      []interface{}{testSessionID, "req1", int64(200), int64(50), int64(1500)}, // 1.5 seconds (1500ms)
 			Timestamp: time.Now(),
 		},
 	}
@@ -111,26 +113,26 @@ func TestEngineQuery(t *testing.T) {
 	if len(netReqs) != 1 {
 		t.Fatalf("Expected 1 net_request fact, got %d", len(netReqs))
 	}
-	t.Logf("✓ Found net_request: %+v", netReqs[0])
+	t.Logf("OK Found net_request: %+v", netReqs[0])
 
 	netResps := engine.FactsByPredicate("net_response")
 	if len(netResps) != 1 {
 		t.Fatalf("Expected 1 net_response fact, got %d", len(netResps))
 	}
-	t.Logf("✓ Found net_response: %+v", netResps[0])
+	t.Logf("OK Found net_response: %+v", netResps[0])
 
-	// Verify Duration argument (4th arg in net_response)
-	if len(netResps[0].Args) >= 4 {
-		duration := netResps[0].Args[3]
-		t.Logf("✓ Duration value: %v (type: %T)", duration, duration)
+	// Verify Duration argument (5th arg in net_response)
+	if len(netResps[0].Args) >= 5 {
+		duration := netResps[0].Args[4]
+		t.Logf("OK Duration value: %v (type: %T)", duration, duration)
 		if durationInt, ok := duration.(int64); ok {
 			if durationInt > 1000 {
-				t.Logf("✓ Duration (%d) > 1000, slow_api rule should match", durationInt)
+				t.Logf("OK Duration (%d) > 1000, slow_api rule should match", durationInt)
 			}
 		}
 	}
 
-	t.Log("✓ Engine query test passed - facts stored correctly")
+	t.Log("OK Engine query test passed - facts stored correctly")
 }
 
 func TestEngineTemporalQuery(t *testing.T) {
@@ -152,12 +154,12 @@ func TestEngineTemporalQuery(t *testing.T) {
 	facts := []Fact{
 		{
 			Predicate: "console_event",
-			Args:      []interface{}{"log", "Message 1", past.UnixMilli()},
+			Args:      []interface{}{testSessionID, "log", "Message 1", past.UnixMilli()},
 			Timestamp: past,
 		},
 		{
 			Predicate: "console_event",
-			Args:      []interface{}{"error", "Message 2", now.UnixMilli()},
+			Args:      []interface{}{testSessionID, "error", "Message 2", now.UnixMilli()},
 			Timestamp: now,
 		},
 	}
@@ -193,11 +195,11 @@ func TestEngineAddRule(t *testing.T) {
 
 	// Add a custom rule
 	rule := `
-Decl critical_error(Message, Timestamp).
+Decl critical_error(SessionId, Message, Timestamp).
 
-critical_error(Msg, T) :-
-    console_event("error", Msg, T),
-    net_response(_, Status, _, _),
+critical_error(SessionId, Msg, T) :-
+    console_event(SessionId, "error", Msg, T),
+    net_response(SessionId, _, Status, _, _),
     Status >= 500.
 `
 
@@ -210,12 +212,12 @@ critical_error(Msg, T) :-
 	if err := engine.AddFacts(ctx, []Fact{
 		{
 			Predicate: "console_event",
-			Args:      []interface{}{"error", "backend exploded", now.UnixMilli()},
+			Args:      []interface{}{testSessionID, "error", "backend exploded", now.UnixMilli()},
 			Timestamp: now,
 		},
 		{
 			Predicate: "net_response",
-			Args:      []interface{}{"req-critical", int64(503), int64(42), int64(150)},
+			Args:      []interface{}{testSessionID, "req-critical", int64(503), int64(42), int64(150)},
 			Timestamp: now,
 		},
 	}); err != nil {
@@ -294,7 +296,7 @@ func TestEngineSamplingRate(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 90; i++ {
 		facts := []Fact{
-			{Predicate: "dom_node", Args: []interface{}{i, "div", "text", "parent"}, Timestamp: time.Now()},
+			{Predicate: "dom_node", Args: []interface{}{testSessionID, i, "div", "text", "parent"}, Timestamp: time.Now()},
 		}
 		_ = engine.AddFacts(ctx, facts)
 	}
@@ -339,15 +341,15 @@ func TestEngineMatchesAll(t *testing.T) {
 
 	ctx := context.Background()
 	facts := []Fact{
-		{Predicate: "console_event", Args: []interface{}{"error", "Test error", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "net_request", Args: []interface{}{"req1", "GET", "/api", "xhr", int64(999)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "Test error", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "GET", "/api", "xhr", int64(999)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
 	t.Run("all conditions match", func(t *testing.T) {
 		conditions := []Fact{
-			{Predicate: "console_event", Args: []interface{}{"error"}},
-			{Predicate: "net_request", Args: []interface{}{"req1", "GET"}},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error"}},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "GET"}},
 		}
 		if !engine.MatchesAll(conditions) {
 			t.Error("Expected all conditions to match")
@@ -365,7 +367,7 @@ func TestEngineMatchesAll(t *testing.T) {
 
 	t.Run("wrong argument value", func(t *testing.T) {
 		conditions := []Fact{
-			{Predicate: "console_event", Args: []interface{}{"warning"}}, // wrong level
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "warning"}}, // wrong level
 		}
 		if engine.MatchesAll(conditions) {
 			t.Error("Expected conditions to not match with wrong argument")
@@ -467,7 +469,7 @@ func TestEngineBufferLimit(t *testing.T) {
 	// Add more facts than buffer limit (use high-value predicates to avoid sampling)
 	for i := 0; i < 20; i++ {
 		facts := []Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "msg", int64(i)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "msg", int64(i)}, Timestamp: time.Now()},
 		}
 		_ = engine.AddFacts(ctx, facts)
 	}
@@ -603,22 +605,22 @@ func TestEngineToastNotificationFacts(t *testing.T) {
 	facts := []Fact{
 		{
 			Predicate: "toast_notification",
-			Args:      []interface{}{"Failed to save", "error", "shadcn", int64(1000)},
+			Args:      []interface{}{testSessionID, "Failed to save", "error", "shadcn", int64(1000)},
 			Timestamp: time.Now(),
 		},
 		{
 			Predicate: "error_toast",
-			Args:      []interface{}{"Failed to save", "shadcn", int64(1000)},
+			Args:      []interface{}{testSessionID, "Failed to save", "shadcn", int64(1000)},
 			Timestamp: time.Now(),
 		},
 		{
 			Predicate: "net_request",
-			Args:      []interface{}{"req1", "POST", "/api/save", "fetch", int64(900)},
+			Args:      []interface{}{testSessionID, "req1", "POST", "/api/save", "fetch", int64(900)},
 			Timestamp: time.Now(),
 		},
 		{
 			Predicate: "net_response",
-			Args:      []interface{}{"req1", int64(500), int64(50), int64(100)},
+			Args:      []interface{}{testSessionID, "req1", int64(500), int64(50), int64(100)},
 			Timestamp: time.Now(),
 		},
 	}
@@ -729,7 +731,7 @@ func TestEngineWatchNotification(t *testing.T) {
 		// This should not block - notification to full channel is skipped
 		ctx := context.Background()
 		_ = engine.AddFacts(ctx, []Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "test", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "test", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		engine.Unsubscribe("full_channel_test", ch)
@@ -741,7 +743,7 @@ func TestEngineWatchNotification(t *testing.T) {
 
 		ctx := context.Background()
 		_ = engine.AddFacts(ctx, []Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "test notification", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "test notification", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		// Give time for notification
@@ -767,8 +769,8 @@ func TestEngineEvaluate(t *testing.T) {
 
 	// Add facts that should trigger derived predicates
 	facts := []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req1", "GET", "/api/fail", "fetch", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "net_response", Args: []interface{}{"req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "GET", "/api/fail", "fetch", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
@@ -828,7 +830,7 @@ func TestEngineSamplingRateThresholds(t *testing.T) {
 		// Add 45 facts (45% full) - should be 1.0 rate
 		for i := 0; i < 45; i++ {
 			_ = engine.AddFacts(ctx, []Fact{
-				{Predicate: "console_event", Args: []interface{}{"error", "msg", int64(i)}, Timestamp: time.Now()},
+				{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "msg", int64(i)}, Timestamp: time.Now()},
 			})
 		}
 		rate := engine.SamplingRate()
@@ -947,8 +949,8 @@ func TestEngineEvaluateWithSubscription(t *testing.T) {
 
 	// Add facts that should trigger the failed_request derivation
 	facts := []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req1", "POST", "/api/fail", "fetch", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "net_response", Args: []interface{}{"req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "POST", "/api/fail", "fetch", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
@@ -1033,14 +1035,14 @@ func TestEngineQueryWithVariousPredicates(t *testing.T) {
 
 	// Add facts with various argument types
 	facts := []Fact{
-		{Predicate: "console_event", Args: []interface{}{"error", "ReferenceError", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "console_event", Args: []interface{}{"warn", "Deprecated API", int64(1001)}, Timestamp: time.Now()},
-		{Predicate: "net_request", Args: []interface{}{"req1", "GET", "/api/data", "fetch", int64(1002)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "ReferenceError", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "warn", "Deprecated API", int64(1001)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "GET", "/api/data", "fetch", int64(1002)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
 	t.Run("query console_event with variable binding", func(t *testing.T) {
-		results, err := engine.Query(ctx, "console_event(Level, Msg, Ts).")
+		results, err := engine.Query(ctx, "console_event(SessionId, Level, Msg, Ts).")
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -1050,7 +1052,7 @@ func TestEngineQueryWithVariousPredicates(t *testing.T) {
 	})
 
 	t.Run("query with partial binding", func(t *testing.T) {
-		results, err := engine.Query(ctx, `console_event("error", Msg, _).`)
+		results, err := engine.Query(ctx, `console_event(_, "error", Msg, _).`)
 		if err != nil {
 			t.Fatalf("Query failed: %v", err)
 		}
@@ -1200,7 +1202,7 @@ func TestEngineBufferEviction(t *testing.T) {
 	// Add more high-value facts than buffer can hold
 	for i := 0; i < 10; i++ {
 		_ = engine.AddFacts(ctx, []Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "msg" + string(rune('A'+i)), int64(i)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "msg" + string(rune('A'+i)), int64(i)}, Timestamp: time.Now()},
 		})
 	}
 
@@ -1268,7 +1270,7 @@ func TestEngineLowValuePredicateSampling(t *testing.T) {
 	// Fill buffer to trigger sampling (need high fill rate)
 	for i := 0; i < 80; i++ {
 		_ = engine.AddFacts(ctx, []Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "msg", int64(i)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "msg", int64(i)}, Timestamp: time.Now()},
 		})
 	}
 
@@ -1276,7 +1278,7 @@ func TestEngineLowValuePredicateSampling(t *testing.T) {
 	lowValueCount := 0
 	for i := 0; i < 50; i++ {
 		err := engine.AddFacts(ctx, []Fact{
-			{Predicate: "dom_node", Args: []interface{}{"node" + string(rune(i)), "div"}, Timestamp: time.Now()},
+			{Predicate: "dom_node", Args: []interface{}{testSessionID, "node" + string(rune(i)), "div", "", "body"}, Timestamp: time.Now()},
 		})
 		if err == nil {
 			lowValueCount++
@@ -1316,7 +1318,7 @@ func TestEngineRebuildIndex(t *testing.T) {
 	// Force buffer eviction by adding more
 	for i := 0; i < 15; i++ {
 		_ = engine.AddFacts(ctx, []Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "overflow", int64(i)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "overflow", int64(i)}, Timestamp: time.Now()},
 		})
 	}
 
@@ -1351,8 +1353,8 @@ func TestEngineNotifySubscribersWithDerivedFacts(t *testing.T) {
 
 	// Add facts that match the failed_request rule (net_response with status >= 400)
 	facts := []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req-notify", "POST", "/api/fail", "fetch", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "net_response", Args: []interface{}{"req-notify", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-notify", "POST", "/api/fail", "fetch", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-notify", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
@@ -1384,14 +1386,14 @@ func TestEngineQueryWithConstantMatching(t *testing.T) {
 
 	// Add test facts
 	facts := []Fact{
-		{Predicate: "console_event", Args: []interface{}{"error", "TypeError: undefined", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "console_event", Args: []interface{}{"warn", "Deprecation warning", int64(1001)}, Timestamp: time.Now()},
-		{Predicate: "console_event", Args: []interface{}{"error", "ReferenceError", int64(1002)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "TypeError: undefined", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "warn", "Deprecation warning", int64(1001)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "ReferenceError", int64(1002)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
 	// Query with a constant that should match via queryBufferDirect fallback
-	results, err := engine.Query(ctx, `console_event("error", Msg, Ts).`)
+	results, err := engine.Query(ctx, `console_event(_, "error", Msg, Ts).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1471,7 +1473,7 @@ func TestEngineAtomToFactConversion(t *testing.T) {
 
 	// Add facts that will be stored and then queried via atomToFact
 	facts := []Fact{
-		{Predicate: "net_response", Args: []interface{}{"req-atom", int64(200), int64(50), int64(100)}, Timestamp: time.Now()},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-atom", int64(200), int64(50), int64(100)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
@@ -1512,8 +1514,8 @@ func TestEngineNotifySubscribersWithBaseFacts(t *testing.T) {
 
 	// Add multiple facts - they get stored in the Mangle store
 	facts := []Fact{
-		{Predicate: "console_event", Args: []interface{}{"error", "Test error message", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "console_event", Args: []interface{}{"warn", "Test warning", int64(1001)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "Test error message", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "console_event", Args: []interface{}{testSessionID, "warn", "Test warning", int64(1001)}, Timestamp: time.Now()},
 	}
 	err = engine.AddFacts(ctx, facts)
 	if err != nil {
@@ -1558,15 +1560,15 @@ func TestEngineQueryBufferDirectWithConstants(t *testing.T) {
 
 	// Add facts with various argument types
 	facts := []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req-1", "GET", "/api/users", "fetch", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "net_request", Args: []interface{}{"req-2", "POST", "/api/users", "xhr", int64(1001)}, Timestamp: time.Now()},
-		{Predicate: "net_request", Args: []interface{}{"req-3", "GET", "/api/data", "fetch", int64(1002)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-1", "GET", "/api/users", "fetch", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-2", "POST", "/api/users", "xhr", int64(1001)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-3", "GET", "/api/data", "fetch", int64(1002)}, Timestamp: time.Now()},
 	}
 	_ = engine.AddFacts(ctx, facts)
 
 	// Query with constant that should match only GET requests
 	// This exercises queryBufferDirect constant matching branch
-	results, err := engine.Query(ctx, `net_request(ReqId, "GET", Url, Type, Ts).`)
+	results, err := engine.Query(ctx, `net_request(SessionId, ReqId, "GET", Url, InitiatorId).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1578,7 +1580,7 @@ func TestEngineQueryBufferDirectWithConstants(t *testing.T) {
 	}
 
 	// Query with constant that matches no facts
-	results2, err := engine.Query(ctx, `net_request(ReqId, "DELETE", Url, Type, Ts).`)
+	results2, err := engine.Query(ctx, `net_request(SessionId, ReqId, "DELETE", Url, InitiatorId).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1628,12 +1630,12 @@ func TestEngineQueryAnonymousWildcardsAndRepeatedVariables(t *testing.T) {
 
 	ctx := context.Background()
 	_ = engine.AddFacts(ctx, []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req-1", "GET", "/api/users", "fetch", int64(1000)}, Timestamp: time.Now()},
-		{Predicate: "net_request", Args: []interface{}{"req-2", "POST", "/api/users", "xhr", int64(1001)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-1", "GET", "/api/users", "fetch", int64(1000)}, Timestamp: time.Now()},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-2", "POST", "/api/users", "xhr", int64(1001)}, Timestamp: time.Now()},
 	})
 
 	t.Run("anonymous underscores are treated as independent wildcards", func(t *testing.T) {
-		rows, err := engine.Query(ctx, `net_request(_, _, _, _, _).`)
+		rows, err := engine.Query(ctx, `net_request(_, _, _, _, _, _).`)
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -1643,7 +1645,7 @@ func TestEngineQueryAnonymousWildcardsAndRepeatedVariables(t *testing.T) {
 	})
 
 	t.Run("repeated named variable enforces equality", func(t *testing.T) {
-		rows, err := engine.Query(ctx, `net_request(X, X, _, _, _).`)
+		rows, err := engine.Query(ctx, `net_request(_, X, X, _, _, _).`)
 		if err != nil {
 			t.Fatalf("query failed: %v", err)
 		}
@@ -1669,14 +1671,14 @@ func TestEngineKeyedAPIBackendCorrelation(t *testing.T) {
 
 	// One matching request/backend pair + one mismatched noise pair.
 	err = engine.AddFacts(ctx, []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req-a", "GET", "/api/a", "fetch", int64(2000)}, Timestamp: now},
-		{Predicate: "net_response", Args: []interface{}{"req-a", int64(500), int64(20), int64(100)}, Timestamp: now},
-		{Predicate: "net_correlation_key", Args: []interface{}{"req-a", "request_id", "rid-a"}, Timestamp: now},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-a", "GET", "/api/a", "fetch", int64(2000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-a", int64(500), int64(20), int64(100)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-a", "request_id", "rid-a"}, Timestamp: now},
 		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-a", int64(1985)}, Timestamp: now},
 		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-a", "backend panic rid-a", int64(1985)}, Timestamp: now},
-		{Predicate: "net_request", Args: []interface{}{"req-b", "GET", "/api/b", "fetch", int64(3000)}, Timestamp: now},
-		{Predicate: "net_response", Args: []interface{}{"req-b", int64(502), int64(20), int64(100)}, Timestamp: now},
-		{Predicate: "net_correlation_key", Args: []interface{}{"req-b", "request_id", "rid-b"}, Timestamp: now},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-b", "GET", "/api/b", "fetch", int64(3000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-b", int64(502), int64(20), int64(100)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-b", "request_id", "rid-b"}, Timestamp: now},
 		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-z", int64(2990)}, Timestamp: now},
 		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-z", "backend panic rid-z", int64(2990)}, Timestamp: now},
 	})
@@ -1684,7 +1686,7 @@ func TestEngineKeyedAPIBackendCorrelation(t *testing.T) {
 		t.Fatalf("AddFacts failed: %v", err)
 	}
 
-	rows, err := engine.Query(ctx, `api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta).`)
+	rows, err := engine.Query(ctx, `api_backend_correlation("`+testSessionID+`", ReqId, Url, Status, BackendMsg, TimeDelta).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1700,7 +1702,7 @@ func TestEngineKeyedAPIBackendCorrelation(t *testing.T) {
 	}
 
 	// Also verify numeric guards by constraining status in-query.
-	statusConstrained, err := engine.Query(ctx, `api_backend_correlation("req-a", "/api/a", 500, BackendMsg, TimeDelta).`)
+	statusConstrained, err := engine.Query(ctx, `api_backend_correlation("`+testSessionID+`", "req-a", "/api/a", 500, BackendMsg, TimeDelta).`)
 	if err != nil {
 		t.Fatalf("status-constrained query failed: %v", err)
 	}
@@ -1724,9 +1726,9 @@ func TestEngineAPIBackendCorrelationRequiresSharedKey(t *testing.T) {
 	now := time.Now()
 
 	err = engine.AddFacts(ctx, []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req-c", "GET", "/api/c", "fetch", int64(4000)}, Timestamp: now},
-		{Predicate: "net_response", Args: []interface{}{"req-c", int64(500), int64(20), int64(100)}, Timestamp: now},
-		{Predicate: "net_correlation_key", Args: []interface{}{"req-c", "request_id", "rid-c"}, Timestamp: now},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-c", "GET", "/api/c", "fetch", int64(4000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-c", int64(500), int64(20), int64(100)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-c", "request_id", "rid-c"}, Timestamp: now},
 		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-x", int64(3990)}, Timestamp: now},
 		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-x", "backend panic rid-x", int64(3990)}, Timestamp: now},
 	})
@@ -1734,7 +1736,7 @@ func TestEngineAPIBackendCorrelationRequiresSharedKey(t *testing.T) {
 		t.Fatalf("AddFacts failed: %v", err)
 	}
 
-	rows, err := engine.Query(ctx, `api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta).`)
+	rows, err := engine.Query(ctx, `api_backend_correlation("`+testSessionID+`", ReqId, Url, Status, BackendMsg, TimeDelta).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -1758,16 +1760,16 @@ func TestEngineSlowBackendCorrelationUsesKeyedJoin(t *testing.T) {
 	now := time.Now()
 
 	err = engine.AddFacts(ctx, []Fact{
-		{Predicate: "net_request", Args: []interface{}{"req-slow", "GET", "/api/slow", "fetch", int64(5000)}, Timestamp: now},
-		{Predicate: "net_response", Args: []interface{}{"req-slow", int64(200), int64(40), int64(2200)}, Timestamp: now},
-		{Predicate: "net_correlation_key", Args: []interface{}{"req-slow", "trace_id", "trace-slow"}, Timestamp: now},
+		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-slow", "GET", "/api/slow", "fetch", int64(5000)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-slow", int64(200), int64(40), int64(2200)}, Timestamp: now},
+		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-slow", "trace_id", "trace-slow"}, Timestamp: now},
 		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "trace_id", "trace-slow", "db pool exhausted", int64(4995)}, Timestamp: now},
 	})
 	if err != nil {
 		t.Fatalf("AddFacts failed: %v", err)
 	}
 
-	rows, err := engine.Query(ctx, `slow_backend_correlation(ReqId, Url, Duration, BackendMsg).`)
+	rows, err := engine.Query(ctx, `slow_backend_correlation("`+testSessionID+`", ReqId, Url, Duration, BackendMsg).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}

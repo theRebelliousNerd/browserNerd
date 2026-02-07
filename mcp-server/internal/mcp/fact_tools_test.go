@@ -9,6 +9,8 @@ import (
 	"browsernerd-mcp-server/internal/mangle"
 )
 
+const testSessionID = "session-1"
+
 func setupTestEngine(t *testing.T) *mangle.Engine {
 	cfg := config.MangleConfig{
 		Enable:          true,
@@ -235,10 +237,10 @@ func TestQueryFactsTool(t *testing.T) {
 
 		// Add a fact
 		_ = engine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "test message", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "test message", int64(1000)}, Timestamp: time.Now()},
 		})
 
-		result, err := tool.Execute(ctx, map[string]interface{}{"query": "console_event(Level, Msg, Ts)."})
+		result, err := tool.Execute(ctx, map[string]interface{}{"query": "console_event(SessionId, Level, Msg, Ts)."})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -252,7 +254,7 @@ func TestQueryFactsTool(t *testing.T) {
 	t.Run("query tolerates missing trailing period", func(t *testing.T) {
 		ctx := context.Background()
 
-		result, err := tool.Execute(ctx, map[string]interface{}{"query": `console_event(Level, Msg, Ts)`})
+		result, err := tool.Execute(ctx, map[string]interface{}{"query": `console_event(SessionId, Level, Msg, Ts)`})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -266,10 +268,10 @@ func TestQueryFactsTool(t *testing.T) {
 	t.Run("anonymous wildcard bindings are normalized", func(t *testing.T) {
 		ctx := context.Background()
 		_ = engine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "net_request", Args: []interface{}{"req-anon", "GET", "/health", "fetch", int64(1010)}, Timestamp: time.Now()},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req-anon", "GET", "/health", "fetch", int64(1010)}, Timestamp: time.Now()},
 		})
 
-		result, err := tool.Execute(ctx, map[string]interface{}{"query": `net_request(_, _, _, _, _).`})
+		result, err := tool.Execute(ctx, map[string]interface{}{"query": `net_request(_, _, _, _, _, _).`})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
@@ -313,7 +315,7 @@ func TestSubmitRuleTool(t *testing.T) {
 		ctx := context.Background()
 		rule := `
 Decl my_test_rule().
-my_test_rule() :- console_event("error", _, _).
+my_test_rule() :- console_event(_, "error", _, _).
 `
 		result, err := tool.Execute(ctx, map[string]interface{}{"rule": rule})
 		if err != nil {
@@ -353,8 +355,8 @@ func TestEvaluateRuleTool(t *testing.T) {
 
 		// Add facts that will trigger the failed_request derived predicate
 		_ = engine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "net_request", Args: []interface{}{"req1", "GET", "/api/test", "fetch", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "net_response", Args: []interface{}{"req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "GET", "/api/test", "fetch", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "net_response", Args: []interface{}{testSessionID, "req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
 		})
 
 		result, err := tool.Execute(ctx, map[string]interface{}{"predicate": "failed_request"})
@@ -654,8 +656,8 @@ func TestGetToastNotificationsTool(t *testing.T) {
 
 		// Add toast notification facts
 		_ = engine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Error message", "error", "shadcn", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "toast_notification", Args: []interface{}{"Success!", "success", "material-ui", int64(2000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Error message", "error", "shadcn", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Success!", "success", "material-ui", int64(2000)}, Timestamp: time.Now()},
 		})
 
 		result, err := tool.Execute(ctx, map[string]interface{}{})
@@ -677,8 +679,8 @@ func TestGetToastNotificationsTool(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Error 1", "error", "native", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "toast_notification", Args: []interface{}{"Warning 1", "warning", "native", int64(2000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Error 1", "error", "native", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Warning 1", "warning", "native", int64(2000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{"level": "error"})
@@ -723,7 +725,7 @@ func TestGetConsoleErrorsTool(t *testing.T) {
 		ctx := context.Background()
 
 		_ = engine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "TypeError: undefined", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "TypeError: undefined", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		result, err := tool.Execute(ctx, map[string]interface{}{})
@@ -744,7 +746,7 @@ func TestGetConsoleErrorsTool(t *testing.T) {
 		freshTool := &GetConsoleErrorsTool{engine: freshEngine, dockerClient: nil}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "console_event", Args: []interface{}{"warning", "Deprecation warning", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "warning", "Deprecation warning", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{"include_warnings": true})
@@ -1146,7 +1148,7 @@ func TestFactToolsEdgeCases(t *testing.T) {
 		// Add multiple toasts
 		for i := 0; i < 10; i++ {
 			_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-				{Predicate: "toast_notification", Args: []interface{}{"Message " + string(rune('A'+i)), "info", "native", int64(1000 + i)}, Timestamp: time.Now()},
+				{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Message " + string(rune('A'+i)), "info", "native", int64(1000 + i)}, Timestamp: time.Now()},
 			})
 		}
 

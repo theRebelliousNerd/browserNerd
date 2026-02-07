@@ -42,6 +42,7 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 	mcpSrv := mcpserver.NewMCPServer(
 		cfg.Server.Name,
 		cfg.Server.Version,
+		mcpserver.WithResourceCapabilities(true, true),
 		mcpserver.WithToolCapabilities(true),
 		mcpserver.WithLogging(),
 		mcpserver.WithPromptCapabilities(false),
@@ -69,6 +70,7 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 	}
 
 	server.registerAllTools()
+	server.registerAllResources()
 	return server, nil
 }
 

@@ -672,20 +672,20 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		sinceMs = time.Now().UnixMilli() - int64(timeWindowMs)
 	}
 
-	rootCauses := queryToRows(ctx, t.engine, "root_cause_at(ConsoleMsg, Source, Cause, Ts).")
+	rootCauses := queryToRows(ctx, t.engine, fmt.Sprintf("root_cause_at(%q, ConsoleMsg, Source, Cause, Ts).", sessionID))
 	if len(rootCauses) == 0 {
-		rootCauses = queryToRows(ctx, t.engine, "root_cause(ConsoleMsg, Source, Cause).")
+		rootCauses = queryToRows(ctx, t.engine, fmt.Sprintf("root_cause(%q, ConsoleMsg, Source, Cause).", sessionID))
 	}
-	failedReqs := queryToRows(ctx, t.engine, "failed_request_at(ReqId, Url, Status, ReqTs).")
+	failedReqs := queryToRows(ctx, t.engine, fmt.Sprintf("failed_request_at(%q, ReqId, Url, Status, ReqTs).", sessionID))
 	if len(failedReqs) == 0 {
-		failedReqs = queryToRows(ctx, t.engine, "failed_request(ReqId, Url, Status).")
+		failedReqs = queryToRows(ctx, t.engine, fmt.Sprintf("failed_request(%q, ReqId, Url, Status).", sessionID))
 	}
-	slowApis := queryToRows(ctx, t.engine, "slow_api_at(ReqId, Url, Duration, ReqTs).")
+	slowApis := queryToRows(ctx, t.engine, fmt.Sprintf("slow_api_at(%q, ReqId, Url, Duration, ReqTs).", sessionID))
 	if len(slowApis) == 0 {
-		slowApis = queryToRows(ctx, t.engine, "slow_api(ReqId, Url, Duration).")
+		slowApis = queryToRows(ctx, t.engine, fmt.Sprintf("slow_api(%q, ReqId, Url, Duration).", sessionID))
 	}
 	blockingIssues := filterRowsByField(queryToRows(ctx, t.engine, "interaction_blocked(SessionId, Reason)."), "SessionId", sessionID)
-	userVisibleErrors := queryToRows(ctx, t.engine, "user_visible_error(Source, Message, Timestamp).")
+	userVisibleErrors := queryToRows(ctx, t.engine, fmt.Sprintf("user_visible_error(%q, Source, Message, Timestamp).", sessionID))
 	actionCandidates := queryActionCandidates(ctx, t.engine, sessionID, maxItems)
 
 	if sinceMs > 0 {
@@ -695,7 +695,7 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		userVisibleErrors = filterRowsSince(userVisibleErrors, []string{"Timestamp", "Ts"}, sinceMs)
 	}
 
-	contradictions := detectContradictions(t.engine)
+	contradictions := detectContradictions(ctx, t.engine, sessionID)
 
 	confidence := computeReasonConfidence(len(rootCauses), len(failedReqs), len(slowApis), len(contradictions), topic)
 	status := "ok"
@@ -911,20 +911,30 @@ func queryToRows(ctx context.Context, engine *mangle.Engine, query string) []map
 	return rows
 }
 
-func detectContradictions(engine *mangle.Engine) []map[string]interface{} {
+func detectContradictions(ctx context.Context, engine *mangle.Engine, sessionID string) []map[string]interface{} {
 	contradictions := make([]map[string]interface{}, 0)
-	failed := engine.FactsByPredicate("failed_request")
-	toasts := engine.FactsByPredicate("toast_notification")
-	if len(failed) == 0 || len(toasts) == 0 {
+	if engine == nil || sessionID == "" {
 		return contradictions
 	}
 
+	// failed_request is derived; query the store, scoped to the session.
+	failedRows := queryToRows(ctx, engine, fmt.Sprintf("failed_request(%q, ReqId, Url, Status).", sessionID))
+	if len(failedRows) == 0 {
+		return contradictions
+	}
+
+	// toast_notification is a base event stored in the temporal buffer.
+	toasts := engine.FactsByPredicate("toast_notification")
 	successToastCount := 0
 	for _, t := range toasts {
-		if len(t.Args) < 2 {
+		// toast_notification(SessionId, Text, Level, Source, Timestamp)
+		if len(t.Args) < 3 {
 			continue
 		}
-		level := fmt.Sprintf("%v", t.Args[1])
+		if fmt.Sprintf("%v", t.Args[0]) != sessionID {
+			continue
+		}
+		level := fmt.Sprintf("%v", t.Args[2])
 		if level == "success" {
 			successToastCount++
 		}
@@ -933,7 +943,7 @@ func detectContradictions(engine *mangle.Engine) []map[string]interface{} {
 	if successToastCount > 0 {
 		contradictions = append(contradictions, map[string]interface{}{
 			"type":                    "success_toast_with_failed_requests",
-			"failed_request_count":    len(failed),
+			"failed_request_count":    len(failedRows),
 			"success_toast_count":     successToastCount,
 			"confidence_impact_delta": -0.25,
 		})
@@ -1573,7 +1583,7 @@ func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID
 		)
 	}
 
-	globalRows := queryToRows(ctx, engine, "global_action(Action, Priority, Reason).")
+	globalRows := queryToRows(ctx, engine, fmt.Sprintf("global_action(%q, Action, Priority, Reason).", sessionID))
 	for _, row := range globalRows {
 		upsert(true,
 			fmt.Sprintf("%v", row["Action"]),

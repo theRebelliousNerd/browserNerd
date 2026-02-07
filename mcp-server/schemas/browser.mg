@@ -10,21 +10,23 @@
 # =============================================================================
 
 # Component tree extracted from __reactFiber keys
-Decl react_component(FiberId, ComponentName, ParentFiberId).
-Decl react_prop(FiberId, PropKey, PropValue).
-Decl react_state(FiberId, HookIndex, Value).
-Decl dom_mapping(FiberId, DomNodeId).
+# Session-scoped to prevent cross-session contamination.
+Decl react_component(SessionId, FiberId, ComponentName, ParentFiberId).
+Decl react_prop(SessionId, FiberId, PropKey, PropValue).
+Decl react_state(SessionId, FiberId, HookIndex, Value).
+Decl dom_mapping(SessionId, FiberId, DomNodeId).
 
 # =============================================================================
 # VECTOR 2: FLIGHT RECORDER (CDP Event Stream)
 # =============================================================================
 
 # --- DOM Structure (sampled snapshots) ---
-Decl dom_node(NodeId, Tag, Text, ParentId).
-Decl dom_attr(NodeId, Key, Value).
-Decl dom_text(NodeId, Text).
+# Session-scoped to prevent cross-session contamination.
+Decl dom_node(SessionId, NodeId, Tag, Text, ParentId).
+Decl dom_attr(SessionId, NodeId, Key, Value).
+Decl dom_text(SessionId, NodeId, Text).
 Decl dom_updated(SessionId, Timestamp).
-Decl dom_layout(NodeId, X, Y, Width, Height, Visible).
+Decl dom_layout(SessionId, NodeId, X, Y, Width, Height, Visible).
 
 # --- Page Stability (for await-stable-state) ---
 Decl page_stable().
@@ -36,21 +38,23 @@ Decl page_stable().
 
 # --- Network Events (HAR-like schema per PRD Section 3.3) ---
 # Core transaction record
-Decl net_request(Id, Method, Url, InitiatorId, StartTime).
+# Session-scoped to prevent cross-session contamination.
+Decl net_request(SessionId, Id, Method, Url, InitiatorId, StartTime).
 # Response metadata with timing
-Decl net_response(Id, Status, Latency, Duration).
+Decl net_response(SessionId, Id, Status, Latency, Duration).
 # Normalized headers (keys lowercased)
-Decl net_header(Id, Kind, Key, Value).
+Decl net_header(SessionId, Id, Kind, Key, Value).
 # Correlation keys normalized from headers (request_id/correlation_id/trace_id)
-Decl net_correlation_key(Id, KeyType, KeyValue).
+Decl net_correlation_key(SessionId, Id, KeyType, KeyValue).
 # Critical for causality: what triggered this request?
-Decl request_initiator(Id, Type, ScriptId).
+Decl request_initiator(SessionId, Id, Type, ScriptId).
 
 # --- Browser/User Events ---
-Decl console_event(Level, Message, Timestamp).
-Decl click_event(NodeId, Timestamp).
-Decl input_event(NodeId, Value, Timestamp).
-Decl state_change(Name, Value, Timestamp).
+# Session-scoped to prevent cross-session contamination.
+Decl console_event(SessionId, Level, Message, Timestamp).
+Decl click_event(SessionId, NodeId, Timestamp).
+Decl input_event(SessionId, NodeId, Value, Timestamp).
+Decl state_change(SessionId, Name, Value, Timestamp).
 Decl navigation_event(SessionId, Url, Timestamp).
 
 # --- Session State (for current_url predicate) ---
@@ -58,34 +62,35 @@ Decl current_url(SessionId, Url).
 
 # --- Toast/Notification Events (instant error overlay detection) ---
 # Captured via MutationObserver watching for toast elements in real-time
-Decl toast_notification(Text, Level, Source, Timestamp).
+# Session-scoped to prevent cross-session contamination.
+Decl toast_notification(SessionId, Text, Level, Source, Timestamp).
 # Level: "error", "warning", "success", "info"
 # Source: UI library (material-ui, chakra-ui, ant-design, shadcn, react-toastify, react-hot-toast, notistack, native)
 
 # Convenience predicates for level-specific queries
-Decl error_toast(Text, Source, Timestamp).
-Decl warning_toast(Text, Source, Timestamp).
+Decl error_toast(SessionId, Text, Source, Timestamp).
+Decl warning_toast(SessionId, Text, Source, Timestamp).
 
 # =============================================================================
 # DERIVED FACTS (Causal Reasoning / RCA)
 # =============================================================================
 
-Decl caused_by(ConsoleMessage, RequestId).
-Decl slow_api(RequestId, Url, Duration).
-Decl cascading_failure(ChildReqId, ParentReqId).
-Decl race_condition_detected().
-Decl test_passed().
-Decl failed_request(RequestId, Url, Status).
-Decl failed_request_at(RequestId, Url, Status, RequestTimestamp).
-Decl slow_api_at(RequestId, Url, Duration, RequestTimestamp).
-Decl error_chain(ConsoleErr, RequestId, Url, Status).
-Decl root_cause_at(ConsoleMsg, Source, Cause, Timestamp).
+Decl caused_by(SessionId, ConsoleMessage, RequestId).
+Decl slow_api(SessionId, RequestId, Url, Duration).
+Decl cascading_failure(SessionId, ChildReqId, ParentReqId).
+Decl race_condition_detected(SessionId).
+Decl test_passed(SessionId).
+Decl failed_request(SessionId, RequestId, Url, Status).
+Decl failed_request_at(SessionId, RequestId, Url, Status, RequestTimestamp).
+Decl slow_api_at(SessionId, RequestId, Url, Duration, RequestTimestamp).
+Decl error_chain(SessionId, ConsoleErr, RequestId, Url, Status).
+Decl root_cause_at(SessionId, ConsoleMsg, Source, Cause, Timestamp).
 
 # Toast correlation predicates
-Decl toast_after_api_failure(ToastText, RequestId, Url, Status, TimeDelta).
-Decl user_visible_error(Source, Message, Timestamp).
-Decl repeated_toast_error(Message).
-Decl toast_error_chain(ToastText, RequestId, Url, Status).
+Decl toast_after_api_failure(SessionId, ToastText, RequestId, Url, Status, TimeDelta).
+Decl user_visible_error(SessionId, Source, Message, Timestamp).
+Decl repeated_toast_error(SessionId, Message).
+Decl toast_error_chain(SessionId, ToastText, RequestId, Url, Status).
 
 # =============================================================================
 # CAUSAL REASONING RULES (PRD Section 3.4)
@@ -96,52 +101,56 @@ Decl toast_error_chain(ToastText, RequestId, Url, Status).
 #   1. The request failed (Status >= 400)
 #   2. The request finished BEFORE the error appeared
 #   3. The time difference is less than 100ms (temporal proximity)
-caused_by(ConsoleErr, ReqId) :-
-    console_event("error", ConsoleErr, TError),
-    failed_request_at(ReqId, _, _, TNet),
+caused_by(SessionId, ConsoleErr, ReqId) :-
+    console_event(SessionId, "error", ConsoleErr, TError),
+    failed_request_at(SessionId, ReqId, _, _, TNet),
     TNet < TError,
     fn:minus(TError, TNet) < 100.
 
 # Rule 2: Slow API Detection (>1 second duration)
 # Flags API calls exceeding performance SLA
-slow_api(ReqId, Url, Duration) :-
-    net_request(ReqId, _, Url, _, _),
-    net_response(ReqId, _, _, Duration),
+slow_api(SessionId, ReqId, Url, Duration) :-
+    net_request(SessionId, ReqId, _, Url, _, _),
+    net_response(SessionId, ReqId, _, _, Duration),
     Duration > 1000.
 
 # Rule 3: Cascading Failure Detection
 # A child request fails because its parent (initiator) also failed
-cascading_failure(ChildReqId, ParentReqId) :-
-    request_initiator(ChildReqId, _, ParentReqId),
-    failed_request(ChildReqId, _, _),
-    failed_request(ParentReqId, _, _).
+cascading_failure(SessionId, ChildReqId, ParentReqId) :-
+    request_initiator(SessionId, ChildReqId, _, ParentReqId),
+    failed_request(SessionId, ChildReqId, _, _),
+    failed_request(SessionId, ParentReqId, _, _).
 
 # Rule 4: Race Condition Detection (PRD Section 5.3)
 # Detects when a submit button is clicked before the form state is ready
-race_condition_detected() :-
-    click_event(BtnId, TimeClick),
-    dom_attr(BtnId, "id", "submit-btn"),
-    state_change("isReady", "true", TimeReady),
+Decl submit_button_clicked(SessionId, BtnId, Timestamp).
+submit_button_clicked(SessionId, BtnId, TimeClick) :-
+    click_event(SessionId, BtnId, TimeClick),
+    dom_attr(SessionId, BtnId, "id", "submit-btn").
+
+race_condition_detected(SessionId) :-
+    submit_button_clicked(SessionId, _, TimeClick),
+    state_change(SessionId, "isReady", "true", TimeReady),
     TimeClick < TimeReady.
 
 # Rule 5: Failed Request Summary
 # Convenience predicate for listing all failed requests
-failed_request(ReqId, Url, Status) :-
-    net_request(ReqId, _, Url, _, _),
-    net_response(ReqId, Status, _, _),
+failed_request(SessionId, ReqId, Url, Status) :-
+    net_request(SessionId, ReqId, _, Url, _, _),
+    net_response(SessionId, ReqId, Status, _, _),
     Status >= 400.
 
-failed_request_at(ReqId, Url, Status, ReqTs) :-
-    net_request(ReqId, _, Url, _, ReqTs),
-    net_response(ReqId, Status, _, _),
+failed_request_at(SessionId, ReqId, Url, Status, ReqTs) :-
+    net_request(SessionId, ReqId, _, Url, _, ReqTs),
+    net_response(SessionId, ReqId, Status, _, _),
     Status >= 400.
 
 # Rule 6: Full Error Chain
 # Links console errors to their causal network requests with full context
-error_chain(ConsoleErr, ReqId, Url, Status) :-
-    caused_by(ConsoleErr, ReqId),
-    net_request(ReqId, _, Url, _, _),
-    net_response(ReqId, Status, _, _).
+error_chain(SessionId, ConsoleErr, ReqId, Url, Status) :-
+    caused_by(SessionId, ConsoleErr, ReqId),
+    net_request(SessionId, ReqId, _, Url, _, _),
+    net_response(SessionId, ReqId, Status, _, _).
 
 # =============================================================================
 # TOAST/NOTIFICATION CORRELATION RULES (Instant Error Detection)
@@ -152,33 +161,33 @@ error_chain(ConsoleErr, ReqId, Url, Status) :-
 # Rule 7: Toast Appeared After API Failure
 # Correlates error toasts with failed API requests within 5 seconds
 # This detects when the UI shows an error message due to a backend failure
-toast_after_api_failure(ToastText, ReqId, Url, Status, TimeDelta) :-
-    error_toast(ToastText, _, TToast),
-    failed_request_at(ReqId, Url, Status, TReq),
+toast_after_api_failure(SessionId, ToastText, ReqId, Url, Status, TimeDelta) :-
+    error_toast(SessionId, ToastText, _, TToast),
+    failed_request_at(SessionId, ReqId, Url, Status, TReq),
     TToast > TReq,
     TimeDelta = fn:minus(TToast, TReq),
     TimeDelta < 5000.
 
 # Rule 8: User Visible Errors (unified view)
 # Aggregates all user-visible errors from different sources
-user_visible_error("toast", Msg, Ts) :-
-    error_toast(Msg, _, Ts).
+user_visible_error(SessionId, "toast", Msg, Ts) :-
+    error_toast(SessionId, Msg, _, Ts).
 
-user_visible_error("console", Msg, Ts) :-
-    console_event("error", Msg, Ts).
+user_visible_error(SessionId, "console", Msg, Ts) :-
+    console_event(SessionId, "error", Msg, Ts).
 
 # Rule 9: Repeated Toast Errors
 # Detects when the same error toast appears multiple times (systemic issue)
-repeated_toast_error(Msg) :-
-    error_toast(Msg, _, T1),
-    error_toast(Msg, _, T2),
+repeated_toast_error(SessionId, Msg) :-
+    error_toast(SessionId, Msg, _, T1),
+    error_toast(SessionId, Msg, _, T2),
     T1 != T2.
 
 # Rule 10: Toast Error Chain
 # Full chain: Error toast -> Failed API -> URL and status
 # Similar to error_chain but for toast-based detection
-toast_error_chain(ToastText, ReqId, Url, Status) :-
-    toast_after_api_failure(ToastText, ReqId, Url, Status, _).
+toast_error_chain(SessionId, ToastText, ReqId, Url, Status) :-
+    toast_after_api_failure(SessionId, ToastText, ReqId, Url, Status, _).
 
 # Rule 11: Toast Without API Correlation
 # Detects error toasts that don't correlate with any API failure
@@ -191,15 +200,15 @@ toast_error_chain(ToastText, ReqId, Url, Status) :-
 
 # Generic test_passed rule: navigated to dashboard AND welcome message visible
 # Agents can submit custom rules via submit-rule tool
-test_passed() :-
-    current_url(_, "/dashboard"),
-    dom_text(_, "Welcome User").
+test_passed(SessionId) :-
+    current_url(SessionId, "/dashboard"),
+    dom_text(SessionId, _, "Welcome User").
 
 # Alternative: Check navigation_event if current_url not maintained
-# test_passed() :-
+# test_passed(SessionId) :-
 #     navigation_event(_, Url, _),
 #     fn:string_contains(Url, "/dashboard"),
-#     dom_text(_, "Welcome").
+#     dom_text(SessionId, _, "Welcome").
 
 # =============================================================================
 # VECTOR 5: INTERACTIVE ELEMENT NAVIGATION (Token-Efficient)
@@ -299,13 +308,20 @@ Decl action(ActionType, Ref, Value).
 
 # Rule: Login form detected (common pattern)
 Decl login_form_detected(SessionId).
+Decl email_input(SessionId, Ref).
+email_input(SessionId, Ref) :-
+    interactive(SessionId, Ref, "input", _, _),
+    elem_attr(SessionId, Ref, "input_type", "email").
+
+Decl password_input(SessionId, Ref).
+password_input(SessionId, Ref) :-
+    interactive(SessionId, Ref, "input", _, _),
+    elem_attr(SessionId, Ref, "input_type", "password").
+
 login_form_detected(SessionId) :-
     current_url(SessionId, _),
-    interactive(SessionId, EmailRef, "input", _, _),
-    elem_attr(SessionId, EmailRef, "input_type", "email"),
-    interactive(SessionId, PasswordRef, "input", _, _),
-    elem_attr(SessionId, PasswordRef, "input_type", "password"),
-    EmailRef != PasswordRef.
+    email_input(SessionId, _),
+    password_input(SessionId, _).
 
 # Rule: Form ready for submission
 Decl form_ready(SessionId).
@@ -328,10 +344,10 @@ Decl url_before_submit(SessionId, Url, Timestamp).
 
 # --- Successful API response tracking ---
 # Track successful POST requests (common for login flows)
-Decl successful_post(RequestId, Url, Timestamp).
-successful_post(ReqId, Url, TReq) :-
-    net_request(ReqId, "POST", Url, _, TReq),
-    net_response(ReqId, Status, _, _),
+Decl successful_post(SessionId, RequestId, Url, Timestamp).
+successful_post(SessionId, ReqId, Url, TReq) :-
+    net_request(SessionId, ReqId, "POST", Url, _, TReq),
+    net_response(SessionId, ReqId, Status, _, _),
     Status >= 200,
     Status < 300.
 
@@ -339,10 +355,10 @@ successful_post(ReqId, Url, TReq) :-
 # Detects when URL changed after form submission (universal pattern)
 Decl url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav).
 url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav) :-
-    url_before_submit(SessionId, UrlBefore, TBefore),
     form_submitted(SessionId, _, TSubmit),
-    navigation_event(SessionId, UrlAfter, TNav),
+    url_before_submit(SessionId, UrlBefore, TBefore),
     TSubmit > TBefore,
+    navigation_event(SessionId, UrlAfter, TNav),
     TNav > TSubmit,
     UrlBefore != UrlAfter.
 
@@ -353,10 +369,10 @@ url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav) :-
 #   3. Navigation happened within 5 seconds of submit (reasonable timeout)
 Decl login_succeeded(SessionId).
 login_succeeded(SessionId) :-
-    url_changed_after_submit(SessionId, _, _, TNav),
     form_submitted(SessionId, _, TSubmit),
-    successful_post(_, _, TPost),
+    successful_post(SessionId, _, _, TPost),
     TPost >= TSubmit,
+    url_changed_after_submit(SessionId, _, _, TNav),
     fn:minus(TNav, TSubmit) < 5000.
 
 # --- Alternative: Navigation-only success (no POST required) ---
@@ -364,8 +380,8 @@ login_succeeded(SessionId) :-
 # This fires if URL changes after submit, even without a successful POST
 Decl login_succeeded_navigation_only(SessionId).
 login_succeeded_navigation_only(SessionId) :-
-    url_changed_after_submit(SessionId, _, _, TNav),
     form_submitted(SessionId, _, TSubmit),
+    url_changed_after_submit(SessionId, _, _, TNav),
     fn:minus(TNav, TSubmit) < 5000.
 
 # --- Login failure detection ---
@@ -375,16 +391,15 @@ Decl login_failed_no_navigation(SessionId).
 login_failed_no_navigation(SessionId) :-
     form_submitted(SessionId, _, TSubmit),
     url_before_submit(SessionId, UrlBefore, TBefore),
-    current_url(SessionId, UrlCurrent),
     TSubmit > TBefore,
-    UrlBefore = UrlCurrent.
+    current_url(SessionId, UrlBefore).
 
 Decl login_failed_api_error(SessionId, ReqId, Status).
 login_failed_api_error(SessionId, ReqId, Status) :-
     form_submitted(SessionId, _, TSubmit),
-    net_request(ReqId, "POST", _, _, TReq),
-    net_response(ReqId, Status, _, _),
+    net_request(SessionId, ReqId, "POST", _, _, TReq),
     TReq >= TSubmit,
+    net_response(SessionId, ReqId, Status, _, _),
     fn:minus(TReq, TSubmit) < 2000,
     Status >= 400.
 
@@ -406,8 +421,8 @@ Decl automation_error(SessionId, ReqId, Url).
 automation_error(SessionId, ReqId, Url) :-
     plan_executed(SessionId, _, _, Failed, TPlan),
     Failed > 0,
-    net_request(ReqId, _, Url, _, TReq),
-    net_response(ReqId, Status, _, _),
+    net_request(SessionId, ReqId, _, Url, _, TReq),
+    net_response(SessionId, ReqId, Status, _, _),
     Status >= 400,
     TReq > TPlan.
 
@@ -460,9 +475,29 @@ Decl backend_error(Message, Timestamp).
 backend_error(Msg, Ts) :-
     docker_error("symbiogen-backend", Msg, Ts).
 
-Decl frontend_ssr_error(Message, Timestamp).
-frontend_ssr_error(Msg, Ts) :-
+# Frontend SSR errors are emitted via Docker logs and are global by default. When correlation keys
+# (request_id / correlation_id / trace_id) are present, we can map them back to browser sessions
+# using net_correlation_key to avoid cross-session cartesian products.
+Decl frontend_ssr_error_global(Message, Timestamp).
+frontend_ssr_error_global(Msg, Ts) :-
     docker_error("symbiogen-frontend", Msg, Ts).
+
+Decl frontend_ssr_error_with_key(Message, Timestamp, KeyType, KeyValue).
+frontend_ssr_error_with_key(Msg, Ts, KeyType, KeyValue) :-
+    frontend_ssr_error_global(Msg, Ts),
+    docker_log_correlation("symbiogen-frontend", KeyType, KeyValue, Msg, Ts).
+
+Decl frontend_ssr_error(SessionId, Message, Timestamp).
+Decl frontend_ssr_error_candidate(SessionId, Message, Timestamp, ReqTs).
+frontend_ssr_error_candidate(SessionId, Msg, Ts, ReqTs) :-
+    frontend_ssr_error_with_key(Msg, Ts, KeyType, KeyValue),
+    net_correlation_key(SessionId, ReqId, KeyType, KeyValue),
+    net_request(SessionId, ReqId, _, _, _, ReqTs).
+
+frontend_ssr_error(SessionId, Msg, Ts) :-
+    frontend_ssr_error_candidate(SessionId, Msg, Ts, ReqTs),
+    fn:minus(Ts, ReqTs) >= 0,
+    fn:minus(Ts, ReqTs) < 5000.
 
 # --- Derived: Python tracebacks (multi-line errors) ---
 Decl python_traceback(Container, Message, Timestamp).
@@ -475,35 +510,35 @@ python_traceback(Container, Msg, Ts) :-
 
 # Rule: API failure correlates with backend error via shared correlation keys
 # Links frontend API failures to backend exceptions using shared correlation keys.
-Decl failed_api_request(ReqId, Url, Status, ReqTs).
-failed_api_request(ReqId, Url, Status, ReqTs) :-
-    net_request(ReqId, _, Url, _, ReqTs),
-    net_response(ReqId, Status, _, _),
+Decl failed_api_request(SessionId, ReqId, Url, Status, ReqTs).
+failed_api_request(SessionId, ReqId, Url, Status, ReqTs) :-
+    net_request(SessionId, ReqId, _, Url, _, ReqTs),
+    net_response(SessionId, ReqId, Status, _, _),
     Status >= 400.
 
-Decl failed_api_with_key(ReqId, Url, Status, ReqTs, KeyType, KeyValue).
-failed_api_with_key(ReqId, Url, Status, ReqTs, KeyType, KeyValue) :-
-    failed_api_request(ReqId, Url, Status, ReqTs),
-    net_correlation_key(ReqId, KeyType, KeyValue).
+Decl failed_api_with_key(SessionId, ReqId, Url, Status, ReqTs, KeyType, KeyValue).
+failed_api_with_key(SessionId, ReqId, Url, Status, ReqTs, KeyType, KeyValue) :-
+    failed_api_request(SessionId, ReqId, Url, Status, ReqTs),
+    net_correlation_key(SessionId, ReqId, KeyType, KeyValue).
 
 Decl backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue).
 backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue) :-
     backend_error(BackendMsg, BackendTs),
     docker_log_correlation("symbiogen-backend", KeyType, KeyValue, BackendMsg, BackendTs).
 
-Decl api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta).
-api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta) :-
-    failed_api_with_key(ReqId, Url, Status, ReqTs, KeyType, KeyValue),
+Decl api_backend_correlation(SessionId, ReqId, Url, Status, BackendMsg, TimeDelta).
+api_backend_correlation(SessionId, ReqId, Url, Status, BackendMsg, TimeDelta) :-
+    failed_api_with_key(SessionId, ReqId, Url, Status, ReqTs, KeyType, KeyValue),
     backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue),
     TimeDelta = fn:minus(ReqTs, BackendTs).
 
 # Rule: Console error traces to backend via API
 # Full chain: Browser console error -> Failed API -> Backend exception
-Decl full_stack_error(ConsoleMsg, ReqId, Url, BackendMsg).
-full_stack_error(ConsoleMsg, ReqId, Url, BackendMsg) :-
-    caused_by(ConsoleMsg, ReqId),
-    net_request(ReqId, _, Url, _, _),
-    api_backend_correlation(ReqId, Url, _, BackendMsg, _).
+Decl full_stack_error(SessionId, ConsoleMsg, ReqId, Url, BackendMsg).
+full_stack_error(SessionId, ConsoleMsg, ReqId, Url, BackendMsg) :-
+    caused_by(SessionId, ConsoleMsg, ReqId),
+    net_request(SessionId, ReqId, _, Url, _, _),
+    api_backend_correlation(SessionId, ReqId, Url, _, BackendMsg, _).
 
 # Rule: Backend errors without corresponding frontend errors (orphans)
 # These indicate backend issues users haven't noticed yet
@@ -516,35 +551,35 @@ orphan_backend_error(Msg, Ts) :-
 # Rule: Frontend SSR errors correlate with hydration issues
 # When Next.js server-side has errors, browser may see hydration mismatches
 # Note: Using two rules for positive/negative delta since fn:abs not available
-Decl ssr_hydration_correlation(SsrMsg, ConsoleMsg, TimeDelta).
-ssr_hydration_correlation(SsrMsg, ConsoleMsg, TimeDelta) :-
-    frontend_ssr_error(SsrMsg, SsrTs),
-    console_event("error", ConsoleMsg, ConsoleTs),
-    TimeDelta = fn:minus(ConsoleTs, SsrTs),
-    TimeDelta >= 0,
-    TimeDelta < 5000.
+Decl ssr_hydration_correlation(SessionId, SsrMsg, ConsoleMsg, TimeDelta).
+ssr_hydration_correlation(SessionId, SsrMsg, ConsoleMsg, TimeDelta) :-
+    frontend_ssr_error(SessionId, SsrMsg, SsrTs),
+    console_event(SessionId, "error", ConsoleMsg, ConsoleTs),
+    fn:minus(ConsoleTs, SsrTs) >= 0,
+    fn:minus(ConsoleTs, SsrTs) < 5000,
+    TimeDelta = fn:minus(ConsoleTs, SsrTs).
 
-ssr_hydration_correlation(SsrMsg, ConsoleMsg, TimeDelta) :-
-    frontend_ssr_error(SsrMsg, SsrTs),
-    console_event("error", ConsoleMsg, ConsoleTs),
-    TimeDelta = fn:minus(ConsoleTs, SsrTs),
-    TimeDelta < 0,
-    TimeDelta > -5000.
+ssr_hydration_correlation(SessionId, SsrMsg, ConsoleMsg, TimeDelta) :-
+    frontend_ssr_error(SessionId, SsrMsg, SsrTs),
+    console_event(SessionId, "error", ConsoleMsg, ConsoleTs),
+    fn:minus(ConsoleTs, SsrTs) < 0,
+    fn:minus(ConsoleTs, SsrTs) > -5000,
+    TimeDelta = fn:minus(ConsoleTs, SsrTs).
 
 # Rule: Slow API correlates with backend performance issues using shared keys.
-Decl slow_api_request(ReqId, Url, Duration, ReqTs).
-slow_api_request(ReqId, Url, Duration, ReqTs) :-
-    slow_api(ReqId, Url, Duration),
-    net_request(ReqId, _, _, _, ReqTs).
+Decl slow_api_request(SessionId, ReqId, Url, Duration, ReqTs).
+slow_api_request(SessionId, ReqId, Url, Duration, ReqTs) :-
+    slow_api(SessionId, ReqId, Url, Duration),
+    net_request(SessionId, ReqId, _, _, _, ReqTs).
 
-Decl slow_api_with_key(ReqId, Url, Duration, ReqTs, KeyType, KeyValue).
-slow_api_with_key(ReqId, Url, Duration, ReqTs, KeyType, KeyValue) :-
-    slow_api_request(ReqId, Url, Duration, ReqTs),
-    net_correlation_key(ReqId, KeyType, KeyValue).
+Decl slow_api_with_key(SessionId, ReqId, Url, Duration, ReqTs, KeyType, KeyValue).
+slow_api_with_key(SessionId, ReqId, Url, Duration, ReqTs, KeyType, KeyValue) :-
+    slow_api_request(SessionId, ReqId, Url, Duration, ReqTs),
+    net_correlation_key(SessionId, ReqId, KeyType, KeyValue).
 
-Decl slow_backend_correlation(ReqId, Url, Duration, BackendMsg).
-slow_backend_correlation(ReqId, Url, Duration, BackendMsg) :-
-    slow_api_with_key(ReqId, Url, Duration, _, KeyType, KeyValue),
+Decl slow_backend_correlation(SessionId, ReqId, Url, Duration, BackendMsg).
+slow_backend_correlation(SessionId, ReqId, Url, Duration, BackendMsg) :-
+    slow_api_with_key(SessionId, ReqId, Url, Duration, _, KeyType, KeyValue),
     docker_log_correlation("symbiogen-backend", KeyType, KeyValue, BackendMsg, _).
 
 # =============================================================================
@@ -595,22 +630,22 @@ degraded_container(Container) :-
 
 # Rule: Most likely root cause for a console error
 # If we have full_stack_error, the backend message is the root cause
-Decl root_cause(ConsoleMsg, Source, Cause).
-root_cause(ConsoleMsg, "backend", BackendMsg) :-
-    full_stack_error(ConsoleMsg, _, _, BackendMsg).
+Decl root_cause(SessionId, ConsoleMsg, Source, Cause).
+root_cause(SessionId, ConsoleMsg, "backend", BackendMsg) :-
+    full_stack_error(SessionId, ConsoleMsg, _, _, BackendMsg).
 
-root_cause_at(ConsoleMsg, "backend", BackendMsg, ConsoleTs) :-
-    full_stack_error(ConsoleMsg, _, _, BackendMsg),
-    console_event("error", ConsoleMsg, ConsoleTs).
+root_cause_at(SessionId, ConsoleMsg, "backend", BackendMsg, ConsoleTs) :-
+    full_stack_error(SessionId, ConsoleMsg, _, _, BackendMsg),
+    console_event(SessionId, "error", ConsoleMsg, ConsoleTs).
 
-slow_api_at(ReqId, Url, Duration, ReqTs) :-
-    slow_api(ReqId, Url, Duration),
-    net_request(ReqId, _, _, _, ReqTs).
+slow_api_at(SessionId, ReqId, Url, Duration, ReqTs) :-
+    slow_api(SessionId, ReqId, Url, Duration),
+    net_request(SessionId, ReqId, _, _, _, ReqTs).
 
 # Rule: Error requires investigation (no correlation found)
-Decl unresolved_error(Level, Message, Timestamp).
-unresolved_error(Level, Msg, Ts) :-
-    console_event(Level, Msg, Ts),
+Decl unresolved_error(SessionId, Level, Message, Timestamp).
+unresolved_error(SessionId, Level, Msg, Ts) :-
+    console_event(SessionId, Level, Msg, Ts),
     Level = "error".
 # Note: Would need negation for !caused_by to be truly "unresolved"
 # Track in Go code by checking if caused_by returned empty
@@ -666,10 +701,8 @@ Decl page_has_error(SessionId, Message).
 page_has_error(SessionId, Msg) :-
     error_boundary_present(SessionId, Msg, _).
 
-# Note: Cross-join acceptable for page-level testing (small fact counts)
 page_has_error(SessionId, Msg) :-
-    current_url(SessionId, _),
-    toast_notification(Msg, "error", _, _).
+    toast_notification(SessionId, Msg, "error", _, _).
 
 # --- Derived: Page shows empty state ---
 Decl page_empty(SessionId, Message).
@@ -753,11 +786,11 @@ Decl click_triggered_navigation(SessionId, Ref, FromUrl, ToUrl, TimeDelta).
 click_triggered_navigation(SessionId, Ref, FromUrl, ToUrl, Delta) :-
     user_click(SessionId, Ref, TClick),
     navigation_event(SessionId, ToUrl, TNav),
-    current_url(SessionId, FromUrl),
     TNav > TClick,
-    Delta = fn:minus(TNav, TClick),
-    Delta < 5000,
-    FromUrl != ToUrl.
+    fn:minus(TNav, TClick) < 5000,
+    current_url(SessionId, FromUrl),
+    FromUrl != ToUrl,
+    Delta = fn:minus(TNav, TClick).
 
 # =============================================================================
 # VECTOR 13: TEST ASSERTION HELPERS
@@ -786,14 +819,14 @@ at_route(SessionId, Url) :-
 # --- No console errors on page ---
 Decl page_has_console_errors(SessionId).
 page_has_console_errors(SessionId) :-
-    console_event("error", _, _),
+    console_event(SessionId, "error", _, _),
     current_url(SessionId, _).
 
 # --- API request succeeded (any 2xx response) ---
-Decl api_success(Url).
-api_success(Url) :-
-    net_request(ReqId, _, Url, _, _),
-    net_response(ReqId, Status, _, _),
+Decl api_success(SessionId, Url).
+api_success(SessionId, Url) :-
+    net_request(SessionId, ReqId, _, Url, _, _),
+    net_response(SessionId, ReqId, Status, _, _),
     Status >= 200,
     Status < 300.
 
@@ -804,27 +837,39 @@ api_success(Url) :-
 # to reason about "main content", "primary actions", and "obstructions".
 
 # --- Screen Obstruction Detection ---
-Decl screen_blocked(NodeId, Reason).
+Decl screen_blocked(SessionId, NodeId, Reason).
 
-screen_blocked(Id, "modal") :- dom_attr(Id, "class", "modal").
-screen_blocked(Id, "modal-backdrop") :- dom_attr(Id, "class", "modal-backdrop").
-screen_blocked(Id, "modal-backdrop fade show") :- dom_attr(Id, "class", "modal-backdrop fade show").
-screen_blocked(Id, "dialog") :- dom_attr(Id, "role", "dialog").
-screen_blocked(Id, "loading-overlay") :- dom_attr(Id, "id", "loading-overlay").
-screen_blocked(Id, "spinner") :- dom_attr(Id, "class", "loading-spinner").
+screen_blocked(SessionId, Id, "modal") :- dom_attr(SessionId, Id, "class", "modal").
+screen_blocked(SessionId, Id, "modal") :-
+    dom_attr(SessionId, Id, "class", Class),
+    :string:contains(Class, "modal").
+screen_blocked(SessionId, Id, "modal-backdrop") :- dom_attr(SessionId, Id, "class", "modal-backdrop").
+screen_blocked(SessionId, Id, "modal-backdrop") :-
+    dom_attr(SessionId, Id, "class", Class),
+    :string:contains(Class, "modal-backdrop").
+screen_blocked(SessionId, Id, "dialog") :- dom_attr(SessionId, Id, "role", "dialog").
+screen_blocked(SessionId, Id, "alertdialog") :- dom_attr(SessionId, Id, "role", "alertdialog").
+screen_blocked(SessionId, Id, "loading-overlay") :-
+    dom_attr(SessionId, Id, "id", "loading-overlay").
+screen_blocked(SessionId, Id, "spinner") :- dom_attr(SessionId, Id, "class", "loading-spinner").
+screen_blocked(SessionId, Id, "spinner") :-
+    dom_attr(SessionId, Id, "class", Class),
+    :string:contains(Class, "spinner").
 
 # Derived: Page interaction is blocked
 Decl interaction_blocked(SessionId, Reason).
 interaction_blocked(SessionId, Reason) :-
     current_url(SessionId, _),
-    screen_blocked(_, Reason).
+    screen_blocked(SessionId, _, Reason).
 
 # --- Main Content Detection ---
-Decl is_main_content(NodeId).
-is_main_content(Id) :- dom_node(Id, "main", _, _).
-is_main_content(Id) :- dom_attr(Id, "id", "main").
-is_main_content(Id) :- dom_attr(Id, "role", "main").
-is_main_content(Id) :- dom_attr(Id, "class", "main-content").
+Decl is_main_content(SessionId, NodeId).
+is_main_content(SessionId, Id) :- dom_node(SessionId, Id, "main", _, _).
+is_main_content(SessionId, Id) :- dom_attr(SessionId, Id, "id", "main").
+is_main_content(SessionId, Id) :- dom_attr(SessionId, Id, "role", "main").
+is_main_content(SessionId, Id) :-
+    dom_attr(SessionId, Id, "class", Class),
+    :string:contains(Class, "main-content").
 
 # --- Primary Action Detection ---
 Decl primary_action(SessionId, Ref, Label).
@@ -939,6 +984,6 @@ action_candidate(SessionId, Ref, Label, "click", 54, "retry_button") :-
     interactive(SessionId, Ref, "button", Label, "click"),
     Label = "retry".
 
-Decl global_action(Action, Priority, Reason).
-global_action("press_escape", 110, Reason) :-
-    interaction_blocked(_, Reason).
+Decl global_action(SessionId, Action, Priority, Reason).
+global_action(SessionId, "press_escape", 110, Reason) :-
+    interaction_blocked(SessionId, Reason).

@@ -488,6 +488,10 @@ func (t *GetConsoleErrorsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: Filter to a specific session_id to avoid cross-session contamination",
+			},
 			"include_warnings": map[string]interface{}{
 				"type":        "boolean",
 				"description": "Include console warnings in addition to errors (default: false)",
@@ -508,97 +512,194 @@ func (t *GetConsoleErrorsTool) InputSchema() map[string]interface{} {
 	}
 }
 func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionID := getStringArg(args, "session_id")
 	includeWarnings := getBoolArg(args, "include_warnings", false)
 	includeAllLevels := getBoolArg(args, "include_all_levels", false)
 	debugMode := getBoolArg(args, "debug", false)
 	sinceMs := int64(getIntArg(args, "since_ms", 0))
 
-	// Collect console errors (and optionally warnings)
-	consoleEvents := t.engine.FactsByPredicate("console_event")
-	errors := make([]map[string]interface{}, 0)
+	toInt64 := func(v interface{}) int64 {
+		switch t := v.(type) {
+		case int:
+			return int64(t)
+		case int64:
+			return t
+		case float64:
+			return int64(t)
+		case float32:
+			return int64(t)
+		default:
+			return 0
+		}
+	}
 
-	for _, ev := range consoleEvents {
-		if len(ev.Args) < 3 {
+	// Index raw facts for fast lookups.
+	type reqInfo struct {
+		Method    string
+		URL       string
+		Timestamp int64
+	}
+
+	consoleEvents := t.engine.FactsByPredicate("console_event")
+	netRequests := t.engine.FactsByPredicate("net_request")
+	netResponses := t.engine.FactsByPredicate("net_response")
+
+	reqIndex := make(map[string]map[string]reqInfo)     // session -> reqId -> info
+	respIndex := make(map[string]map[string]any) // session -> reqId -> status
+
+	for _, req := range netRequests {
+		if len(req.Args) < 6 {
 			continue
 		}
-		level := fmt.Sprintf("%v", ev.Args[0])
-		message := fmt.Sprintf("%v", ev.Args[1])
-		timestamp := int64(0)
-		if ts, ok := ev.Args[2].(int64); ok {
-			timestamp = ts
-		} else if ts, ok := ev.Args[2].(float64); ok {
-			timestamp = int64(ts)
+		sess := fmt.Sprintf("%v", req.Args[0])
+		if sessionID != "" && sess != sessionID {
+			continue
 		}
+		reqID := fmt.Sprintf("%v", req.Args[1])
+		if reqID == "" {
+			continue
+		}
+		if _, ok := reqIndex[sess]; !ok {
+			reqIndex[sess] = make(map[string]reqInfo)
+		}
+		reqIndex[sess][reqID] = reqInfo{
+			Method:    fmt.Sprintf("%v", req.Args[2]),
+			URL:       fmt.Sprintf("%v", req.Args[3]),
+			Timestamp: toInt64(req.Args[5]),
+		}
+	}
 
-		// Filter by level (unless includeAllLevels is set)
+	for _, resp := range netResponses {
+		if len(resp.Args) < 3 {
+			continue
+		}
+		sess := fmt.Sprintf("%v", resp.Args[0])
+		if sessionID != "" && sess != sessionID {
+			continue
+		}
+		reqID := fmt.Sprintf("%v", resp.Args[1])
+		if reqID == "" {
+			continue
+		}
+		if _, ok := respIndex[sess]; !ok {
+			respIndex[sess] = make(map[string]any)
+		}
+		respIndex[sess][reqID] = resp.Args[2]
+	}
+
+	// Derived facts (must come from the Mangle store, not the temporal buffer).
+	errorChainFacts, _ := t.engine.Evaluate(ctx, "error_chain")
+	causedByFacts, _ := t.engine.Evaluate(ctx, "caused_by")
+	failedFacts, _ := t.engine.Evaluate(ctx, "failed_request")
+	slowFacts, _ := t.engine.Evaluate(ctx, "slow_api")
+	cascadeFacts, _ := t.engine.Evaluate(ctx, "cascading_failure")
+
+	type chainInfo struct {
+		ReqID  string
+		URL    string
+		Status interface{}
+	}
+
+	errorChains := make(map[string]map[string]chainInfo) // session -> consoleMsg -> info
+	for _, chain := range errorChainFacts {
+		if len(chain.Args) < 5 {
+			continue
+		}
+		sess := fmt.Sprintf("%v", chain.Args[0])
+		if sessionID != "" && sess != sessionID {
+			continue
+		}
+		msg := fmt.Sprintf("%v", chain.Args[1])
+		if msg == "" {
+			continue
+		}
+		if _, ok := errorChains[sess]; !ok {
+			errorChains[sess] = make(map[string]chainInfo)
+		}
+		errorChains[sess][msg] = chainInfo{
+			ReqID:  fmt.Sprintf("%v", chain.Args[2]),
+			URL:    fmt.Sprintf("%v", chain.Args[3]),
+			Status: chain.Args[4],
+		}
+	}
+
+	causedBy := make(map[string]map[string]string) // session -> consoleMsg -> reqId
+	for _, cb := range causedByFacts {
+		if len(cb.Args) < 3 {
+			continue
+		}
+		sess := fmt.Sprintf("%v", cb.Args[0])
+		if sessionID != "" && sess != sessionID {
+			continue
+		}
+		msg := fmt.Sprintf("%v", cb.Args[1])
+		if msg == "" {
+			continue
+		}
+		if _, ok := causedBy[sess]; !ok {
+			causedBy[sess] = make(map[string]string)
+		}
+		causedBy[sess][msg] = fmt.Sprintf("%v", cb.Args[2])
+	}
+
+	// Collect console errors (and optionally warnings).
+	errors := make([]map[string]interface{}, 0)
+	for _, ev := range consoleEvents {
+		if len(ev.Args) < 4 {
+			continue
+		}
+		evSession := fmt.Sprintf("%v", ev.Args[0])
+		if sessionID != "" && evSession != sessionID {
+			continue
+		}
+		level := fmt.Sprintf("%v", ev.Args[1])
+		message := fmt.Sprintf("%v", ev.Args[2])
+		timestamp := toInt64(ev.Args[3])
+
 		if !includeAllLevels {
 			if level != "error" && !(includeWarnings && level == "warning") {
 				continue
 			}
 		}
 
-		// Filter by timestamp
-		if sinceMs > 0 && timestamp < sinceMs {
+		if sinceMs > 0 && timestamp > 0 && timestamp < sinceMs {
 			continue
 		}
 
 		errorEntry := map[string]interface{}{
-			"level":     level,
-			"message":   message,
-			"timestamp": timestamp,
+			"session_id": evSession,
+			"level":      level,
+			"message":    message,
+			"timestamp":  timestamp,
 		}
 
-		// Look for causal relationship using error_chain predicate
-		// error_chain(ConsoleErr, ReqId, Url, Status) links errors to their causes
-		errorChains := t.engine.FactsByPredicate("error_chain")
-		for _, chain := range errorChains {
-			if len(chain.Args) >= 4 {
-				chainMsg := fmt.Sprintf("%v", chain.Args[0])
-				if chainMsg == message {
-					errorEntry["caused_by"] = map[string]interface{}{
-						"request_id": fmt.Sprintf("%v", chain.Args[1]),
-						"url":        fmt.Sprintf("%v", chain.Args[2]),
-						"status":     chain.Args[3],
-					}
-					break
+		if bySession, ok := errorChains[evSession]; ok {
+			if info, ok := bySession[message]; ok && info.ReqID != "" {
+				errorEntry["caused_by"] = map[string]interface{}{
+					"request_id": info.ReqID,
+					"url":        info.URL,
+					"status":     info.Status,
 				}
 			}
 		}
 
-		// If no error_chain, try caused_by directly
+		// If no error_chain, try caused_by + raw request/response details.
 		if errorEntry["caused_by"] == nil {
-			causedByFacts := t.engine.FactsByPredicate("caused_by")
-			for _, cb := range causedByFacts {
-				if len(cb.Args) >= 2 {
-					cbMsg := fmt.Sprintf("%v", cb.Args[0])
-					if cbMsg == message {
-						reqId := fmt.Sprintf("%v", cb.Args[1])
-						errorEntry["caused_by_request_id"] = reqId
+			if bySession, ok := causedBy[evSession]; ok {
+				if reqID, ok := bySession[message]; ok && reqID != "" {
+					errorEntry["caused_by_request_id"] = reqID
 
-						// Try to find the request details
-						netRequests := t.engine.FactsByPredicate("net_request")
-						for _, req := range netRequests {
-							if len(req.Args) >= 3 && fmt.Sprintf("%v", req.Args[0]) == reqId {
-								errorEntry["caused_by"] = map[string]interface{}{
-									"request_id": reqId,
-									"method":     fmt.Sprintf("%v", req.Args[1]),
-									"url":        fmt.Sprintf("%v", req.Args[2]),
-								}
-								// Add status from net_response
-								netResponses := t.engine.FactsByPredicate("net_response")
-								for _, resp := range netResponses {
-									if len(resp.Args) >= 2 && fmt.Sprintf("%v", resp.Args[0]) == reqId {
-										if causedBy, ok := errorEntry["caused_by"].(map[string]interface{}); ok {
-											causedBy["status"] = resp.Args[1]
-										}
-										break
-									}
-								}
-								break
-							}
-						}
-						break
+					cause := map[string]interface{}{
+						"request_id": reqID,
 					}
+					if req, ok := reqIndex[evSession][reqID]; ok {
+						cause["method"] = req.Method
+						cause["url"] = req.URL
+					}
+					if status, ok := respIndex[evSession][reqID]; ok {
+						cause["status"] = status
+					}
+					errorEntry["caused_by"] = cause
 				}
 			}
 		}
@@ -606,62 +707,68 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 		errors = append(errors, errorEntry)
 	}
 
-	// Collect failed requests (status >= 400)
+	// Collect failed requests (status >= 400).
 	failedRequests := make([]map[string]interface{}, 0)
-	failedFacts := t.engine.FactsByPredicate("failed_request")
 	for _, f := range failedFacts {
-		if len(f.Args) >= 3 {
-			timestamp := int64(0)
-			// Get timestamp from net_request
-			reqId := fmt.Sprintf("%v", f.Args[0])
-			netRequests := t.engine.FactsByPredicate("net_request")
-			for _, req := range netRequests {
-				if len(req.Args) >= 5 && fmt.Sprintf("%v", req.Args[0]) == reqId {
-					if ts, ok := req.Args[4].(int64); ok {
-						timestamp = ts
-					} else if ts, ok := req.Args[4].(float64); ok {
-						timestamp = int64(ts)
-					}
-					break
-				}
-			}
-
-			if sinceMs > 0 && timestamp < sinceMs {
-				continue
-			}
-
-			failedRequests = append(failedRequests, map[string]interface{}{
-				"request_id": f.Args[0],
-				"url":        fmt.Sprintf("%v", f.Args[1]),
-				"status":     f.Args[2],
-				"timestamp":  timestamp,
-			})
+		if len(f.Args) < 4 {
+			continue
 		}
+		sess := fmt.Sprintf("%v", f.Args[0])
+		if sessionID != "" && sess != sessionID {
+			continue
+		}
+		reqID := fmt.Sprintf("%v", f.Args[1])
+		url := fmt.Sprintf("%v", f.Args[2])
+		status := f.Args[3]
+		timestamp := int64(0)
+		if req, ok := reqIndex[sess][reqID]; ok {
+			timestamp = req.Timestamp
+		}
+		if sinceMs > 0 && timestamp > 0 && timestamp < sinceMs {
+			continue
+		}
+		failedRequests = append(failedRequests, map[string]interface{}{
+			"session_id": sess,
+			"request_id": reqID,
+			"url":        url,
+			"status":     status,
+			"timestamp":  timestamp,
+		})
 	}
 
-	// Collect slow API calls (>1 second)
+	// Collect slow API calls (>1 second).
 	slowApis := make([]map[string]interface{}, 0)
-	slowFacts := t.engine.FactsByPredicate("slow_api")
 	for _, s := range slowFacts {
-		if len(s.Args) >= 3 {
-			slowApis = append(slowApis, map[string]interface{}{
-				"request_id": s.Args[0],
-				"url":        fmt.Sprintf("%v", s.Args[1]),
-				"duration":   s.Args[2],
-			})
+		if len(s.Args) < 4 {
+			continue
 		}
+		sess := fmt.Sprintf("%v", s.Args[0])
+		if sessionID != "" && sess != sessionID {
+			continue
+		}
+		slowApis = append(slowApis, map[string]interface{}{
+			"session_id": sess,
+			"request_id": fmt.Sprintf("%v", s.Args[1]),
+			"url":        fmt.Sprintf("%v", s.Args[2]),
+			"duration":   s.Args[3],
+		})
 	}
 
-	// Collect cascading failures
+	// Collect cascading failures.
 	cascadingFailures := make([]map[string]interface{}, 0)
-	cascadeFacts := t.engine.FactsByPredicate("cascading_failure")
 	for _, c := range cascadeFacts {
-		if len(c.Args) >= 2 {
-			cascadingFailures = append(cascadingFailures, map[string]interface{}{
-				"child_request_id":  c.Args[0],
-				"parent_request_id": c.Args[1],
-			})
+		if len(c.Args) < 3 {
+			continue
 		}
+		sess := fmt.Sprintf("%v", c.Args[0])
+		if sessionID != "" && sess != sessionID {
+			continue
+		}
+		cascadingFailures = append(cascadingFailures, map[string]interface{}{
+			"session_id":        sess,
+			"child_request_id":  fmt.Sprintf("%v", c.Args[1]),
+			"parent_request_id": fmt.Sprintf("%v", c.Args[2]),
+		})
 	}
 
 	// ==========================================================================
@@ -676,20 +783,29 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 	hasErrorsToCorrelate := len(errors) > 0 || len(failedRequests) > 0 || len(slowApis) > 0
 
 	if t.dockerClient != nil && hasErrorsToCorrelate {
-		// Determine time window - look back from earliest error
-		var earliest time.Time
-		if len(errors) > 0 {
-			if ts, ok := errors[0]["timestamp"].(int64); ok && ts > 0 {
-				earliest = time.UnixMilli(ts).Add(-5 * time.Second)
+		// Determine time window - look back from earliest observed timestamp.
+		earliestMs := int64(0)
+		for _, e := range errors {
+			ts, _ := e["timestamp"].(int64)
+			if ts <= 0 {
+				continue
+			}
+			if earliestMs == 0 || ts < earliestMs {
+				earliestMs = ts
 			}
 		}
-		if earliest.IsZero() && len(failedRequests) > 0 {
-			if ts, ok := failedRequests[0]["timestamp"].(int64); ok && ts > 0 {
-				earliest = time.UnixMilli(ts).Add(-5 * time.Second)
+		for _, fr := range failedRequests {
+			ts, _ := fr["timestamp"].(int64)
+			if ts <= 0 {
+				continue
+			}
+			if earliestMs == 0 || ts < earliestMs {
+				earliestMs = ts
 			}
 		}
-		if earliest.IsZero() {
-			earliest = time.Now().Add(-30 * time.Second)
+		earliest := time.Now().Add(-30 * time.Second)
+		if earliestMs > 0 {
+			earliest = time.UnixMilli(earliestMs).Add(-5 * time.Second)
 		}
 
 		// Query Docker logs
@@ -757,20 +873,26 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 			}
 
 			// Query Mangle for backend correlations
-			// api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta)
-			correlationFacts := t.engine.FactsByPredicate("api_backend_correlation")
+			// api_backend_correlation(SessionId, ReqId, Url, Status, BackendMsg, TimeDelta)
+			correlationFacts, _ := t.engine.Evaluate(ctx, "api_backend_correlation")
 			for _, cf := range correlationFacts {
-				if len(cf.Args) >= 5 {
-					backendCorrelations = append(backendCorrelations, map[string]interface{}{
-						"request_id":    fmt.Sprintf("%v", cf.Args[0]),
-						"url":           fmt.Sprintf("%v", cf.Args[1]),
-						"status":        cf.Args[2],
-						"backend_error": fmt.Sprintf("%v", cf.Args[3]),
-						"time_delta_ms": cf.Args[4],
-						"container":     "symbiogen-backend",
-						"mode":          "keyed",
-					})
+				if len(cf.Args) < 6 {
+					continue
 				}
+				sess := fmt.Sprintf("%v", cf.Args[0])
+				if sessionID != "" && sess != sessionID {
+					continue
+				}
+				backendCorrelations = append(backendCorrelations, map[string]interface{}{
+					"session_id":    sess,
+					"request_id":    fmt.Sprintf("%v", cf.Args[1]),
+					"url":           fmt.Sprintf("%v", cf.Args[2]),
+					"status":        cf.Args[3],
+					"backend_error": fmt.Sprintf("%v", cf.Args[4]),
+					"time_delta_ms": cf.Args[5],
+					"container":     "symbiogen-backend",
+					"mode":          "keyed",
+				})
 			}
 
 			// Get container health analysis
@@ -826,10 +948,15 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 		// Count console events by level
 		levelCounts := make(map[string]int)
 		for _, ev := range consoleEvents {
-			if len(ev.Args) >= 1 {
-				level := fmt.Sprintf("%v", ev.Args[0])
-				levelCounts[level]++
+			if len(ev.Args) < 2 {
+				continue
 			}
+			evSession := fmt.Sprintf("%v", ev.Args[0])
+			if sessionID != "" && evSession != sessionID {
+				continue
+			}
+			level := fmt.Sprintf("%v", ev.Args[1])
+			levelCounts[level]++
 		}
 
 		// Count all predicates in the buffer
@@ -843,6 +970,7 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 			"total_facts_in_buffer":   len(allFacts),
 			"console_events_by_level": levelCounts,
 			"facts_by_predicate":      predicateCounts,
+			"session_filter":          sessionID,
 			"note": "Server-side logs (Next.js RSC/SSR) are NOT captured by CDP. " +
 				"Only client-side JavaScript console calls are visible. " +
 				"Events must occur AFTER session is created to be captured.",
@@ -906,6 +1034,10 @@ func (t *GetToastNotificationsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: filter toasts to a specific session_id (recommended for token efficiency).",
+			},
 			"level": map[string]interface{}{
 				"type":        "string",
 				"description": "Filter by level: 'error', 'warning', 'success', 'info', or 'all' (default: 'all')",
@@ -927,6 +1059,7 @@ func (t *GetToastNotificationsTool) InputSchema() map[string]interface{} {
 	}
 }
 func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionFilter := getStringArg(args, "session_id")
 	levelFilter := getStringArg(args, "level")
 	if levelFilter == "" {
 		levelFilter = "all"
@@ -935,7 +1068,8 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 	includeCorrelations := getBoolArg(args, "include_correlations", true)
 	limit := getIntArg(args, "limit", 0)
 
-	// Collect all toast notifications
+	// Collect toast notifications from the temporal buffer. (These are user-visible UI overlays
+	// captured via DOM mutation observation; they are high-signal and usually low-volume.)
 	toastFacts := t.engine.FactsByPredicate("toast_notification")
 	toasts := make([]map[string]interface{}, 0)
 
@@ -944,19 +1078,58 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 	successCount := 0
 	infoCount := 0
 
+	// Correlation predicates are derived and are not stored in the temporal buffer.
+	// We query the Mangle store directly once per tool invocation.
+	correlationByToastKey := make(map[string]map[string]interface{})
+	if includeCorrelations {
+		var correlationRows []map[string]interface{}
+		if sessionFilter != "" {
+			correlationRows = queryToRows(ctx, t.engine, fmt.Sprintf(
+				"toast_after_api_failure(%q, ToastText, ReqId, Url, Status, TimeDelta).",
+				sessionFilter,
+			))
+		} else {
+			correlationRows = queryToRows(ctx, t.engine, "toast_after_api_failure(SessionId, ToastText, ReqId, Url, Status, TimeDelta).")
+		}
+		for _, row := range correlationRows {
+			rowSession := sessionFilter
+			if rowSession == "" {
+				rowSession = fmt.Sprintf("%v", row["SessionId"])
+			}
+			if rowSession == "" {
+				continue
+			}
+			toastText := fmt.Sprintf("%v", row["ToastText"])
+			if toastText == "" {
+				continue
+			}
+			// First match wins; multiple correlations for the same toast text are unlikely.
+			key := rowSession + "|" + toastText
+			if _, exists := correlationByToastKey[key]; exists {
+				continue
+			}
+			correlationByToastKey[key] = map[string]interface{}{
+				"request_id":    fmt.Sprintf("%v", row["ReqId"]),
+				"url":           fmt.Sprintf("%v", row["Url"]),
+				"status":        row["Status"],
+				"time_delta_ms": row["TimeDelta"],
+			}
+		}
+	}
+
 	for _, f := range toastFacts {
-		if len(f.Args) < 4 {
+		// toast_notification(SessionId, Text, Level, Source, Timestamp)
+		if len(f.Args) < 5 {
 			continue
 		}
-		text := fmt.Sprintf("%v", f.Args[0])
-		level := fmt.Sprintf("%v", f.Args[1])
-		source := fmt.Sprintf("%v", f.Args[2])
-		timestamp := int64(0)
-		if ts, ok := f.Args[3].(int64); ok {
-			timestamp = ts
-		} else if ts, ok := f.Args[3].(float64); ok {
-			timestamp = int64(ts)
+		sessionID := fmt.Sprintf("%v", f.Args[0])
+		if sessionFilter != "" && sessionID != sessionFilter {
+			continue
 		}
+		text := fmt.Sprintf("%v", f.Args[1])
+		level := fmt.Sprintf("%v", f.Args[2])
+		source := fmt.Sprintf("%v", f.Args[3])
+		timestamp := asInt64(f.Args[4])
 
 		// Filter by timestamp
 		if sinceMs > 0 && timestamp < sinceMs {
@@ -989,20 +1162,8 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 
 		// Look for API correlation for error toasts
 		if includeCorrelations && level == "error" {
-			correlationFacts := t.engine.FactsByPredicate("toast_after_api_failure")
-			for _, cf := range correlationFacts {
-				if len(cf.Args) >= 5 {
-					cfText := fmt.Sprintf("%v", cf.Args[0])
-					if cfText == text {
-						toastEntry["correlated_api_failure"] = map[string]interface{}{
-							"request_id":    fmt.Sprintf("%v", cf.Args[1]),
-							"url":           fmt.Sprintf("%v", cf.Args[2]),
-							"status":        cf.Args[3],
-							"time_delta_ms": cf.Args[4],
-						}
-						break
-					}
-				}
+			if corr, ok := correlationByToastKey[sessionID+"|"+text]; ok {
+				toastEntry["correlated_api_failure"] = corr
 			}
 		}
 
@@ -1016,10 +1177,15 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 
 	// Find repeated error messages
 	repeatedErrors := make([]string, 0)
-	repeatedFacts := t.engine.FactsByPredicate("repeated_toast_error")
-	for _, rf := range repeatedFacts {
-		if len(rf.Args) >= 1 {
-			repeatedErrors = append(repeatedErrors, fmt.Sprintf("%v", rf.Args[0]))
+	if sessionFilter != "" {
+		rows := queryToRows(ctx, t.engine, fmt.Sprintf("repeated_toast_error(%q, Msg).", sessionFilter))
+		for _, row := range rows {
+			repeatedErrors = append(repeatedErrors, fmt.Sprintf("%v", row["Msg"]))
+		}
+	} else {
+		rows := queryToRows(ctx, t.engine, "repeated_toast_error(SessionId, Msg).")
+		for _, row := range rows {
+			repeatedErrors = append(repeatedErrors, fmt.Sprintf("%v", row["Msg"]))
 		}
 	}
 
@@ -1082,11 +1248,16 @@ Returns: {status, root_causes[], failed_requests[], slow_apis[]}`
 }
 func (t *DiagnosePageTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional: scope diagnostics to a session_id (recommended).",
+			},
+		},
 	}
 }
-func (t *DiagnosePageTool) Execute(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+func (t *DiagnosePageTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	if t.engine == nil {
 		return map[string]interface{}{
 			"status":          "error",
@@ -1099,9 +1270,19 @@ func (t *DiagnosePageTool) Execute(ctx context.Context, _ map[string]interface{}
 
 	// Keep this resilient: query errors should degrade to empty rows rather
 	// than causing an empty or failed tool payload.
-	rootCauses := queryToRows(ctx, t.engine, "root_cause(Msg, Source, Cause).")
-	failedReqs := queryToRows(ctx, t.engine, "failed_request(Id, Url, Status).")
-	slowApis := queryToRows(ctx, t.engine, "slow_api(Id, Url, Duration).")
+	sessionFilter := getStringArg(args, "session_id")
+	var rootCauses []map[string]interface{}
+	var failedReqs []map[string]interface{}
+	var slowApis []map[string]interface{}
+	if sessionFilter != "" {
+		rootCauses = queryToRows(ctx, t.engine, fmt.Sprintf("root_cause(%q, Msg, Source, Cause).", sessionFilter))
+		failedReqs = queryToRows(ctx, t.engine, fmt.Sprintf("failed_request(%q, Id, Url, Status).", sessionFilter))
+		slowApis = queryToRows(ctx, t.engine, fmt.Sprintf("slow_api(%q, Id, Url, Duration).", sessionFilter))
+	} else {
+		rootCauses = queryToRows(ctx, t.engine, "root_cause(SessionId, Msg, Source, Cause).")
+		failedReqs = queryToRows(ctx, t.engine, "failed_request(SessionId, Id, Url, Status).")
+		slowApis = queryToRows(ctx, t.engine, "slow_api(SessionId, Id, Url, Duration).")
+	}
 
 	status := "ok"
 	if len(rootCauses) > 0 || len(failedReqs) > 0 {

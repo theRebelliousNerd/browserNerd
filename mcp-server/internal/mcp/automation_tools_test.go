@@ -343,8 +343,8 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		now := time.Now().UnixMilli()
 
 		_ = engine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Old toast", "info", "native", int64(now - 10000)}, Timestamp: time.Now()},
-			{Predicate: "toast_notification", Args: []interface{}{"New toast", "info", "native", int64(now)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Old toast", "info", "native", int64(now - 10000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "New toast", "info", "native", int64(now)}, Timestamp: time.Now()},
 		})
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
@@ -368,11 +368,11 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Error 1", "error", "native", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "toast_notification", Args: []interface{}{"Error 2", "error", "native", int64(2000)}, Timestamp: time.Now()},
-			{Predicate: "toast_notification", Args: []interface{}{"Warning 1", "warning", "native", int64(3000)}, Timestamp: time.Now()},
-			{Predicate: "toast_notification", Args: []interface{}{"Success 1", "success", "native", int64(4000)}, Timestamp: time.Now()},
-			{Predicate: "toast_notification", Args: []interface{}{"Info 1", "info", "native", int64(5000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Error 1", "error", "native", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Error 2", "error", "native", int64(2000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Warning 1", "warning", "native", int64(3000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Success 1", "success", "native", int64(4000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Info 1", "info", "native", int64(5000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -402,7 +402,7 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Error!", "error", "native", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Error!", "error", "native", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -423,7 +423,7 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Warning!", "warning", "native", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Warning!", "warning", "native", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -444,7 +444,7 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Success!", "success", "native", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Success!", "success", "native", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -465,8 +465,8 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Save failed", "error", "native", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "toast_after_api_failure", Args: []interface{}{"Save failed", "req-123", "/api/save", int64(500), int64(100)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Save failed", "error", "native", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_after_api_failure", Args: []interface{}{testSessionID, "Save failed", "req-123", "/api/save", int64(500), int64(100)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{
@@ -493,8 +493,8 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "toast_notification", Args: []interface{}{"Error", "error", "native", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "toast_after_api_failure", Args: []interface{}{"Error", "req-123", "/api/save", int64(500), int64(100)}, Timestamp: time.Now()},
+			{Predicate: "toast_notification", Args: []interface{}{testSessionID, "Error", "error", "native", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "toast_after_api_failure", Args: []interface{}{testSessionID, "Error", "req-123", "/api/save", int64(500), int64(100)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{
@@ -521,7 +521,7 @@ func TestGetToastNotificationsToolExtended(t *testing.T) {
 		freshTool := &GetToastNotificationsTool{engine: freshEngine}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "repeated_toast_error", Args: []interface{}{"Connection failed"}, Timestamp: time.Now()},
+			{Predicate: "repeated_toast_error", Args: []interface{}{testSessionID, "Connection failed"}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -557,9 +557,9 @@ func TestGetConsoleErrorsToolExtended(t *testing.T) {
 		freshTool := &GetConsoleErrorsTool{engine: freshEngine, dockerClient: nil}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "console_event", Args: []interface{}{"log", "Log message", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "console_event", Args: []interface{}{"info", "Info message", int64(2000)}, Timestamp: time.Now()},
-			{Predicate: "console_event", Args: []interface{}{"debug", "Debug message", int64(3000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "log", "Log message", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "info", "Info message", int64(2000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "debug", "Debug message", int64(3000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{"include_all_levels": true})
@@ -581,8 +581,8 @@ func TestGetConsoleErrorsToolExtended(t *testing.T) {
 		freshTool := &GetConsoleErrorsTool{engine: freshEngine, dockerClient: nil}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "Old error", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "console_event", Args: []interface{}{"error", "New error", int64(5000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "Old error", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "New error", int64(5000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{"since_ms": 3000})
@@ -617,10 +617,10 @@ func TestGetConsoleErrorsToolExtended(t *testing.T) {
 		freshTool := &GetConsoleErrorsTool{engine: freshEngine, dockerClient: nil}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "console_event", Args: []interface{}{"error", "Network error", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "caused_by", Args: []interface{}{"Network error", "req-456"}, Timestamp: time.Now()},
-			{Predicate: "net_request", Args: []interface{}{"req-456", "POST", "/api/submit", "fetch", int64(900)}, Timestamp: time.Now()},
-			{Predicate: "net_response", Args: []interface{}{"req-456", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
+			{Predicate: "console_event", Args: []interface{}{testSessionID, "error", "Network error", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "caused_by", Args: []interface{}{testSessionID, "Network error", "req-456"}, Timestamp: time.Now()},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req-456", "POST", "/api/submit", "fetch", int64(900)}, Timestamp: time.Now()},
+			{Predicate: "net_response", Args: []interface{}{testSessionID, "req-456", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -645,8 +645,8 @@ func TestGetConsoleErrorsToolExtended(t *testing.T) {
 		freshTool := &GetConsoleErrorsTool{engine: freshEngine, dockerClient: nil}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "failed_request", Args: []interface{}{"req-789", "/api/data", int64(404)}, Timestamp: time.Now()},
-			{Predicate: "net_request", Args: []interface{}{"req-789", "GET", "/api/data", "fetch", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "failed_request", Args: []interface{}{testSessionID, "req-789", "/api/data", int64(404)}, Timestamp: time.Now()},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req-789", "GET", "/api/data", "fetch", int64(1000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -668,7 +668,7 @@ func TestGetConsoleErrorsToolExtended(t *testing.T) {
 		freshTool := &GetConsoleErrorsTool{engine: freshEngine, dockerClient: nil}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "slow_api", Args: []interface{}{"req-slow", "/api/heavy", int64(2500)}, Timestamp: time.Now()},
+			{Predicate: "slow_api", Args: []interface{}{testSessionID, "req-slow", "/api/heavy", int64(2500)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -690,7 +690,7 @@ func TestGetConsoleErrorsToolExtended(t *testing.T) {
 		freshTool := &GetConsoleErrorsTool{engine: freshEngine, dockerClient: nil}
 
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "cascading_failure", Args: []interface{}{"child-req", "parent-req"}, Timestamp: time.Now()},
+			{Predicate: "cascading_failure", Args: []interface{}{testSessionID, "child-req", "parent-req"}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -734,8 +734,8 @@ func TestDiagnosePageToolExtended(t *testing.T) {
 
 		// Add facts that trigger slow_api but not failed_request
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "net_request", Args: []interface{}{"req1", "GET", "/api/slow", "fetch", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "net_response", Args: []interface{}{"req1", int64(200), int64(50), int64(2000)}, Timestamp: time.Now()},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "GET", "/api/slow", "fetch", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "net_response", Args: []interface{}{testSessionID, "req1", int64(200), int64(50), int64(2000)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -759,8 +759,8 @@ func TestDiagnosePageToolExtended(t *testing.T) {
 
 		// Add facts that trigger failed_request
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "net_request", Args: []interface{}{"req1", "GET", "/api/error", "fetch", int64(1000)}, Timestamp: time.Now()},
-			{Predicate: "net_response", Args: []interface{}{"req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req1", "GET", "/api/error", "fetch", int64(1000)}, Timestamp: time.Now()},
+			{Predicate: "net_response", Args: []interface{}{testSessionID, "req1", int64(500), int64(50), int64(100)}, Timestamp: time.Now()},
 		})
 
 		result, err := freshTool.Execute(ctx, map[string]interface{}{})
@@ -809,7 +809,7 @@ func TestAwaitStableStateToolExtended(t *testing.T) {
 
 		// Pre-populate with request to prevent immediate stability
 		_ = freshEngine.AddFacts(ctx, []mangle.Fact{
-			{Predicate: "net_request", Args: []interface{}{"req", "GET", "/api/test", "fetch", time.Now().UnixMilli()}, Timestamp: time.Now()},
+			{Predicate: "net_request", Args: []interface{}{testSessionID, "req", "GET", "/api/test", "fetch", time.Now().UnixMilli()}, Timestamp: time.Now()},
 		})
 
 		// This test verifies the tool can return either stable or timeout

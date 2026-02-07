@@ -192,12 +192,12 @@ func TestBrowserReasonEmitsGateFacts(t *testing.T) {
 	_ = engine.AddFacts(ctx, []mangle.Fact{
 		{
 			Predicate: "failed_request",
-			Args:      []interface{}{"req-1", "/api/test", 500},
+			Args:      []interface{}{"s-reason", "req-1", "/api/test", 500},
 			Timestamp: now,
 		},
 		{
 			Predicate: "toast_notification",
-			Args:      []interface{}{"Saved successfully", "success", "ui", now.UnixMilli()},
+			Args:      []interface{}{"s-reason", "Saved successfully", "success", "ui", now.UnixMilli()},
 			Timestamp: now,
 		},
 	})

@@ -530,14 +530,14 @@ func (m *SessionManager) ReifyReact(ctx context.Context, sessionID string) ([]ma
 		}
 		facts = append(facts, mangle.Fact{
 			Predicate: "react_component",
-			Args:      []interface{}{n.ID, n.Name, parent},
+			Args:      []interface{}{sessionID, n.ID, n.Name, parent},
 			Timestamp: now,
 		})
 
 		for k, v := range n.Props {
 			facts = append(facts, mangle.Fact{
 				Predicate: "react_prop",
-				Args:      []interface{}{n.ID, k, fmt.Sprintf("%v", v)},
+				Args:      []interface{}{sessionID, n.ID, k, fmt.Sprintf("%v", v)},
 				Timestamp: now,
 			})
 		}
@@ -548,7 +548,7 @@ func (m *SessionManager) ReifyReact(ctx context.Context, sessionID string) ([]ma
 			}
 			facts = append(facts, mangle.Fact{
 				Predicate: "react_state",
-				Args:      []interface{}{n.ID, entry[0], fmt.Sprintf("%v", entry[1])},
+				Args:      []interface{}{sessionID, n.ID, entry[0], fmt.Sprintf("%v", entry[1])},
 				Timestamp: now,
 			})
 		}
@@ -556,7 +556,7 @@ func (m *SessionManager) ReifyReact(ctx context.Context, sessionID string) ([]ma
 		if n.DomNodeID != nil && *n.DomNodeID != "" {
 			facts = append(facts, mangle.Fact{
 				Predicate: "dom_mapping",
-				Args:      []interface{}{n.ID, *n.DomNodeID},
+				Args:      []interface{}{sessionID, n.ID, *n.DomNodeID},
 				Timestamp: now,
 			})
 		}
@@ -880,7 +880,7 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 				msg := stringifyConsoleArgs(ev.Args)
 				if err := m.engine.AddFacts(ctx, []mangle.Fact{{
 					Predicate: "console_event",
-					Args:      []interface{}{string(ev.Type), msg, now.UnixMilli()},
+					Args:      []interface{}{sessionID, string(ev.Type), msg, now.UnixMilli()},
 					Timestamp: now,
 				}}); err != nil {
 					log.Printf("[session:%s] console fact error: %v", sessionID, err)
@@ -930,22 +930,23 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 					}
 				}
 
+				// Store a best-effort initiator reference on the net_request fact itself.
+				initiatorRef := coalesceNonEmpty(initiatorID, initiatorScript)
+				if initiatorLineNo > 0 && initiatorScript != "" {
+					initiatorRef = fmt.Sprintf("%s:%d", initiatorScript, initiatorLineNo)
+				}
+
 				facts := []mangle.Fact{{
 					Predicate: "net_request",
-					Args:      []interface{}{string(ev.RequestID), ev.Request.Method, ev.Request.URL, initiatorType, now.UnixMilli()},
+					Args:      []interface{}{sessionID, string(ev.RequestID), ev.Request.Method, ev.Request.URL, initiatorRef, now.UnixMilli()},
 					Timestamp: now,
 				}}
 
 				// Emit request_initiator for cascading failure analysis
 				if initiatorType != "" || initiatorID != "" || initiatorScript != "" {
-					// Use parent RequestID if available, otherwise use script location
-					parentRef := coalesceNonEmpty(initiatorID, initiatorScript)
-					if initiatorLineNo > 0 && initiatorScript != "" {
-						parentRef = fmt.Sprintf("%s:%d", initiatorScript, initiatorLineNo)
-					}
 					facts = append(facts, mangle.Fact{
 						Predicate: "request_initiator",
-						Args:      []interface{}{string(ev.RequestID), initiatorType, parentRef},
+						Args:      []interface{}{sessionID, string(ev.RequestID), initiatorType, initiatorRef},
 						Timestamp: now,
 					})
 				}
@@ -956,13 +957,13 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 						value := fmt.Sprintf("%v", v)
 						facts = append(facts, mangle.Fact{
 							Predicate: "net_header",
-							Args:      []interface{}{string(ev.RequestID), "req", key, value},
+							Args:      []interface{}{sessionID, string(ev.RequestID), "req", key, value},
 							Timestamp: now,
 						})
 						for _, corr := range correlation.FromHeader(key, value) {
 							facts = append(facts, mangle.Fact{
 								Predicate: "net_correlation_key",
-								Args:      []interface{}{string(ev.RequestID), corr.Type, corr.Value},
+								Args:      []interface{}{sessionID, string(ev.RequestID), corr.Type, corr.Value},
 								Timestamp: now,
 							})
 						}
@@ -986,7 +987,7 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 				}
 				facts := []mangle.Fact{{
 					Predicate: "net_response",
-					Args:      []interface{}{string(ev.RequestID), ev.Response.Status, latency, duration},
+					Args:      []interface{}{sessionID, string(ev.RequestID), ev.Response.Status, latency, duration},
 					Timestamp: now,
 				}}
 
@@ -996,13 +997,13 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 						value := fmt.Sprintf("%v", v)
 						facts = append(facts, mangle.Fact{
 							Predicate: "net_header",
-							Args:      []interface{}{string(ev.RequestID), "res", key, value},
+							Args:      []interface{}{sessionID, string(ev.RequestID), "res", key, value},
 							Timestamp: now,
 						})
 						for _, corr := range correlation.FromHeader(key, value) {
 							facts = append(facts, mangle.Fact{
 								Predicate: "net_correlation_key",
-								Args:      []interface{}{string(ev.RequestID), corr.Type, corr.Value},
+								Args:      []interface{}{sessionID, string(ev.RequestID), corr.Type, corr.Value},
 								Timestamp: now,
 							})
 						}
@@ -1093,41 +1094,41 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 						case "click":
 							facts = append(facts, mangle.Fact{
 								Predicate: "click_event",
-								Args:      []interface{}{ev.ID, ts.UnixMilli()},
+								Args:      []interface{}{sessionID, ev.ID, ts.UnixMilli()},
 								Timestamp: ts,
 							})
 						case "input":
 							// input_event(NodeId, Value, Timestamp) per PRD schema
 							facts = append(facts, mangle.Fact{
 								Predicate: "input_event",
-								Args:      []interface{}{ev.ID, ev.Value, ts.UnixMilli()},
+								Args:      []interface{}{sessionID, ev.ID, ev.Value, ts.UnixMilli()},
 								Timestamp: ts,
 							})
 						case "state":
 							facts = append(facts, mangle.Fact{
 								Predicate: "state_change",
-								Args:      []interface{}{ev.Name, ev.Value, ts.UnixMilli()},
+								Args:      []interface{}{sessionID, ev.Name, ev.Value, ts.UnixMilli()},
 								Timestamp: ts,
 							})
 						case "toast":
 							// toast_notification(Text, Level, Source, Timestamp) for instant error overlay detection
 							facts = append(facts, mangle.Fact{
 								Predicate: "toast_notification",
-								Args:      []interface{}{ev.Text, ev.Level, ev.Source, ts.UnixMilli()},
+								Args:      []interface{}{sessionID, ev.Text, ev.Level, ev.Source, ts.UnixMilli()},
 								Timestamp: ts,
 							})
 							// Also emit level-specific predicates for easy querying
 							if ev.Level == "error" {
 								facts = append(facts, mangle.Fact{
 									Predicate: "error_toast",
-									Args:      []interface{}{ev.Text, ev.Source, ts.UnixMilli()},
+									Args:      []interface{}{sessionID, ev.Text, ev.Source, ts.UnixMilli()},
 									Timestamp: ts,
 								})
 								log.Printf("[session:%s] ERROR TOAST DETECTED: %s (source: %s)", sessionID, ev.Text, ev.Source)
 							} else if ev.Level == "warning" {
 								facts = append(facts, mangle.Fact{
 									Predicate: "warning_toast",
-									Args:      []interface{}{ev.Text, ev.Source, ts.UnixMilli()},
+									Args:      []interface{}{sessionID, ev.Text, ev.Source, ts.UnixMilli()},
 									Timestamp: ts,
 								})
 							}
@@ -1232,30 +1233,35 @@ func (m *SessionManager) captureDOMFacts(ctx context.Context, sessionID string, 
 	for _, n := range nodes {
 		facts = append(facts, mangle.Fact{
 			Predicate: "dom_node",
-			Args:      []interface{}{n.ID, n.Tag, n.Text, n.Parent},
+			Args:      []interface{}{sessionID, n.ID, n.Tag, n.Text, n.Parent},
 			Timestamp: now,
 		})
 		if n.Text != "" {
 			facts = append(facts, mangle.Fact{
 				Predicate: "dom_text",
-				Args:      []interface{}{n.ID, n.Text},
+				Args:      []interface{}{sessionID, n.ID, n.Text},
 				Timestamp: now,
 			})
 		}
 		for k, v := range n.Attrs {
 			facts = append(facts, mangle.Fact{
 				Predicate: "dom_attr",
-				Args:      []interface{}{n.ID, k, v},
+				Args:      []interface{}{sessionID, n.ID, k, v},
 				Timestamp: now,
 			})
 		}
 		// Add layout fact
 		facts = append(facts, mangle.Fact{
 			Predicate: "dom_layout",
-			Args:      []interface{}{n.ID, n.Layout.X, n.Layout.Y, n.Layout.Width, n.Layout.Height, fmt.Sprintf("%v", n.Layout.Visible)},
+			Args:      []interface{}{sessionID, n.ID, n.Layout.X, n.Layout.Y, n.Layout.Width, n.Layout.Height, fmt.Sprintf("%v", n.Layout.Visible)},
 			Timestamp: now,
 		})
 	}
+	facts = append(facts, mangle.Fact{
+		Predicate: "dom_updated",
+		Args:      []interface{}{sessionID, now.UnixMilli()},
+		Timestamp: now,
+	})
 	return m.engine.AddFacts(ctx, facts)
 }
 
