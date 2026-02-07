@@ -51,6 +51,7 @@ BrowserNERD is a stdio MCP server (newline-delimited JSON-RPC over stdin/stdout)
 ```bash
 python scripts/mcp_smoke.py list
 python scripts/mcp_smoke.py smoke --url https://example.com/
+python scripts/mcp_smoke.py smoke --go-test --build --url https://symbiogen.ai/
 python scripts/mcp_smoke.py repl
 ```
 

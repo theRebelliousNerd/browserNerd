@@ -181,9 +181,19 @@ def _default_config_path() -> str:
     here = os.path.abspath(os.path.dirname(__file__))
     return os.path.abspath(os.path.join(here, "..", "config.yaml"))
 
+def _mcp_server_root() -> str:
+    here = os.path.abspath(os.path.dirname(__file__))
+    return os.path.abspath(os.path.join(here, ".."))
+
 
 def _build_exe_args(config_path: str) -> list[str]:
     return ["--config", config_path]
+
+def _run_go(cmd: list[str], *, cwd: str) -> None:
+    try:
+        subprocess.run(cmd, cwd=cwd, check=True)
+    except FileNotFoundError as e:
+        raise RuntimeError("Go is not installed or not on PATH (required for --build/--go-test).") from e
 
 
 def _init(client: McpStdioClient) -> dict[str, Any]:
@@ -298,8 +308,16 @@ def _cmd_call(args: argparse.Namespace) -> int:
 
 
 def _cmd_smoke(args: argparse.Namespace) -> int:
+    if args.go_test:
+        _run_go(["go", "test", "./..."], cwd=_mcp_server_root())
+        args.build = True
+
+    if args.build:
+        _run_go(["go", "build", "-o", args.exe, "./cmd/server"], cwd=_mcp_server_root())
+
     client = McpStdioClient(args.exe, _build_exe_args(args.config), debug=args.debug)
     session_id: str | None = None
+    observe_args: dict[str, Any] = {}
     try:
         _init(client)
         _tool_call(client, "launch-browser", {}, timeout_s=60.0)
@@ -324,35 +342,43 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
             )
 
         _tool_call(client, "await-stable-state", {"session_id": session_id}, timeout_s=30.0)
+        if args.sleep_s > 0:
+            time.sleep(args.sleep_s)
+
         state = _tool_call(client, "get-page-state", {"session_id": session_id}, timeout_s=30.0)
         print(f"Page: {state.get('title', '?')} ({state.get('url', '?')})  session_id={session_id}")
 
-        observe = _tool_call(
-            client,
-            "browser-observe",
-            {
-                "session_id": session_id,
-                "mode": "composite",
-                "view": "compact",
-                "max_items": 25,
-                "include_action_plan": True,
-                "include_diagnostics": True,
-            },
-            timeout_s=60.0,
-        )
-        if isinstance(observe, dict):
-            print(observe.get("summary", "observe complete"))
-            next_step = observe.get("next_step", {})
+        observe_args = {
+            "session_id": session_id,
+            "mode": "composite",
+            "view": "compact",
+            "max_items": 25,
+            "include_action_plan": True,
+            "include_diagnostics": True,
+        }
+
+        def _print_observe(o: Any) -> tuple[str, dict[str, Any]] | None:
+            if not isinstance(o, dict):
+                print("Observe returned non-object result")
+                return None
+
+            print(o.get("summary", "observe complete"))
+            next_step = o.get("next_step", {})
             if isinstance(next_step, dict) and next_step:
                 print(f"Next step: {next_step.get('tool', '?')}  reason={next_step.get('reason', '')}")
 
-            data = observe.get("data", {})
+            data = o.get("data", {})
             if isinstance(data, dict):
                 nav = data.get("nav", {})
                 if isinstance(nav, dict):
                     counts = nav.get("counts", {})
                     if isinstance(counts, dict):
-                        print(f"Nav links: total={counts.get('total', '?')} internal={counts.get('internal', '?')} external={counts.get('external', '?')}")
+                        print(
+                            "Nav links: "
+                            f"total={counts.get('total', '?')} "
+                            f"internal={counts.get('internal', '?')} "
+                            f"external={counts.get('external', '?')}"
+                        )
 
                 inter = data.get("interactive", {})
                 if isinstance(inter, dict):
@@ -363,8 +389,43 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
                 diag = data.get("diagnostics", {})
                 if isinstance(diag, dict) and diag.get("status"):
                     print(f"Diagnose: status={diag.get('status', '?')} summary={diag.get('summary', '')}")
-        else:
-            print("Observe returned non-object result")
+
+            tool = next_step.get("tool") if isinstance(next_step, dict) else None
+            args_obj = next_step.get("args") if isinstance(next_step, dict) else None
+            if isinstance(tool, str) and tool and isinstance(args_obj, dict):
+                return (tool, args_obj)
+            return None
+
+        observe = _tool_call(client, "browser-observe", observe_args, timeout_s=args.timeout_s)
+        next_step_tuple = _print_observe(observe)
+
+        if args.follow_next and next_step_tuple:
+            safe_tools = {"await-stable-state", "browser-observe", "browser-reason"}
+            if args.allow_screenshot:
+                safe_tools.add("screenshot")
+            for step in range(args.max_steps):
+                tool, tool_args = next_step_tuple
+
+                if tool == "screenshot" and not args.allow_screenshot:
+                    break
+                if tool not in safe_tools:
+                    break
+
+                print(f"Auto-follow {step + 1}/{args.max_steps}: {tool}")
+                result = _tool_call(client, tool, tool_args, timeout_s=args.timeout_s)
+
+                if tool == "browser-observe":
+                    observe = result
+                elif tool == "browser-reason":
+                    # Print compact JSON so we can inspect reasoning without drowning the output.
+                    print(json.dumps(result, indent=2, ensure_ascii=True))
+                    break
+                else:
+                    observe = _tool_call(client, "browser-observe", observe_args, timeout_s=args.timeout_s)
+
+                next_step_tuple = _print_observe(observe)
+                if not next_step_tuple:
+                    break
         return 0
     finally:
         try:
@@ -471,6 +532,18 @@ def main() -> int:
 
     p_smoke = sub.add_parser("smoke", help="Basic end-to-end browser flow (launch, create session, inspect)")
     p_smoke.add_argument("--url", default="https://symbiogen.ai/", help="URL to navigate to")
+    p_smoke.add_argument("--build", action="store_true", help="Run go build before starting the MCP server")
+    p_smoke.add_argument("--go-test", action="store_true", help="Run go test ./... before build (implies --build)")
+    p_smoke.add_argument(
+        "--follow-next",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-execute browser-observe next_step recommendations (safe subset) in smoke mode",
+    )
+    p_smoke.add_argument("--max-steps", type=int, default=3, help="Max number of auto-follow steps")
+    p_smoke.add_argument("--allow-screenshot", action="store_true", help="Allow auto-follow to execute screenshot steps")
+    p_smoke.add_argument("--sleep-s", type=float, default=0.0, help="Extra sleep after initial await-stable-state (seconds)")
+    p_smoke.add_argument("--timeout-s", type=float, default=60.0, help="Tool call timeout seconds")
     p_smoke.set_defaults(func=_cmd_smoke)
 
     p_repl = sub.add_parser("repl", help="Interactive REPL for ad-hoc MCP tool calls (keeps one server alive)")
