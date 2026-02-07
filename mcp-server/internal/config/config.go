@@ -83,7 +83,7 @@ func DefaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
 			Name:    "browsernerd-mcp",
-			Version: "0.0.3",
+			Version: "0.0.4",
 			LogFile: "browsernerd-mcp.log",
 		},
 		Browser: BrowserConfig{

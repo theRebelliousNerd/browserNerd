@@ -190,6 +190,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	stateData := map[string]interface{}{}
 	navData := map[string]interface{}{}
 	interactiveData := map[string]interface{}{}
+	interactivePlanningData := map[string]interface{}{}
 	hiddenData := map[string]interface{}{}
 	diagnosticsData := map[string]interface{}{}
 	toastData := map[string]interface{}{}
@@ -199,6 +200,16 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	fetchInteractive := mode == "interactive" || mode == "composite"
 	fetchHidden := mode == "hidden" || (mode == "composite" && view == "full")
 	fetchDiagnostics := includeDiagnostics
+
+	// Planning snapshot: when action planning is enabled, prefer a wider interactive extraction
+	// than the returned output to avoid missing primary CTAs (while keeping output token-light).
+	planningLimit := maxItems
+	planningFilter := filter
+	if includeActionPlan {
+		planningLimit = maxInt(maxItems, 80)
+		// Action planning benefits from seeing all interactive elements even if output filter is narrower.
+		planningFilter = "all"
+	}
 
 	if fetchState {
 		res, err := stateTool.Execute(ctx, map[string]interface{}{"session_id": sessionID})
@@ -212,7 +223,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		res, err := navTool.Execute(ctx, map[string]interface{}{
 			"session_id":    sessionID,
 			"internal_only": internalOnly,
-			"max_per_area":  maxItems,
+			"max_per_area":  maxInt(maxItems, 20),
 			"emit_facts":    emitFacts,
 		})
 		if err != nil {
@@ -224,15 +235,18 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	if fetchInteractive {
 		res, err := interactiveTool.Execute(ctx, map[string]interface{}{
 			"session_id":   sessionID,
-			"filter":       filter,
+			"filter":       planningFilter,
 			"visible_only": visibleOnly,
-			"limit":        maxItems,
+			"limit":        planningLimit,
 			"verbose":      view == "full",
 		})
 		if err != nil {
 			return nil, err
 		}
-		interactiveData = asMap(res)
+		interactivePlanningData = asMap(res)
+		if fetchInteractive {
+			interactiveData = filterInteractiveData(interactivePlanningData, filter)
+		}
 	}
 
 	if fetchHidden {
@@ -315,7 +329,15 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	actionCandidates := []map[string]interface{}{}
 	recommendations := []map[string]interface{}{}
 	if includeActionPlan && t.engine != nil && (fetchInteractive || fetchNav || mode == "composite") {
-		actionCandidates = queryActionCandidates(ctx, t.engine, sessionID, maxItems)
+		// Query more than we plan to return so we can filter stale candidates safely.
+		queryLimit := maxInt(planningLimit*4, 300)
+		actionCandidatesRaw := queryActionCandidates(ctx, t.engine, sessionID, queryLimit)
+
+		// Filter to candidates that match the *current* observe snapshot (prevents stale actions from prior pages).
+		allowedRefs := buildRefSet(interactivePlanningData)
+		allowedHrefs := buildHrefSet(navData)
+		actionCandidates = filterActionCandidates(actionCandidatesRaw, allowedRefs, allowedHrefs)
+
 		currentURL := getStringFromMap(stateData, "url")
 		if currentURL == "" {
 			currentURL = resolveCurrentURL(ctx, t.engine, sessionID)
@@ -2068,6 +2090,174 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func filterInteractiveData(data map[string]interface{}, filter string) map[string]interface{} {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" || filter == "all" {
+		return data
+	}
+
+	allowed := map[string]bool{}
+	switch filter {
+	case "buttons":
+		allowed["button"] = true
+	case "inputs":
+		allowed["input"] = true
+		allowed["checkbox"] = true
+		allowed["radio"] = true
+	case "links":
+		allowed["link"] = true
+	case "selects":
+		allowed["select"] = true
+	default:
+		return data
+	}
+
+	elems, ok := data["elements"].([]interface{})
+	if !ok || len(elems) == 0 {
+		return data
+	}
+
+	filtered := make([]interface{}, 0, len(elems))
+	typeCount := map[string]int{}
+	disabledCount := 0
+
+	for _, e := range elems {
+		elem, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typ := strings.ToLower(strings.TrimSpace(getStringFromMap(elem, "type")))
+		if typ == "" || !allowed[typ] {
+			continue
+		}
+
+		filtered = append(filtered, elem)
+		typeCount[typ]++
+		if disabled, ok := elem["disabled"].(bool); ok && disabled {
+			disabledCount++
+		}
+	}
+
+	summary := map[string]interface{}{
+		"total": len(filtered),
+		"types": map[string]interface{}{},
+	}
+	typesOut := summary["types"].(map[string]interface{})
+	for k, v := range typeCount {
+		typesOut[k] = v
+	}
+	if disabledCount > 0 {
+		summary["disabled"] = disabledCount
+	}
+
+	out := map[string]interface{}{}
+	for k, v := range data {
+		if k == "summary" || k == "elements" {
+			continue
+		}
+		out[k] = v
+	}
+	out["summary"] = summary
+	out["elements"] = filtered
+	return out
+}
+
+func buildRefSet(interactiveData map[string]interface{}) map[string]bool {
+	out := map[string]bool{}
+	if interactiveData == nil {
+		return out
+	}
+	elems, ok := interactiveData["elements"].([]interface{})
+	if !ok || len(elems) == 0 {
+		return out
+	}
+	for _, e := range elems {
+		elem, ok := e.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		ref := strings.TrimSpace(getStringFromMap(elem, "ref"))
+		if ref == "" {
+			continue
+		}
+		out[ref] = true
+	}
+	return out
+}
+
+func buildHrefSet(navData map[string]interface{}) map[string]bool {
+	out := map[string]bool{}
+	if navData == nil {
+		return out
+	}
+	for _, area := range []string{"nav", "side", "main", "foot"} {
+		m, ok := navData[area].(map[string]interface{})
+		if !ok || len(m) == 0 {
+			continue
+		}
+		for _, v := range m {
+			href := strings.TrimSpace(fmt.Sprintf("%v", v))
+			if href == "" {
+				continue
+			}
+			out[href] = true
+		}
+	}
+	return out
+}
+
+func filterActionCandidates(candidates []map[string]interface{}, allowedRefs, allowedHrefs map[string]bool) []map[string]interface{} {
+	if len(candidates) == 0 {
+		return candidates
+	}
+	if allowedRefs == nil {
+		allowedRefs = map[string]bool{}
+	}
+	if allowedHrefs == nil {
+		allowedHrefs = map[string]bool{}
+	}
+
+	out := make([]map[string]interface{}, 0, len(candidates))
+	for _, c := range candidates {
+		action := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", c["action"])))
+		ref := strings.TrimSpace(fmt.Sprintf("%v", c["ref"]))
+		label := strings.TrimSpace(fmt.Sprintf("%v", c["label"]))
+
+		// Global actions: keep.
+		if ref == "" && label == "" {
+			out = append(out, c)
+			continue
+		}
+
+		switch action {
+		case "navigate":
+			// For navigate, label typically holds the target href.
+			if label != "" && allowedHrefs[label] {
+				out = append(out, c)
+				continue
+			}
+			// Sometimes navigate candidates are produced via element ref.
+			if ref != "" && allowedRefs[ref] {
+				out = append(out, c)
+				continue
+			}
+		default:
+			if ref != "" && allowedRefs[ref] {
+				out = append(out, c)
+				continue
+			}
+		}
+	}
+	return out
 }
 
 func limitAnySlice(items []interface{}, max int) []interface{} {

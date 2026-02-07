@@ -14,8 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Name != "browsernerd-mcp" {
 		t.Errorf("expected server name 'browsernerd-mcp', got %q", cfg.Server.Name)
 	}
-	if cfg.Server.Version != "0.0.3" {
-		t.Errorf("expected server version '0.0.3', got %q", cfg.Server.Version)
+	if cfg.Server.Version != "0.0.4" {
+		t.Errorf("expected server version '0.0.4', got %q", cfg.Server.Version)
 	}
 	if cfg.Server.LogFile != "browsernerd-mcp.log" {
 		t.Errorf("expected log file 'browsernerd-mcp.log', got %q", cfg.Server.LogFile)

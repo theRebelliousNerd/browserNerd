@@ -32,6 +32,13 @@ coverage.html
 *.prof
 
 # --------------------------------------------
+# Python bytecode
+# --------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+
+# --------------------------------------------
 # Internal development docs (not for public)
 # --------------------------------------------
 # AI assistant guides

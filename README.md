@@ -7,7 +7,7 @@ Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent s
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/MCP_Tools-34-blue)](https://modelcontextprotocol.io)
+[![Tools](https://img.shields.io/badge/MCP_Tools-37-blue)](https://modelcontextprotocol.io)
 
 ---
 
@@ -150,7 +150,7 @@ browser:
 
 ---
 
-## Complete Tool Reference (34 Tools)
+## Complete Tool Reference (37 Tools)
 
 ### Session Management (8 tools)
 
@@ -208,6 +208,14 @@ browser:
 | `subscribe-rule` | Push-based notification when rule triggers |
 | `await-fact` | Wait for a specific fact to appear |
 | `await-conditions` | Wait for multiple facts (AND logic) |
+
+### Progressive Disclosure (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `browser-observe` | Progressive-disclosure page observation (modes: state/nav/interactive/hidden/composite, views: summary/compact/full) |
+| `browser-act` | Progressive-disclosure action execution with intent presets |
+| `browser-reason` | Progressive-disclosure Mangle reasoning with causal analysis |
 
 ### Diagnostics (3 tools)
 
@@ -269,6 +277,63 @@ execute-plan({
 })
 Total: ~100 tokens, 1 round trip
 ```
+
+---
+
+## Progressive Disclosure: Right Detail at the Right Time
+
+v0.0.4 introduces **progressive disclosure tools** that let AI agents control exactly how much detail they receive. Instead of getting everything and filtering, agents request the precision level they need:
+
+### browser-observe
+
+One tool replaces multiple observation calls with configurable modes and views:
+
+```
+browser-observe(mode: "composite", view: "summary")
+  -> Page state + nav links + interactive elements in ~200 tokens
+
+browser-observe(mode: "interactive", view: "full", filter: "button")
+  -> All buttons with full details for form automation
+
+browser-observe(intent: "quick_status")
+  -> Minimal page state check in ~50 tokens
+```
+
+**Modes:** `state` | `nav` | `interactive` | `hidden` | `composite`
+**Views:** `summary` (minimal) | `compact` (practical) | `full` (diagnostic)
+**Intents:** `quick_status` | `find_actions` | `map_navigation` | `hidden_content` | `deep_audit`
+
+### browser-act
+
+Consolidated action execution with progressive feedback:
+
+```
+browser-act(actions: [{type: "click", ref: "submit"}], view: "compact")
+  -> Execute + return only what changed
+```
+
+### browser-reason
+
+Mangle-powered reasoning with adjustable depth:
+
+```
+browser-reason(intent: "errors", view: "summary")
+  -> Quick error count and top issue
+
+browser-reason(intent: "performance", view: "full")
+  -> Full slow API analysis with correlation chains
+```
+
+---
+
+## MCP Resources
+
+BrowserNERD exposes read-only MCP resources for context-aware integrations:
+
+| Resource | Description |
+|----------|-------------|
+| `browsernerd://about` | Server name, version, and usage notes |
+| `browsernerd://session/{sessionId}/facts?predicate=X&limit=N` | Token-efficient fact slice for a session, filtered by predicate |
 
 ---
 
@@ -411,7 +476,7 @@ docker:
 ```yaml
 server:
   name: "browsernerd-mcp"
-  version: "0.0.2"
+  version: "0.0.4"
   log_file: "data/browsernerd-mcp.log"
 
 browser:
@@ -479,11 +544,14 @@ browserNerd/
 |   +-- cmd/server/             # Entry point
 |   +-- internal/
 |   |   +-- browser/            # Rod session management, CDP events
-|   |   +-- mcp/                # MCP server, 34 tool implementations
+|   |   +-- mcp/                # MCP server, 37 tool implementations
 |   |   +-- mangle/             # Fact engine, rule evaluation
 |   |   +-- config/             # YAML configuration
 |   |   +-- docker/             # Container log integration
+|   |   +-- correlation/        # Keyed cross-domain fact correlation
 |   +-- schemas/                # Mangle predicates and rules
+|   +-- scripts/                # MCP smoke test harness
++-- eval/                       # Evaluation framework
 +-- LICENSE                     # Apache 2.0
 +-- NOTICE                      # Attribution
 ```
