@@ -544,8 +544,8 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 	netRequests := t.engine.FactsByPredicate("net_request")
 	netResponses := t.engine.FactsByPredicate("net_response")
 
-	reqIndex := make(map[string]map[string]reqInfo)     // session -> reqId -> info
-	respIndex := make(map[string]map[string]any) // session -> reqId -> status
+	reqIndex := make(map[string]map[string]reqInfo) // session -> reqId -> info
+	respIndex := make(map[string]map[string]any)    // session -> reqId -> status
 
 	for _, req := range netRequests {
 		if len(req.Args) < 6 {
@@ -1043,6 +1043,11 @@ func (t *GetToastNotificationsTool) InputSchema() map[string]interface{} {
 				"description": "Filter by level: 'error', 'warning', 'success', 'info', or 'all' (default: 'all')",
 				"enum":        []string{"error", "warning", "success", "info", "all"},
 			},
+			"view": map[string]interface{}{
+				"type":        "string",
+				"description": "summary|compact|full (default: compact). summary omits toast rows; compact returns a small sample; full returns all (subject to limit).",
+				"enum":        []string{"summary", "compact", "full"},
+			},
 			"since_ms": map[string]interface{}{
 				"type":        "integer",
 				"description": "Only include toasts after this timestamp (epoch ms). Default: all.",
@@ -1064,9 +1069,13 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 	if levelFilter == "" {
 		levelFilter = "all"
 	}
+	view := normalizeProgressiveView(getStringArg(args, "view"))
 	sinceMs := int64(getIntArg(args, "since_ms", 0))
-	includeCorrelations := getBoolArg(args, "include_correlations", true)
+	includeCorrelations := getBoolArg(args, "include_correlations", view == "full")
 	limit := getIntArg(args, "limit", 0)
+	if limit <= 0 && view != "full" {
+		limit = 10
+	}
 
 	// Collect toast notifications from the temporal buffer. (These are user-visible UI overlays
 	// captured via DOM mutation observation; they are high-signal and usually low-volume.)
@@ -1215,6 +1224,18 @@ func (t *GetToastNotificationsTool) Execute(ctx context.Context, args map[string
 		result["summary"] = "No toast notifications detected yet"
 	}
 
+	// Progressive disclosure: omit the toast rows unless requested.
+	if view == "summary" {
+		delete(result, "toasts")
+		if errs, ok := result["repeated_errors"].([]string); ok && len(errs) > 5 {
+			result["repeated_errors"] = errs[:5]
+		}
+	} else if view == "compact" {
+		if errs, ok := result["repeated_errors"].([]string); ok && len(errs) > 10 {
+			result["repeated_errors"] = errs[:10]
+		}
+	}
+
 	return result, nil
 }
 
@@ -1254,6 +1275,15 @@ func (t *DiagnosePageTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "Optional: scope diagnostics to a session_id (recommended).",
 			},
+			"view": map[string]interface{}{
+				"type":        "string",
+				"description": "summary|compact|full (default: summary). summary returns counts only; compact returns limited rows; full returns all rows.",
+				"enum":        []string{"summary", "compact", "full"},
+			},
+			"max_items": map[string]interface{}{
+				"type":        "integer",
+				"description": "Max rows returned per category in compact view (default 20).",
+			},
 		},
 	}
 }
@@ -1266,6 +1296,15 @@ func (t *DiagnosePageTool) Execute(ctx context.Context, args map[string]interfac
 			"slow_apis":       []map[string]interface{}{},
 			"summary":         "mangle engine unavailable",
 		}, nil
+	}
+
+	view := normalizeProgressiveView(getStringArg(args, "view"))
+	if !argHasNonEmptyString(args, "view") {
+		view = "summary"
+	}
+	maxItems := getIntArg(args, "max_items", defaultProgressiveMaxItems)
+	if maxItems <= 0 {
+		maxItems = defaultProgressiveMaxItems
 	}
 
 	// Keep this resilient: query errors should degrade to empty rows rather
@@ -1291,24 +1330,46 @@ func (t *DiagnosePageTool) Execute(ctx context.Context, args map[string]interfac
 		status = "warning"
 	}
 
-	return map[string]interface{}{
-		"status":          status,
-		"root_causes":     rootCauses,
-		"failed_requests": failedReqs,
-		"slow_apis":       slowApis,
-		"counts": map[string]interface{}{
-			"root_causes":     len(rootCauses),
-			"failed_requests": len(failedReqs),
-			"slow_apis":       len(slowApis),
-		},
-		"summary": fmt.Sprintf(
-			"status=%s root_causes=%d failed_requests=%d slow_apis=%d",
-			status,
-			len(rootCauses),
-			len(failedReqs),
-			len(slowApis),
-		),
-	}, nil
+	counts := map[string]interface{}{
+		"root_causes":     len(rootCauses),
+		"failed_requests": len(failedReqs),
+		"slow_apis":       len(slowApis),
+	}
+	summary := fmt.Sprintf(
+		"status=%s root_causes=%d failed_requests=%d slow_apis=%d",
+		status,
+		len(rootCauses),
+		len(failedReqs),
+		len(slowApis),
+	)
+
+	switch view {
+	case "summary":
+		return map[string]interface{}{
+			"status":  status,
+			"counts":  counts,
+			"summary": summary,
+		}, nil
+	case "compact":
+		return map[string]interface{}{
+			"status":          status,
+			"counts":          counts,
+			"summary":         summary,
+			"root_causes":     limitMapSlice(rootCauses, maxItems),
+			"failed_requests": limitMapSlice(failedReqs, maxItems),
+			"slow_apis":       limitMapSlice(slowApis, maxItems),
+			"truncated":       len(rootCauses) > maxItems || len(failedReqs) > maxItems || len(slowApis) > maxItems,
+		}, nil
+	default:
+		return map[string]interface{}{
+			"status":          status,
+			"root_causes":     rootCauses,
+			"failed_requests": failedReqs,
+			"slow_apis":       slowApis,
+			"counts":          counts,
+			"summary":         summary,
+		}, nil
+	}
 }
 
 // AwaitStableStateTool blocks until the page is considered "stable" (network idle + DOM settled).

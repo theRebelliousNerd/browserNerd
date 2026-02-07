@@ -247,7 +247,15 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 
 	if fetchDiagnostics {
 		diagTool := &DiagnosePageTool{engine: t.engine}
-		res, err := diagTool.Execute(ctx, map[string]interface{}{"session_id": sessionID})
+		diagView := "summary"
+		if view == "full" {
+			diagView = "full"
+		}
+		res, err := diagTool.Execute(ctx, map[string]interface{}{
+			"session_id": sessionID,
+			"view":       diagView,
+			"max_items":  minInt(maxItems, 20),
+		})
 		if err == nil {
 			diagnosticsData = asMap(res)
 		} else {
@@ -256,6 +264,12 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 
 		if t.engine != nil {
 			toastTool := &GetToastNotificationsTool{engine: t.engine}
+			toastView := "summary"
+			if view == "compact" {
+				toastView = "compact"
+			} else if view == "full" {
+				toastView = "full"
+			}
 			toastLimit := minInt(maxItems, 10)
 			level := "all"
 			if view != "full" {
@@ -264,6 +278,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			toastRes, tErr := toastTool.Execute(ctx, map[string]interface{}{
 				"session_id":           sessionID,
 				"level":                level,
+				"view":                 toastView,
 				"include_correlations": view == "full",
 				"limit":                toastLimit,
 			})
