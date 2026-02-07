@@ -97,6 +97,10 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 				"type":        "boolean",
 				"description": "Include Mangle-derived action candidates and browser-act recommendations (default true)",
 			},
+			"include_diagnostics": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Include lightweight health signals (diagnose-page + toast counts) (default false; enabled by some intents)",
+			},
 			"max_recommendations": map[string]interface{}{
 				"type":        "integer",
 				"description": "Maximum recommendation rows to return (default 3)",
@@ -122,6 +126,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	internalOnly := getBoolArg(args, "internal_only", false)
 	emitFacts := getBoolArg(args, "emit_facts", true)
 	includeActionPlan := getBoolArg(args, "include_action_plan", true)
+	includeDiagnostics := getBoolArg(args, "include_diagnostics", false)
 	maxRecommendations := getIntArg(args, "max_recommendations", defaultObserveMaxRecs)
 	if maxRecommendations <= 0 {
 		maxRecommendations = defaultObserveMaxRecs
@@ -153,6 +158,18 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			internalOnly = intentCfg.internalOnly
 			intentApplied = true
 		}
+		if !argPresent(args, "include_action_plan") {
+			includeActionPlan = intentCfg.includeActionPlan
+			intentApplied = true
+		}
+		if !argPresent(args, "include_diagnostics") {
+			includeDiagnostics = intentCfg.includeDiagnostics
+			intentApplied = true
+		}
+		if !argHasInt(args, "max_recommendations") && intentCfg.maxRecommendations > 0 {
+			maxRecommendations = intentCfg.maxRecommendations
+			intentApplied = true
+		}
 	}
 
 	if mode == "" {
@@ -174,11 +191,14 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	navData := map[string]interface{}{}
 	interactiveData := map[string]interface{}{}
 	hiddenData := map[string]interface{}{}
+	diagnosticsData := map[string]interface{}{}
+	toastData := map[string]interface{}{}
 
 	fetchState := mode == "state" || mode == "composite"
 	fetchNav := mode == "nav" || mode == "composite"
 	fetchInteractive := mode == "interactive" || mode == "composite"
 	fetchHidden := mode == "hidden" || (mode == "composite" && view == "full")
+	fetchDiagnostics := includeDiagnostics
 
 	if fetchState {
 		res, err := stateTool.Execute(ctx, map[string]interface{}{"session_id": sessionID})
@@ -225,6 +245,38 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		hiddenData = asMap(res)
 	}
 
+	if fetchDiagnostics {
+		diagTool := &DiagnosePageTool{engine: t.engine}
+		res, err := diagTool.Execute(ctx, map[string]interface{}{"session_id": sessionID})
+		if err == nil {
+			diagnosticsData = asMap(res)
+		} else {
+			diagnosticsData = map[string]interface{}{"status": "error", "summary": err.Error()}
+		}
+
+		if t.engine != nil {
+			toastTool := &GetToastNotificationsTool{engine: t.engine}
+			toastLimit := minInt(maxItems, 10)
+			level := "all"
+			if view != "full" {
+				level = "error"
+			}
+			toastRes, tErr := toastTool.Execute(ctx, map[string]interface{}{
+				"session_id":           sessionID,
+				"level":                level,
+				"include_correlations": view == "full",
+				"limit":                toastLimit,
+			})
+			if tErr == nil {
+				toastData = asMap(toastRes)
+			} else {
+				toastData = map[string]interface{}{"status": "error", "summary": tErr.Error()}
+			}
+		} else {
+			toastData = map[string]interface{}{"status": "unavailable", "summary": "mangle engine unavailable"}
+		}
+	}
+
 	handles := make([]string, 0, 4)
 	data := map[string]interface{}{}
 
@@ -239,6 +291,10 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	}
 	if fetchHidden {
 		handles = append(handles, "observe:"+sessionID+":hidden")
+	}
+	if fetchDiagnostics {
+		handles = append(handles, "observe:"+sessionID+":diagnostics")
+		handles = append(handles, "observe:"+sessionID+":toasts")
 	}
 
 	actionCandidates := []map[string]interface{}{}
@@ -277,6 +333,20 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		if fetchHidden {
 			data["hidden_count"] = countHiddenElements(hiddenData)
 		}
+		if fetchDiagnostics {
+			data["diagnostics"] = map[string]interface{}{
+				"status":  getStringFromMap(diagnosticsData, "status"),
+				"counts":  diagnosticsData["counts"],
+				"summary": diagnosticsData["summary"],
+			}
+			data["toasts"] = map[string]interface{}{
+				"error_count":   toastData["error_count"],
+				"warning_count": toastData["warning_count"],
+				"success_count": toastData["success_count"],
+				"info_count":    toastData["info_count"],
+				"summary":       toastData["summary"],
+			}
+		}
 		if includeActionPlan {
 			data["action_candidate_count"] = len(actionCandidates)
 			data["recommendation_count"] = len(recommendations)
@@ -294,6 +364,14 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		if fetchHidden {
 			data["hidden"] = compactHiddenData(hiddenData, maxItems)
 		}
+		if fetchDiagnostics {
+			data["diagnostics"] = map[string]interface{}{
+				"status":  getStringFromMap(diagnosticsData, "status"),
+				"counts":  diagnosticsData["counts"],
+				"summary": diagnosticsData["summary"],
+			}
+			data["toasts"] = compactToastData(toastData, maxItems)
+		}
 		if includeActionPlan {
 			data["action_candidates"] = limitMapSlice(actionCandidates, maxItems)
 			data["recommendations"] = recommendations
@@ -310,6 +388,10 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		}
 		if fetchHidden {
 			data["hidden"] = hiddenData
+		}
+		if fetchDiagnostics {
+			data["diagnostics"] = diagnosticsData
+			data["toasts"] = toastData
 		}
 		if includeActionPlan {
 			data["action_candidates"] = actionCandidates
@@ -853,11 +935,52 @@ func compactHiddenData(data map[string]interface{}, maxItems int) map[string]int
 	return out
 }
 
+func compactToastData(data map[string]interface{}, maxItems int) map[string]interface{} {
+	out := map[string]interface{}{}
+	if status, ok := data["status"]; ok && status != nil {
+		out["status"] = status
+	}
+	if summary, ok := data["summary"]; ok && summary != nil {
+		out["summary"] = summary
+	}
+
+	for _, k := range []string{"error_count", "warning_count", "success_count", "info_count"} {
+		if v, ok := data[k]; ok && v != nil {
+			out[k] = v
+		}
+	}
+
+	if reps, ok := data["repeated_errors"].([]interface{}); ok && len(reps) > 0 {
+		out["repeated_errors"] = limitAnySlice(reps, minInt(maxItems, 5))
+	}
+
+	// Include a small sample of toasts only if present.
+	if toasts, ok := data["toasts"].([]interface{}); ok && len(toasts) > 0 {
+		limit := minInt(maxItems, 5)
+		out["toasts"] = limitAnySlice(toasts, limit)
+		out["toast_count"] = len(toasts)
+		out["truncated"] = len(toasts) > limit
+	}
+
+	return out
+}
+
 func buildObserveSummary(data map[string]interface{}) string {
 	parts := make([]string, 0, 4)
 	if state, ok := data["state"].(map[string]interface{}); ok {
 		if loading, exists := state["loading"].(bool); exists {
 			parts = append(parts, fmt.Sprintf("loading=%t", loading))
+		}
+	}
+	if diag, ok := data["diagnostics"].(map[string]interface{}); ok {
+		status := strings.TrimSpace(getStringFromMap(diag, "status"))
+		if status != "" && status != "ok" {
+			parts = append(parts, "diag="+status)
+		}
+	}
+	if toasts, ok := data["toasts"].(map[string]interface{}); ok {
+		if errCount := asInt(toasts["error_count"]); errCount > 0 {
+			parts = append(parts, fmt.Sprintf("toast_err=%d", errCount))
 		}
 	}
 	if navCounts, ok := data["nav_counts"].(map[string]interface{}); ok {
@@ -1129,12 +1252,15 @@ func hasRecentGateFact(engine *mangle.Engine, predicate, sessionID, matchValue s
 }
 
 type observeIntentDefaults struct {
-	mode         string
-	view         string
-	maxItems     int
-	filter       string
-	visibleOnly  bool
-	internalOnly bool
+	mode               string
+	view               string
+	maxItems           int
+	filter             string
+	visibleOnly        bool
+	internalOnly       bool
+	includeActionPlan  bool
+	includeDiagnostics bool
+	maxRecommendations int
 }
 
 func normalizeObserveIntent(intent string) string {
@@ -1145,48 +1271,63 @@ func resolveObserveIntentDefaults(intent string) (observeIntentDefaults, bool) {
 	switch intent {
 	case "quick_status":
 		return observeIntentDefaults{
-			mode:         "state",
-			view:         "summary",
-			maxItems:     5,
-			filter:       "all",
-			visibleOnly:  true,
-			internalOnly: false,
+			mode:               "state",
+			view:               "summary",
+			maxItems:           5,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       false,
+			includeActionPlan:  false,
+			includeDiagnostics: true,
+			maxRecommendations: 2,
 		}, true
 	case "find_actions":
 		return observeIntentDefaults{
-			mode:         "interactive",
-			view:         "compact",
-			maxItems:     12,
-			filter:       "all",
-			visibleOnly:  true,
-			internalOnly: false,
+			mode:               "interactive",
+			view:               "compact",
+			maxItems:           12,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       false,
+			includeActionPlan:  true,
+			includeDiagnostics: false,
+			maxRecommendations: defaultObserveMaxRecs,
 		}, true
 	case "map_navigation":
 		return observeIntentDefaults{
-			mode:         "nav",
-			view:         "compact",
-			maxItems:     20,
-			filter:       "all",
-			visibleOnly:  true,
-			internalOnly: true,
+			mode:               "nav",
+			view:               "compact",
+			maxItems:           20,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       true,
+			includeActionPlan:  false,
+			includeDiagnostics: false,
+			maxRecommendations: defaultObserveMaxRecs,
 		}, true
 	case "hidden_content":
 		return observeIntentDefaults{
-			mode:         "hidden",
-			view:         "compact",
-			maxItems:     20,
-			filter:       "all",
-			visibleOnly:  true,
-			internalOnly: false,
+			mode:               "hidden",
+			view:               "compact",
+			maxItems:           20,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       false,
+			includeActionPlan:  false,
+			includeDiagnostics: false,
+			maxRecommendations: defaultObserveMaxRecs,
 		}, true
 	case "deep_audit":
 		return observeIntentDefaults{
-			mode:         "composite",
-			view:         "full",
-			maxItems:     50,
-			filter:       "all",
-			visibleOnly:  true,
-			internalOnly: false,
+			mode:               "composite",
+			view:               "full",
+			maxItems:           50,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       false,
+			includeActionPlan:  true,
+			includeDiagnostics: true,
+			maxRecommendations: defaultReasonMaxRecs,
 		}, true
 	default:
 		return observeIntentDefaults{}, false
@@ -1248,13 +1389,37 @@ func argHasInt(args map[string]interface{}, key string) bool {
 }
 
 func suggestObserveNextStep(sessionID string, data map[string]interface{}, mode, view string, recommendations []map[string]interface{}) map[string]interface{} {
-	_ = mode
-	_ = view
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	view = strings.ToLower(strings.TrimSpace(view))
 	if state, ok := data["state"].(map[string]interface{}); ok {
 		if loading, exists := state["loading"].(bool); exists && loading {
 			return map[string]interface{}{
 				"tool": "await-stable-state",
 				"args": map[string]interface{}{"timeout_ms": 10000},
+			}
+		}
+	}
+
+	if diag, ok := data["diagnostics"].(map[string]interface{}); ok {
+		status := strings.TrimSpace(getStringFromMap(diag, "status"))
+		if status == "error" {
+			return map[string]interface{}{
+				"tool": "browser-reason",
+				"args": map[string]interface{}{
+					"session_id": sessionID,
+					"topic":      "why_failed",
+					"view":       "compact",
+				},
+			}
+		}
+		if status == "warning" {
+			return map[string]interface{}{
+				"tool": "browser-reason",
+				"args": map[string]interface{}{
+					"session_id": sessionID,
+					"topic":      "health",
+					"view":       "compact",
+				},
 			}
 		}
 	}
@@ -1292,6 +1457,20 @@ func suggestObserveNextStep(sessionID string, data map[string]interface{}, mode,
 					},
 				}
 			}
+			// If we have *no* visible interactive elements, expand scope before falling back to JS.
+			if asInt(summary["total"]) == 0 {
+				return map[string]interface{}{
+					"tool": "browser-observe",
+					"args": map[string]interface{}{
+						"session_id":    sessionID,
+						"mode":          "hidden",
+						"view":          "compact",
+						"max_items":     20,
+						"emit_facts":    true,
+						"internal_only": false,
+					},
+				}
+			}
 		}
 	}
 	if interSummary, ok := data["interactive_summary"].(map[string]interface{}); ok {
@@ -1302,6 +1481,19 @@ func suggestObserveNextStep(sessionID string, data map[string]interface{}, mode,
 					"session_id": sessionID,
 					"topic":      "next_best_action",
 					"view":       "compact",
+				},
+			}
+		}
+		if asInt(interSummary["total"]) == 0 {
+			return map[string]interface{}{
+				"tool": "browser-observe",
+				"args": map[string]interface{}{
+					"session_id":    sessionID,
+					"mode":          "hidden",
+					"view":          "compact",
+					"max_items":     20,
+					"emit_facts":    true,
+					"internal_only": false,
 				},
 			}
 		}
@@ -1331,6 +1523,44 @@ func suggestObserveNextStep(sessionID string, data map[string]interface{}, mode,
 					},
 				}
 			}
+		}
+	}
+
+	// If the caller didn't request composite, we likely just need more context.
+	if mode != "" && mode != "composite" {
+		return map[string]interface{}{
+			"tool": "browser-observe",
+			"args": map[string]interface{}{
+				"session_id": sessionID,
+				"mode":       "composite",
+				"view":       "compact",
+			},
+		}
+	}
+
+	// If composite data still looks empty, a screenshot is often the cheapest way to understand what's happening.
+	navTotal := -1
+	if navCounts, ok := data["nav_counts"].(map[string]interface{}); ok {
+		navTotal = asInt(navCounts["total"])
+	} else if nav, ok := data["nav"].(map[string]interface{}); ok {
+		if counts, ok := nav["counts"].(map[string]interface{}); ok {
+			navTotal = asInt(counts["total"])
+		}
+	}
+	interTotal := -1
+	if interSummary, ok := data["interactive_summary"].(map[string]interface{}); ok {
+		interTotal = asInt(interSummary["total"])
+	} else if inter, ok := data["interactive"].(map[string]interface{}); ok {
+		if summary, ok := inter["summary"].(map[string]interface{}); ok {
+			interTotal = asInt(summary["total"])
+		}
+	}
+	if navTotal == 0 && interTotal == 0 {
+		return map[string]interface{}{
+			"tool": "screenshot",
+			"args": map[string]interface{}{
+				"session_id": sessionID,
+			},
 		}
 	}
 
@@ -1816,6 +2046,13 @@ func ternaryStatus(ok bool, yes, no string) string {
 		return yes
 	}
 	return no
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func limitAnySlice(items []interface{}, max int) []interface{} {
