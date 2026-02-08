@@ -435,8 +435,8 @@ Enable full-stack error correlation by connecting to backend containers:
 docker:
   enabled: true
   containers:
-    - symbiogen-backend
-    - symbiogen-frontend
+    - my-app-backend
+    - my-app-frontend
   log_window: 60s
 ```
 
@@ -459,15 +459,79 @@ docker:
   }],
   "backend_correlations": [{
     "request_id": "req-123",
-    "container": "symbiogen-backend",
+    "container": "my-app-backend",
     "backend_error": "KeyError: 'users'",
     "time_delta_ms": 45
   }],
   "container_health": {
-    "symbiogen-backend": {"status": "degraded", "error_count": 3}
+    "my-app-backend": {"status": "degraded", "error_count": 3}
   }
 }
 ```
+
+---
+
+## Workspace Config (`.browsernerd/`)
+
+Projects can ship their own BrowserNERD configuration by adding a `.browsernerd/` directory at the project root. The server auto-discovers this directory by walking up from the current working directory.
+
+### Directory Structure
+
+```
+.browsernerd/
+  config.yaml       # Project-specific config overrides (version-controlled)
+  schemas/           # Project-specific Mangle schemas (version-controlled)
+  data/              # Runtime data - sessions, logs (gitignored)
+  .gitignore         # Ignores data/ directory
+```
+
+### Quick Setup
+
+```bash
+# Create a .browsernerd/ template in the current directory
+./bin/browsernerd --init-workspace
+```
+
+### Config Merge Order (highest priority wins)
+
+```
+CLI flags  >  explicit --config  >  .browsernerd/config.yaml  >  DefaultConfig()
+```
+
+- **DefaultConfig()** - Hardcoded Go defaults (unchanged)
+- **`.browsernerd/config.yaml`** - Project-level overrides (Docker containers, schemas, etc.)
+- **`--config path`** - Machine/user-level settings (Chrome path, headless, viewport)
+- **CLI flags** (`--sse-port`) - Invocation-level overrides
+
+### CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--no-workspace` | `false` | Disable `.browsernerd/` auto-discovery |
+| `--workspace-dir` | `""` | Explicit workspace root (skip walk-up search) |
+| `--init-workspace` | `false` | Create `.browsernerd/` template and exit |
+
+### Example
+
+```yaml
+# .browsernerd/config.yaml - version-controlled with your project
+docker:
+  enabled: true
+  containers:
+    - my-app-backend
+    - my-app-frontend
+  log_window: "30s"
+
+mangle:
+  schema_path: ".browsernerd/schemas/project.mg"
+
+browser:
+  headless: false
+  viewport_width: 1280
+  viewport_height: 720
+```
+
+Relative paths in workspace config are resolved against the workspace root directory. Absolute paths are left unchanged.
 
 ---
 
@@ -476,7 +540,7 @@ docker:
 ```yaml
 server:
   name: "browsernerd-mcp"
-  version: "0.0.4"
+  version: "0.0.6"
   log_file: "data/browsernerd-mcp.log"
 
 browser:

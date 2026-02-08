@@ -32,21 +32,50 @@ type BrowserObserveTool struct {
 
 func (t *BrowserObserveTool) Name() string { return "browser-observe" }
 func (t *BrowserObserveTool) Description() string {
-	return `Observe browser context with progressive disclosure.
+	return `Observe the browser -- page state, elements, sessions, screenshots, React trees, DOM.
 
-MODES:
-- state: page url/title/loading/dialog
-- nav: grouped navigation links + counts
-- interactive: actionable elements + summary
-- hidden: hidden/out-of-viewport content
-- composite: state + nav + interactive in one call
+USE THIS TOOL to understand what is on the page before acting. Start here.
 
-VIEWS:
-- summary: minimal output + handles
-- compact: practical output for agent decisions
-- full: expanded output for diagnostics
+QUICK START (use intent for common tasks):
+  intent:"quick_status"    -> Is the page loaded? Any errors?
+  intent:"find_actions"    -> What can I click/type/select?
+  intent:"map_navigation"  -> Where can I navigate from here?
+  intent:"check_sessions"  -> What tabs are open? (no session_id needed)
+  intent:"visual_check"    -> Screenshot the current page
+  intent:"deep_audit"      -> Everything: state + nav + interactive + diagnostics
 
-Designed to reduce token cost by returning only the detail level needed now.`
+MODES (explicit control -- override intent defaults):
+  state:        Page URL, title, loading status, dialog info
+  nav:          Navigation links grouped by region (header, sidebar, main, footer) + counts
+  interactive:  Clickable elements (buttons, inputs, links, selects) with ref IDs for browser-act
+  hidden:       Elements outside the viewport or display:none
+  composite:    state + nav + interactive combined (default)
+  sessions:     List all active browser tabs (no session_id required)
+  screenshot:   Capture page image (params: full_page, format, save_path)
+  react:        Extract React Fiber component tree (requires disclosure handle)
+  dom_snapshot: Snapshot full DOM as Mangle facts (requires disclosure handle)
+
+VIEWS (control output size):
+  summary: Minimal -- counts and handles only (~200 tokens). Start here.
+  compact: Practical -- enough detail for decisions (~500-1500 tokens). Default.
+  full:    Complete -- all data, for debugging (~2000+ tokens).
+
+EXAMPLES:
+  {session_id:"sess-1", intent:"quick_status"}
+  {session_id:"sess-1", mode:"interactive", view:"compact"}
+  {session_id:"sess-1", mode:"screenshot", full_page:true}
+  {intent:"check_sessions"}
+
+WHEN TO USE EACH MODE:
+  "I need to understand this page"         -> mode:"composite" or intent:"quick_status"
+  "What can I click?"                      -> mode:"interactive" or intent:"find_actions"
+  "Where can I navigate?"                  -> mode:"nav" or intent:"map_navigation"
+  "What tabs are open?"                    -> mode:"sessions" (no session_id needed)
+  "I need to see the page visually"        -> mode:"screenshot"
+  "I need React component state/props"     -> mode:"react" (gated -- needs handle)
+  "I need raw DOM structure as facts"      -> mode:"dom_snapshot" (gated -- needs handle)
+
+NEXT STEP: Use ref IDs from interactive mode in browser-act to click/type/select.`
 }
 
 func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
@@ -60,12 +89,25 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			"intent": map[string]interface{}{
 				"type":        "string",
 				"description": "Token-aware intent preset that applies progressive defaults when explicit knobs are omitted",
-				"enum":        []string{"quick_status", "find_actions", "map_navigation", "hidden_content", "deep_audit"},
+				"enum":        []string{"quick_status", "find_actions", "map_navigation", "hidden_content", "deep_audit", "check_sessions", "visual_check"},
 			},
 			"mode": map[string]interface{}{
 				"type":        "string",
 				"description": "Observation mode",
-				"enum":        []string{"state", "nav", "interactive", "hidden", "composite"},
+				"enum":        []string{"state", "nav", "interactive", "hidden", "composite", "sessions", "screenshot", "react", "dom_snapshot"},
+			},
+			"full_page": map[string]interface{}{
+				"type":        "boolean",
+				"description": "For screenshot mode: capture full scrollable page (default false)",
+			},
+			"save_path": map[string]interface{}{
+				"type":        "string",
+				"description": "For screenshot mode: save screenshot to this file path",
+			},
+			"format": map[string]interface{}{
+				"type":        "string",
+				"description": "For screenshot mode: image format (png|jpeg)",
+				"enum":        []string{"png", "jpeg"},
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
@@ -106,15 +148,11 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 				"description": "Maximum recommendation rows to return (default 3)",
 			},
 		},
-		"required": []string{"session_id"},
 	}
 }
 
 func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
-	if sessionID == "" {
-		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
-	}
 	intent := normalizeObserveIntent(getStringArg(args, "intent"))
 	intentCfg, hasIntent := resolveObserveIntentDefaults(intent)
 
@@ -180,6 +218,165 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	}
 	if filter == "" {
 		filter = "all"
+	}
+
+	// Handle new delegating modes that return early
+	switch mode {
+	case "sessions":
+		delegate := &ListSessionsTool{sessions: t.sessions}
+		res, err := delegate.Execute(ctx, map[string]interface{}{})
+		if err != nil {
+			return nil, err
+		}
+		resMap := asMap(res)
+		handles := []string{"observe:sessions"}
+		emitDisclosureFacts(ctx, t.engine, "", handles, "observe")
+		response := map[string]interface{}{
+			"success":          true,
+			"status":           "ok",
+			"intent":           ternaryStatus(hasIntent, intent, "custom"),
+			"intent_applied":   intentApplied,
+			"mode":             mode,
+			"view":             view,
+			"evidence_handles": handles,
+			"truncated":        false,
+		}
+		switch view {
+		case "summary":
+			sessions, _ := resMap["sessions"].([]interface{})
+			response["summary"] = fmt.Sprintf("%d active session(s)", len(sessions))
+			response["data"] = map[string]interface{}{"session_count": len(sessions)}
+		case "compact":
+			sessions, _ := resMap["sessions"].([]interface{})
+			response["summary"] = fmt.Sprintf("%d active session(s)", len(sessions))
+			response["data"] = map[string]interface{}{"sessions": limitAnySlice(sessions, maxItems)}
+		default:
+			response["data"] = resMap
+		}
+		return response, nil
+
+	case "screenshot":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for screenshot mode"}, nil
+		}
+		delegate := &ScreenshotTool{sessions: t.sessions, engine: t.engine}
+		delegateArgs := map[string]interface{}{
+			"session_id": sessionID,
+		}
+		if v, ok := args["full_page"]; ok {
+			delegateArgs["full_page"] = v
+		}
+		if v, ok := args["save_path"]; ok {
+			delegateArgs["save_path"] = v
+		}
+		if v, ok := args["format"]; ok {
+			delegateArgs["format"] = v
+		}
+		res, err := delegate.Execute(ctx, delegateArgs)
+		if err != nil {
+			return nil, err
+		}
+		handles := []string{"observe:" + sessionID + ":screenshot"}
+		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
+		return map[string]interface{}{
+			"success":          true,
+			"status":           "ok",
+			"intent":           ternaryStatus(hasIntent, intent, "custom"),
+			"intent_applied":   intentApplied,
+			"mode":             mode,
+			"view":             view,
+			"summary":          "screenshot captured",
+			"data":             res,
+			"evidence_handles": handles,
+			"truncated":        false,
+		}, nil
+
+	case "react":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for react mode"}, nil
+		}
+		delegate := &ReifyReactTool{sessions: t.sessions, engine: t.engine}
+		res, err := delegate.Execute(ctx, map[string]interface{}{
+			"session_id": sessionID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		resMap := asMap(res)
+		handles := []string{"observe:" + sessionID + ":react"}
+		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
+		response := map[string]interface{}{
+			"success":          true,
+			"status":           "ok",
+			"intent":           ternaryStatus(hasIntent, intent, "custom"),
+			"intent_applied":   intentApplied,
+			"mode":             mode,
+			"view":             view,
+			"evidence_handles": handles,
+			"truncated":        false,
+		}
+		switch view {
+		case "summary":
+			componentCount := asInt(resMap["component_count"])
+			response["summary"] = fmt.Sprintf("React tree: %d component(s)", componentCount)
+			response["data"] = map[string]interface{}{
+				"component_count": componentCount,
+				"success":         resMap["success"],
+			}
+		case "compact":
+			componentCount := asInt(resMap["component_count"])
+			response["summary"] = fmt.Sprintf("React tree: %d component(s)", componentCount)
+			response["data"] = resMap
+		default:
+			response["data"] = resMap
+		}
+		return response, nil
+
+	case "dom_snapshot":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for dom_snapshot mode"}, nil
+		}
+		delegate := &SnapshotDOMTool{sessions: t.sessions, engine: t.engine}
+		res, err := delegate.Execute(ctx, map[string]interface{}{
+			"session_id": sessionID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		resMap := asMap(res)
+		handles := []string{"observe:" + sessionID + ":dom_snapshot"}
+		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
+		response := map[string]interface{}{
+			"success":          true,
+			"status":           "ok",
+			"intent":           ternaryStatus(hasIntent, intent, "custom"),
+			"intent_applied":   intentApplied,
+			"mode":             mode,
+			"view":             view,
+			"evidence_handles": handles,
+			"truncated":        false,
+		}
+		switch view {
+		case "summary":
+			nodeCount := asInt(resMap["node_count"])
+			response["summary"] = fmt.Sprintf("DOM snapshot: %d node(s)", nodeCount)
+			response["data"] = map[string]interface{}{
+				"node_count": nodeCount,
+				"success":    resMap["success"],
+			}
+		case "compact":
+			nodeCount := asInt(resMap["node_count"])
+			response["summary"] = fmt.Sprintf("DOM snapshot: %d node(s)", nodeCount)
+			response["data"] = resMap
+		default:
+			response["data"] = resMap
+		}
+		return response, nil
+	}
+
+	// Require session_id for original modes
+	if sessionID == "" {
+		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
 	}
 
 	stateTool := &GetPageStateTool{sessions: t.sessions}
@@ -462,17 +659,62 @@ type BrowserActTool struct {
 
 func (t *BrowserActTool) Name() string { return "browser-act" }
 func (t *BrowserActTool) Description() string {
-	return `Execute browser actions through one consolidated interface.
+	return `Do things in the browser -- navigate, click, type, manage sessions, wait, run JS.
 
-Supported operation types:
-- navigate
-- interact
-- fill
-- key
-- history
-- sleep
+USE THIS TOOL to perform actions. Use browser-observe first to get ref IDs for elements.
 
-Use operations[] to run multi-step flows with one tool call.`
+OPERATIONS (pass as array -- multiple ops execute in sequence):
+
+  Session management (no session_id needed):
+    {type:"session_create", url:"https://example.com"}         -> Open new tab
+    {type:"session_attach", target_id:"TARGET-ID"}             -> Attach to existing tab
+    {type:"session_fork", source_session_id:"s1", url:"..."}   -> Clone tab with cookies/auth
+
+  Navigation:
+    {type:"navigate", url:"https://example.com"}               -> Go to URL
+    {type:"history", action:"back"}                            -> back, forward, reload
+
+  Interaction (use ref from browser-observe interactive mode):
+    {type:"interact", ref:"btn-submit", action:"click"}                          -> Click element
+    {type:"interact", ref:"input-email", action:"type", value:"user@test.com"}   -> Type into input
+    {type:"interact", ref:"select-country", action:"select", value:"US"}         -> Select dropdown
+    {type:"interact", ref:"checkbox-agree", action:"toggle"}                     -> Toggle checkbox
+
+  Forms (batch fill multiple fields at once):
+    {type:"fill", fields:[{ref:"input-email",value:"a@b.com"},{ref:"input-pass",value:"x"}]}
+
+  Keyboard:
+    {type:"key", key:"Enter"}                                  -> Press key
+    {type:"key", key:"Control+a"}                              -> Key combination
+
+  Waiting:
+    {type:"await_stable", timeout_ms:10000}                    -> Wait for no network/DOM activity
+    {type:"await_fact", predicate:"login_succeeded", args:["sess-1"], timeout_ms:15000}
+    {type:"await_conditions", conditions:[{predicate:"p1",args:["a"]}], timeout_ms:10000}
+    {type:"wait", predicate:"current_url", match_args:{"Url":"/dashboard"}, timeout_ms:10000}
+    {type:"sleep", ms:2000}                                    -> Hard pause (avoid if possible)
+
+  Advanced:
+    {type:"js", script:"document.title", timeout_ms:5000}      -> Eval JS (gated)
+    {type:"plan", actions:[...], predicate:"done()", delay_ms:500} -> Mangle-derived plan
+
+MULTI-STEP EXAMPLE (login flow):
+  {session_id:"sess-1", operations:[
+    {type:"interact", ref:"input-email", action:"type", value:"user@co.com"},
+    {type:"interact", ref:"input-pass", action:"type", value:"secret"},
+    {type:"interact", ref:"btn-login", action:"click"},
+    {type:"await_stable", timeout_ms:5000}
+  ]}
+
+OPTIONS:
+  stop_on_error: true (default) -- halt sequence on first failure
+  view: "compact" (default) -- summary|compact|full controls result detail
+
+WHEN TO USE vs OTHER TOOLS:
+  "I need to click/type/navigate"          -> browser-act
+  "I need to understand the page first"    -> browser-observe
+  "Something went wrong, why?"             -> browser-reason
+  "I need to query Mangle facts directly"  -> browser-mangle`
 }
 
 func (t *BrowserActTool) InputSchema() map[string]interface{} {
@@ -491,7 +733,7 @@ func (t *BrowserActTool) InputSchema() map[string]interface{} {
 					"properties": map[string]interface{}{
 						"type": map[string]interface{}{
 							"type": "string",
-							"enum": []string{"navigate", "interact", "fill", "key", "history", "sleep"},
+							"enum": []string{"navigate", "interact", "fill", "key", "history", "sleep", "session_create", "session_attach", "session_fork", "wait", "await_stable", "await_fact", "await_conditions", "js", "plan"},
 						},
 					},
 					"required": []string{"type"},
@@ -511,15 +753,12 @@ func (t *BrowserActTool) InputSchema() map[string]interface{} {
 				"description": "Max operation results returned in compact mode (default 20)",
 			},
 		},
-		"required": []string{"session_id", "operations"},
+		"required": []string{"operations"},
 	}
 }
 
 func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
-	if sessionID == "" {
-		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
-	}
 
 	rawOps, ok := args["operations"].([]interface{})
 	if !ok || len(rawOps) == 0 {
@@ -612,6 +851,107 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 			}
 			err = sleepWithContext(ctx, time.Duration(ms)*time.Millisecond)
 			opResult = map[string]interface{}{"success": err == nil, "slept_ms": ms}
+
+		case "session_create":
+			createTool := &CreateSessionTool{sessions: t.sessions}
+			opResult, err = createTool.Execute(ctx, map[string]interface{}{
+				"url": getStringFromMap(op, "url"),
+			})
+
+		case "session_attach":
+			attachTool := &AttachSessionTool{sessions: t.sessions}
+			opResult, err = attachTool.Execute(ctx, map[string]interface{}{
+				"target_id": getStringFromMap(op, "target_id"),
+			})
+
+		case "session_fork":
+			forkTool := &ForkSessionTool{sessions: t.sessions}
+			forkArgs := map[string]interface{}{
+				"source_session_id": getStringFromMap(op, "source_session_id"),
+			}
+			if u := getStringFromMap(op, "url"); u != "" {
+				forkArgs["url"] = u
+			}
+			opResult, err = forkTool.Execute(ctx, forkArgs)
+
+		case "wait":
+			waitTool := &WaitForConditionTool{sessions: t.sessions, engine: t.engine}
+			waitArgs := map[string]interface{}{
+				"predicate": getStringFromMap(op, "predicate"),
+			}
+			if v, ok := op["match_args"]; ok {
+				waitArgs["match_args"] = v
+			}
+			if v, ok := op["timeout_ms"]; ok {
+				waitArgs["timeout_ms"] = v
+			}
+			opResult, err = waitTool.Execute(ctx, waitArgs)
+
+		case "await_stable":
+			stableTool := &AwaitStableStateTool{engine: t.engine}
+			stableArgs := map[string]interface{}{}
+			if v, ok := op["timeout_ms"]; ok {
+				stableArgs["timeout_ms"] = v
+			}
+			opResult, err = stableTool.Execute(ctx, stableArgs)
+
+		case "await_fact":
+			awaitTool := &AwaitFactTool{engine: t.engine}
+			awaitArgs := map[string]interface{}{
+				"predicate": getStringFromMap(op, "predicate"),
+			}
+			if v, ok := op["args"]; ok {
+				awaitArgs["args"] = v
+			}
+			if v, ok := op["timeout_ms"]; ok {
+				awaitArgs["timeout_ms"] = v
+			}
+			opResult, err = awaitTool.Execute(ctx, awaitArgs)
+
+		case "await_conditions":
+			condTool := &AwaitConditionsTool{engine: t.engine}
+			condArgs := map[string]interface{}{}
+			if v, ok := op["conditions"]; ok {
+				condArgs["conditions"] = v
+			}
+			if v, ok := op["timeout_ms"]; ok {
+				condArgs["timeout_ms"] = v
+			}
+			opResult, err = condTool.Execute(ctx, condArgs)
+
+		case "js":
+			jsTool := &EvaluateJSTool{sessions: t.sessions, engine: t.engine}
+			jsArgs := map[string]interface{}{
+				"session_id": sessionID,
+				"script":     getStringFromMap(op, "script"),
+			}
+			if v, ok := op["timeout_ms"]; ok {
+				jsArgs["timeout_ms"] = v
+			}
+			if v, ok := op["gate_reason"]; ok {
+				jsArgs["gate_reason"] = v
+			}
+			if v, ok := op["approved_by_handle"]; ok {
+				jsArgs["approved_by_handle"] = v
+			}
+			opResult, err = jsTool.Execute(ctx, jsArgs)
+
+		case "plan":
+			planTool := &ExecutePlanTool{sessions: t.sessions, engine: t.engine}
+			planArgs := map[string]interface{}{
+				"session_id": sessionID,
+			}
+			if v, ok := op["actions"]; ok {
+				planArgs["actions"] = v
+			}
+			if v, ok := op["predicate"]; ok {
+				planArgs["predicate"] = v
+			}
+			if v, ok := op["delay_ms"]; ok {
+				planArgs["delay_ms"] = v
+			}
+			opResult, err = planTool.Execute(ctx, planArgs)
+
 		default:
 			err = fmt.Errorf("unknown operation type: %s", opType)
 		}
@@ -684,16 +1024,54 @@ type BrowserReasonTool struct {
 
 func (t *BrowserReasonTool) Name() string { return "browser-reason" }
 func (t *BrowserReasonTool) Description() string {
-	return `Reason over browser facts with progressive disclosure.
+	return `Diagnose browser problems -- health checks, root cause analysis, blocking issues, recommendations.
+
+USE THIS TOOL when something goes wrong or you need guidance on what to do next.
+Uses Mangle causal reasoning over collected facts (network, console, DOM, Docker logs).
 
 TOPICS:
-- health
-- next_best_action
-- blocking_issue
-- why_failed
-- what_changed_since
+  health:             Overall page health score with error/warning counts.
+                      "Is this page healthy? Any errors?"
+  next_best_action:   Ranked recommendations for what to do next.
+                      "What should I do now?"
+  blocking_issue:     Identify what prevents progress (modals, auth walls, errors).
+                      "Why can't I interact with the page?"
+  why_failed:         Root cause analysis of failures with causal chains.
+                      "The last action failed -- why?"
+  what_changed_since: Diff facts since a timestamp to detect state changes.
+                      "What changed after I clicked that button?"
 
-Returns compact verdicts first, with evidence handles for deeper expansion.`
+INTENTS (shortcuts that set topic + view defaults):
+  triage:        -> topic:"health", view:"summary"    Quick health check
+  act_now:       -> topic:"next_best_action"           What should I do?
+  debug_failure: -> topic:"why_failed", view:"full"    Deep failure analysis
+  unblock:       -> topic:"blocking_issue"             Find what's blocking me
+
+VIEWS:
+  summary: Verdict + counts only. Includes handles for drill-down.
+  compact: Verdict + key evidence. Default -- good for decisions.
+  full:    Everything -- all root causes, causal chains, recommendations.
+
+EVIDENCE HANDLES:
+  Results include handles like "failed_requests", "root_causes", "slow_apis".
+  Pass these back via handles:["failed_requests"] to expand specific sections.
+
+EXAMPLES:
+  {session_id:"sess-1", intent:"triage"}
+  {session_id:"sess-1", topic:"why_failed", view:"full"}
+  {session_id:"sess-1", topic:"health", handles:["failed_requests","slow_apis"]}
+  {session_id:"sess-1", topic:"what_changed_since", since_ms:1706000000000}
+
+WHEN TO USE vs OTHER TOOLS:
+  "Page looks broken"                      -> browser-reason topic:"health"
+  "What should I do next?"                 -> browser-reason topic:"next_best_action"
+  "Something is blocking the page"         -> browser-reason topic:"blocking_issue"
+  "My click didn't work"                   -> browser-reason topic:"why_failed"
+  "I need to query Mangle facts directly"  -> browser-mangle (not browser-reason)
+
+INCLUDES DOCKER LOG CORRELATION:
+  When Docker integration is enabled, failed API requests are automatically correlated
+  with backend container logs, providing full-stack error chains.`
 }
 
 func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
@@ -1159,21 +1537,25 @@ func recommendNextActions(sessionID, topic, status string, failedReqs, rootCause
 	}
 	if contradictions > 0 {
 		recs = append(recs, map[string]interface{}{
-			"tool":   "evaluate-js",
+			"tool":   "browser-act",
 			"reason": "Contradiction detected; JS inspection is now permitted.",
 			"args": map[string]interface{}{
-				"session_id":  sessionID,
-				"gate_reason": "contradiction_detected",
+				"session_id": sessionID,
+				"operations": []map[string]interface{}{
+					{"type": "js", "gate_reason": "contradiction_detected"},
+				},
 			},
 		})
 	}
 	if confidence < 0.70 {
 		recs = append(recs, map[string]interface{}{
-			"tool":   "evaluate-js",
+			"tool":   "browser-act",
 			"reason": "Low confidence reasoning result; permit targeted JS fallback.",
 			"args": map[string]interface{}{
-				"session_id":  sessionID,
-				"gate_reason": "low_confidence",
+				"session_id": sessionID,
+				"operations": []map[string]interface{}{
+					{"type": "js", "gate_reason": "low_confidence"},
+				},
 			},
 		})
 	}
@@ -1366,6 +1748,30 @@ func resolveObserveIntentDefaults(intent string) (observeIntentDefaults, bool) {
 			includeDiagnostics: true,
 			maxRecommendations: defaultReasonMaxRecs,
 		}, true
+	case "check_sessions":
+		return observeIntentDefaults{
+			mode:               "sessions",
+			view:               "compact",
+			maxItems:           20,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       false,
+			includeActionPlan:  false,
+			includeDiagnostics: false,
+			maxRecommendations: 0,
+		}, true
+	case "visual_check":
+		return observeIntentDefaults{
+			mode:               "screenshot",
+			view:               "compact",
+			maxItems:           1,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       false,
+			includeActionPlan:  false,
+			includeDiagnostics: false,
+			maxRecommendations: 0,
+		}, true
 	default:
 		return observeIntentDefaults{}, false
 	}
@@ -1431,8 +1837,13 @@ func suggestObserveNextStep(sessionID string, data map[string]interface{}, mode,
 	if state, ok := data["state"].(map[string]interface{}); ok {
 		if loading, exists := state["loading"].(bool); exists && loading {
 			return map[string]interface{}{
-				"tool": "await-stable-state",
-				"args": map[string]interface{}{"timeout_ms": 10000},
+				"tool": "browser-act",
+				"args": map[string]interface{}{
+					"session_id": sessionID,
+					"operations": []map[string]interface{}{
+						{"type": "await_stable", "timeout_ms": 10000},
+					},
+				},
 			}
 		}
 	}
@@ -1594,9 +2005,10 @@ func suggestObserveNextStep(sessionID string, data map[string]interface{}, mode,
 	}
 	if navTotal == 0 && interTotal == 0 {
 		return map[string]interface{}{
-			"tool": "screenshot",
+			"tool": "browser-observe",
 			"args": map[string]interface{}{
 				"session_id": sessionID,
+				"mode":       "screenshot",
 			},
 		}
 	}
@@ -1616,6 +2028,7 @@ func toolRequiresSessionID(tool string) bool {
 	case "attach-session",
 		"browser-act",
 		"browser-history",
+		"browser-mangle",
 		"browser-observe",
 		"browser-reason",
 		"create-session",
@@ -2272,4 +2685,364 @@ func limitMapSlice(items []map[string]interface{}, max int) []map[string]interfa
 		return items
 	}
 	return items[:max]
+}
+
+// BrowserMangleTool consolidates all Mangle fact operations into one progressive-disclosure tool.
+type BrowserMangleTool struct {
+	engine *mangle.Engine
+}
+
+func (t *BrowserMangleTool) Name() string { return "browser-mangle" }
+func (t *BrowserMangleTool) Description() string {
+	return `Query and manipulate the Mangle fact engine directly -- facts, rules, queries, temporal reasoning.
+
+USE THIS TOOL for direct Mangle access. Prefer browser-reason for high-level diagnostics.
+Mangle is a logic programming engine that stores facts about the browser (network events,
+console logs, DOM state, navigation) and derives new facts through rules.
+
+OPERATIONS:
+
+  Reading facts:
+    query:     Execute a Mangle query string. Returns matching facts.
+               {operation:"query", query:"current_url(S, U)."}
+               {operation:"query", query:"slow_api(ReqId, Url, Duration)."}
+               {operation:"query", query:"caused_by(ConsoleErr, ReqId)."}
+
+    temporal:  Query facts within a time window (epoch milliseconds).
+               {operation:"temporal", predicate:"net_request", after_ms:1706000000000}
+
+    evaluate:  Evaluate a derived predicate (rules that combine base facts).
+               {operation:"evaluate", predicate:"cascading_failure"}
+
+    read:      Read recent buffered facts (newest first).
+               {operation:"read", limit:50}
+               {operation:"read", predicate_filter:"net_response"}
+
+  Writing facts/rules:
+    push:         Add new facts to the engine.
+                  {operation:"push", facts:["test_fact(1,2,3).","status(ok)."]}
+
+    submit_rule:  Add a Mangle rule (derives new facts from existing ones).
+                  {operation:"submit_rule", rule:"my_rule(X) :- net_response(X,S,_,_), S >= 500."}
+
+  Waiting:
+    subscribe:        Watch for a predicate match with timeout.
+                      {operation:"subscribe", predicate:"login_succeeded", timeout_ms:15000}
+
+    await_fact:       Wait for a specific fact to appear.
+                      {operation:"await_fact", predicate:"current_url", args:["sess-1","/dashboard"], timeout_ms:10000}
+
+    await_conditions: Wait for multiple conditions simultaneously.
+                      {operation:"await_conditions", conditions:[{predicate:"p1",args:["a"]}], timeout_ms:10000}
+
+VIEWS:
+  summary: Counts and status only (~100 tokens)
+  compact: Truncated results, default (~500 tokens)
+  full:    Complete results, all rows
+
+COMMON PREDICATES (built-in from CDP events):
+  current_url(SessionId, Url)                     Page URL per session
+  net_request(Id, Method, Url, Initiator, Time)   HTTP requests
+  net_response(Id, Status, Latency, Duration)     HTTP responses
+  console_event(Level, Message, Time)             Console logs
+  navigation_event(Session, Url, Time)            Page navigations
+  slow_api(ReqId, Url, Duration)                  Requests > 1s (derived)
+  caused_by(ConsoleErr, ReqId)                    Error causality (derived)
+  login_succeeded(SessionId)                      Login detection (derived)
+
+WHEN TO USE vs OTHER TOOLS:
+  "I need raw fact data"                   -> browser-mangle
+  "Is the page healthy? What went wrong?"  -> browser-reason (higher-level)
+  "I want to wait for a fact during a flow"-> browser-act (await_fact/await_stable ops)`
+}
+
+func (t *BrowserMangleTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"operation": map[string]interface{}{
+				"type":        "string",
+				"description": "Mangle operation to perform",
+				"enum":        []string{"query", "temporal", "evaluate", "read", "submit_rule", "subscribe", "push", "await_fact", "await_conditions"},
+			},
+			"view": map[string]interface{}{
+				"type":        "string",
+				"description": "Disclosure depth: summary|compact|full",
+				"enum":        []string{"summary", "compact", "full"},
+			},
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "Mangle query string (for query operation)",
+			},
+			"predicate": map[string]interface{}{
+				"type":        "string",
+				"description": "Predicate name (for temporal/evaluate/subscribe/await_fact)",
+			},
+			"predicate_filter": map[string]interface{}{
+				"type":        "string",
+				"description": "Filter by predicate (for read operation)",
+			},
+			"rule": map[string]interface{}{
+				"type":        "string",
+				"description": "Mangle rule source (for submit_rule)",
+			},
+			"facts": map[string]interface{}{
+				"type":        "array",
+				"description": "Facts to push (for push operation)",
+				"items":       map[string]interface{}{"type": "object"},
+			},
+			"args": map[string]interface{}{
+				"type":        "array",
+				"description": "Predicate arguments (for await_fact)",
+				"items":       map[string]interface{}{"type": "string"},
+			},
+			"conditions": map[string]interface{}{
+				"type":        "array",
+				"description": "Conditions to await (for await_conditions)",
+				"items":       map[string]interface{}{"type": "object"},
+			},
+			"after_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "Start of time window in epoch ms (for temporal)",
+			},
+			"before_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "End of time window in epoch ms (for temporal)",
+			},
+			"timeout_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "Timeout in milliseconds (for subscribe/await_fact/await_conditions)",
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Max facts to return (for read)",
+			},
+			"max_items": map[string]interface{}{
+				"type":        "integer",
+				"description": "Max items in response (default 20)",
+			},
+		},
+		"required": []string{"operation"},
+	}
+}
+
+func (t *BrowserMangleTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if t.engine == nil {
+		return map[string]interface{}{"success": false, "error": "mangle engine is not available"}, nil
+	}
+
+	operation := strings.ToLower(getStringArg(args, "operation"))
+	if operation == "" {
+		return map[string]interface{}{"success": false, "error": "operation is required"}, nil
+	}
+
+	view := normalizeProgressiveView(getStringArg(args, "view"))
+	maxItems := getIntArg(args, "max_items", defaultProgressiveMaxItems)
+	if maxItems <= 0 {
+		maxItems = defaultProgressiveMaxItems
+	}
+
+	var (
+		opResult interface{}
+		err      error
+	)
+
+	switch operation {
+	case "query":
+		delegate := &QueryFactsTool{engine: t.engine}
+		opResult, err = delegate.Execute(ctx, map[string]interface{}{
+			"query": getStringArg(args, "query"),
+		})
+
+	case "temporal":
+		delegate := &QueryTemporalTool{engine: t.engine}
+		delegateArgs := map[string]interface{}{
+			"predicate": getStringArg(args, "predicate"),
+		}
+		if v, ok := args["after_ms"]; ok {
+			delegateArgs["after_ms"] = v
+		}
+		if v, ok := args["before_ms"]; ok {
+			delegateArgs["before_ms"] = v
+		}
+		opResult, err = delegate.Execute(ctx, delegateArgs)
+
+	case "evaluate":
+		delegate := &EvaluateRuleTool{engine: t.engine}
+		opResult, err = delegate.Execute(ctx, map[string]interface{}{
+			"predicate": getStringArg(args, "predicate"),
+		})
+
+	case "read":
+		delegate := &ReadFactsTool{engine: t.engine}
+		delegateArgs := map[string]interface{}{}
+		if v, ok := args["limit"]; ok {
+			delegateArgs["limit"] = v
+		}
+		if v, ok := args["predicate_filter"]; ok {
+			delegateArgs["predicate_filter"] = v
+		}
+		opResult, err = delegate.Execute(ctx, delegateArgs)
+
+	case "submit_rule":
+		delegate := &SubmitRuleTool{engine: t.engine}
+		opResult, err = delegate.Execute(ctx, map[string]interface{}{
+			"rule": getStringArg(args, "rule"),
+		})
+
+	case "subscribe":
+		delegate := &SubscribeRuleTool{engine: t.engine}
+		delegateArgs := map[string]interface{}{
+			"predicate": getStringArg(args, "predicate"),
+		}
+		if v, ok := args["timeout_ms"]; ok {
+			delegateArgs["timeout_ms"] = v
+		}
+		opResult, err = delegate.Execute(ctx, delegateArgs)
+
+	case "push":
+		delegate := &PushFactsTool{engine: t.engine}
+		opResult, err = delegate.Execute(ctx, map[string]interface{}{
+			"facts": args["facts"],
+		})
+
+	case "await_fact":
+		delegate := &AwaitFactTool{engine: t.engine}
+		delegateArgs := map[string]interface{}{
+			"predicate": getStringArg(args, "predicate"),
+		}
+		if v, ok := args["args"]; ok {
+			delegateArgs["args"] = v
+		}
+		if v, ok := args["timeout_ms"]; ok {
+			delegateArgs["timeout_ms"] = v
+		}
+		opResult, err = delegate.Execute(ctx, delegateArgs)
+
+	case "await_conditions":
+		delegate := &AwaitConditionsTool{engine: t.engine}
+		delegateArgs := map[string]interface{}{}
+		if v, ok := args["conditions"]; ok {
+			delegateArgs["conditions"] = v
+		}
+		if v, ok := args["timeout_ms"]; ok {
+			delegateArgs["timeout_ms"] = v
+		}
+		opResult, err = delegate.Execute(ctx, delegateArgs)
+
+	default:
+		return map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("unknown mangle operation: %s", operation),
+		}, nil
+	}
+
+	if err != nil {
+		return map[string]interface{}{
+			"success":   false,
+			"operation": operation,
+			"error":     err.Error(),
+		}, nil
+	}
+
+	resultMap := asMap(opResult)
+	handle := fmt.Sprintf("mangle:%s:%d", operation, time.Now().UnixMilli())
+	handles := []string{handle}
+	emitDisclosureFacts(ctx, t.engine, "", handles, "mangle")
+
+	response := map[string]interface{}{
+		"success":          true,
+		"operation":        operation,
+		"view":             view,
+		"evidence_handles": handles,
+	}
+
+	switch view {
+	case "summary":
+		response["summary"] = buildMangleSummary(operation, resultMap)
+	case "compact":
+		response["data"] = truncateMangleData(resultMap, maxItems)
+		response["summary"] = buildMangleSummary(operation, resultMap)
+	default: // full
+		response["data"] = resultMap
+	}
+
+	return response, nil
+}
+
+func buildMangleSummary(operation string, data map[string]interface{}) string {
+	switch operation {
+	case "query":
+		if results, ok := data["results"].([]map[string]interface{}); ok {
+			return fmt.Sprintf("query returned %d result(s)", len(results))
+		}
+		if results, ok := data["results"].([]interface{}); ok {
+			return fmt.Sprintf("query returned %d result(s)", len(results))
+		}
+		return "query completed"
+	case "read":
+		if facts, ok := data["facts"].([]interface{}); ok {
+			return fmt.Sprintf("read %d fact(s)", len(facts))
+		}
+		if count := asInt(data["count"]); count > 0 {
+			return fmt.Sprintf("read %d fact(s)", count)
+		}
+		return "read completed"
+	case "push":
+		accepted := asInt(data["accepted"])
+		return fmt.Sprintf("pushed %d fact(s)", accepted)
+	case "submit_rule":
+		if success, ok := data["success"].(bool); ok && success {
+			return "rule submitted"
+		}
+		return "rule submission failed"
+	case "evaluate":
+		if results, ok := data["results"].([]interface{}); ok {
+			return fmt.Sprintf("evaluated %d result(s)", len(results))
+		}
+		return "evaluation completed"
+	case "temporal":
+		if results, ok := data["results"].([]interface{}); ok {
+			return fmt.Sprintf("temporal query returned %d result(s)", len(results))
+		}
+		return "temporal query completed"
+	case "subscribe":
+		if matched, ok := data["matched"].(bool); ok && matched {
+			return "subscription matched"
+		}
+		return "subscription completed"
+	case "await_fact":
+		if matched, ok := data["matched"].(bool); ok && matched {
+			return "fact matched"
+		}
+		return "await completed"
+	case "await_conditions":
+		if matched, ok := data["all_matched"].(bool); ok && matched {
+			return "all conditions matched"
+		}
+		return "await conditions completed"
+	default:
+		return operation + " completed"
+	}
+}
+
+func truncateMangleData(data map[string]interface{}, maxItems int) map[string]interface{} {
+	out := make(map[string]interface{}, len(data))
+	for k, v := range data {
+		switch items := v.(type) {
+		case []interface{}:
+			out[k] = limitAnySlice(items, maxItems)
+			if len(items) > maxItems {
+				out[k+"_truncated"] = true
+			}
+		case []map[string]interface{}:
+			out[k] = limitMapSlice(items, maxItems)
+			if len(items) > maxItems {
+				out[k+"_truncated"] = true
+			}
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }

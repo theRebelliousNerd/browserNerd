@@ -124,6 +124,23 @@ func (s *Server) ExecuteTool(name string, args map[string]interface{}) (interfac
 }
 
 func (s *Server) registerAllTools() {
+	// Always register lifecycle tools (cannot consolidate)
+	s.registerTool(&LaunchBrowserTool{sessions: s.sessions})
+	s.registerTool(&ShutdownBrowserTool{sessions: s.sessions})
+
+	// Always register progressive disclosure tools
+	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&BrowserActTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&BrowserReasonTool{engine: s.engine, dockerClient: s.dockerClient})
+	s.registerTool(&BrowserMangleTool{engine: s.engine})
+
+	// When progressive_only is false, also register all individual tools
+	if !s.cfg.MCP.IsProgressiveOnly() {
+		s.registerIndividualTools()
+	}
+}
+
+func (s *Server) registerIndividualTools() {
 	// Browser session management
 	s.registerTool(&ListSessionsTool{sessions: s.sessions})
 	s.registerTool(&CreateSessionTool{sessions: s.sessions})
@@ -131,8 +148,6 @@ func (s *Server) registerAllTools() {
 	s.registerTool(&ForkSessionTool{sessions: s.sessions})
 	s.registerTool(&ReifyReactTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&SnapshotDOMTool{sessions: s.sessions, engine: s.engine})
-	s.registerTool(&LaunchBrowserTool{sessions: s.sessions})
-	s.registerTool(&ShutdownBrowserTool{sessions: s.sessions})
 
 	// Basic fact operations
 	s.registerTool(&PushFactsTool{engine: s.engine})
@@ -160,18 +175,13 @@ func (s *Server) registerAllTools() {
 	s.registerTool(&NavigateURLTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&PressKeyTool{sessions: s.sessions, engine: s.engine})
 
-	// Progressive disclosure consolidated tools (dual-run with existing tools)
-	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine})
-	s.registerTool(&BrowserActTool{sessions: s.sessions, engine: s.engine})
-	s.registerTool(&BrowserReasonTool{engine: s.engine, dockerClient: s.dockerClient})
-
 	// Advanced tools - Screenshots, JS eval, batch operations
 	s.registerTool(&ScreenshotTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&BrowserHistoryTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&EvaluateJSTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&FillFormTool{sessions: s.sessions, engine: s.engine})
 
-	// Mangle-driven automation - THE TOKEN EFFICIENCY TOOLS
+	// Mangle-driven automation
 	s.registerTool(&ExecutePlanTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&WaitForConditionTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&DiagnosePageTool{engine: s.engine})

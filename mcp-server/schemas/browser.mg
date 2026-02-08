@@ -451,7 +451,7 @@ automation_error(SessionId, ReqId, Url) :-
 
 # --- Docker Container Logs (Base Facts) ---
 # Pushed by get-console-errors when Docker integration is enabled
-# Container: "symbiogenbackendv3-backend", "symbiogenbackendv3-frontend", etc.
+# Container name matches docker.containers config (default: "backend", "frontend").
 # Level: ERROR, WARNING, INFO, DEBUG, CRITICAL
 # Tag: Optional tag like [STARTUP], [AUDIT], [LIFESPAN], [TRACEBACK], [NEXTJS]
 Decl docker_log(Container, Level, Tag, Message, Timestamp).
@@ -473,19 +473,19 @@ docker_warning(Container, Msg, Ts) :-
 # --- Derived: Errors by specific container ---
 Decl backend_error(Message, Timestamp).
 backend_error(Msg, Ts) :-
-    docker_error("symbiogen-backend", Msg, Ts).
+    docker_error("backend", Msg, Ts).
 
 # Frontend SSR errors are emitted via Docker logs and are global by default. When correlation keys
 # (request_id / correlation_id / trace_id) are present, we can map them back to browser sessions
 # using net_correlation_key to avoid cross-session cartesian products.
 Decl frontend_ssr_error_global(Message, Timestamp).
 frontend_ssr_error_global(Msg, Ts) :-
-    docker_error("symbiogen-frontend", Msg, Ts).
+    docker_error("frontend", Msg, Ts).
 
 Decl frontend_ssr_error_with_key(Message, Timestamp, KeyType, KeyValue).
 frontend_ssr_error_with_key(Msg, Ts, KeyType, KeyValue) :-
     frontend_ssr_error_global(Msg, Ts),
-    docker_log_correlation("symbiogen-frontend", KeyType, KeyValue, Msg, Ts).
+    docker_log_correlation("frontend", KeyType, KeyValue, Msg, Ts).
 
 Decl frontend_ssr_error(SessionId, Message, Timestamp).
 Decl frontend_ssr_error_candidate(SessionId, Message, Timestamp, ReqTs).
@@ -524,7 +524,7 @@ failed_api_with_key(SessionId, ReqId, Url, Status, ReqTs, KeyType, KeyValue) :-
 Decl backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue).
 backend_error_with_key(BackendMsg, BackendTs, KeyType, KeyValue) :-
     backend_error(BackendMsg, BackendTs),
-    docker_log_correlation("symbiogen-backend", KeyType, KeyValue, BackendMsg, BackendTs).
+    docker_log_correlation("backend", KeyType, KeyValue, BackendMsg, BackendTs).
 
 Decl api_backend_correlation(SessionId, ReqId, Url, Status, BackendMsg, TimeDelta).
 api_backend_correlation(SessionId, ReqId, Url, Status, BackendMsg, TimeDelta) :-
@@ -580,7 +580,7 @@ slow_api_with_key(SessionId, ReqId, Url, Duration, ReqTs, KeyType, KeyValue) :-
 Decl slow_backend_correlation(SessionId, ReqId, Url, Duration, BackendMsg).
 slow_backend_correlation(SessionId, ReqId, Url, Duration, BackendMsg) :-
     slow_api_with_key(SessionId, ReqId, Url, Duration, _, KeyType, KeyValue),
-    docker_log_correlation("symbiogen-backend", KeyType, KeyValue, BackendMsg, _).
+    docker_log_correlation("backend", KeyType, KeyValue, BackendMsg, _).
 
 # =============================================================================
 # ERROR PATTERN DETECTION

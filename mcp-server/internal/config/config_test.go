@@ -14,8 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Name != "browsernerd-mcp" {
 		t.Errorf("expected server name 'browsernerd-mcp', got %q", cfg.Server.Name)
 	}
-	if cfg.Server.Version != "0.0.4" {
-		t.Errorf("expected server version '0.0.4', got %q", cfg.Server.Version)
+	if cfg.Server.Version != "0.0.6" {
+		t.Errorf("expected server version '0.0.6', got %q", cfg.Server.Version)
 	}
 	if cfg.Server.LogFile != "browsernerd-mcp.log" {
 		t.Errorf("expected log file 'browsernerd-mcp.log', got %q", cfg.Server.LogFile)
@@ -370,4 +370,123 @@ func TestGetLogWindow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIsProgressiveOnly(t *testing.T) {
+	t.Run("nil defaults to true", func(t *testing.T) {
+		cfg := MCPConfig{ProgressiveOnly: nil}
+		if !cfg.IsProgressiveOnly() {
+			t.Error("expected true when ProgressiveOnly is nil")
+		}
+	})
+
+	t.Run("explicit true", func(t *testing.T) {
+		val := true
+		cfg := MCPConfig{ProgressiveOnly: &val}
+		if !cfg.IsProgressiveOnly() {
+			t.Error("expected true when ProgressiveOnly is true")
+		}
+	})
+
+	t.Run("explicit false", func(t *testing.T) {
+		val := false
+		cfg := MCPConfig{ProgressiveOnly: &val}
+		if cfg.IsProgressiveOnly() {
+			t.Error("expected false when ProgressiveOnly is false")
+		}
+	})
+}
+
+func TestDefaultConfigProgressiveOnly(t *testing.T) {
+	cfg := DefaultConfig()
+	// Default config should have ProgressiveOnly as nil, which defaults to true
+	if cfg.MCP.ProgressiveOnly != nil {
+		t.Error("expected ProgressiveOnly to be nil in default config")
+	}
+	if !cfg.MCP.IsProgressiveOnly() {
+		t.Error("expected IsProgressiveOnly() to return true for default config")
+	}
+}
+
+func TestLoadProgressiveOnlyFromYAML(t *testing.T) {
+	t.Run("progressive_only false", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.yaml")
+		configContent := `
+server:
+  name: "test-server"
+  version: "1.0.0"
+
+browser:
+  debugger_url: "ws://localhost:9222"
+  auto_start: true
+
+mcp:
+  progressive_only: false
+`
+		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+		if cfg.MCP.IsProgressiveOnly() {
+			t.Error("expected IsProgressiveOnly() to return false")
+		}
+	})
+
+	t.Run("progressive_only true", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.yaml")
+		configContent := `
+server:
+  name: "test-server"
+  version: "1.0.0"
+
+browser:
+  debugger_url: "ws://localhost:9222"
+  auto_start: true
+
+mcp:
+  progressive_only: true
+`
+		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+		if !cfg.MCP.IsProgressiveOnly() {
+			t.Error("expected IsProgressiveOnly() to return true")
+		}
+	})
+
+	t.Run("progressive_only omitted defaults to true", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		configPath := filepath.Join(tmpDir, "config.yaml")
+		configContent := `
+server:
+  name: "test-server"
+  version: "1.0.0"
+
+browser:
+  debugger_url: "ws://localhost:9222"
+  auto_start: true
+
+mcp:
+  sse_port: 0
+`
+		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("failed to load config: %v", err)
+		}
+		if !cfg.MCP.IsProgressiveOnly() {
+			t.Error("expected IsProgressiveOnly() to return true when omitted")
+		}
+	})
 }

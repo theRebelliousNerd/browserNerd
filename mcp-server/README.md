@@ -16,7 +16,7 @@ Evaluation on 8 navigation tasks using Gemini 3 Flash (February 2026):
 
 - **Highest success rate** - BrowserNERD outperforms both competitors by 12 percentage points
 - **Best token efficiency** - Uses fewer tokens despite more tool calls, due to sparse JSON responses (v0.0.3 `omitempty` optimization)
-- **Granular control** - Many specialized tools (`evaluate-js`, `reify-react`, `snapshot-dom`, `get-navigation-links`, `get-interactive-elements`) vs monolithic DOM snapshots
+- **Granular control** - Progressive disclosure surfaces 6 tools (vs 37) while retaining full capability via mode/operation dispatch, reducing agent context window by ~80%
 
 **Per-task highlights:**
 - `mdn_navigate_to_fetch`: BrowserNERD 245K tokens vs Playwright 456K tokens (46% more efficient)
@@ -51,7 +51,7 @@ BrowserNERD is a stdio MCP server (newline-delimited JSON-RPC over stdin/stdout)
 ```bash
 python scripts/mcp_smoke.py list
 python scripts/mcp_smoke.py smoke --url https://example.com/
-python scripts/mcp_smoke.py smoke --go-test --build --url https://symbiogen.ai/
+python scripts/mcp_smoke.py smoke --go-test --build --url https://example.com/
 python scripts/mcp_smoke.py repl
 ```
 
@@ -64,7 +64,7 @@ All settings go in `config.yaml`. See `config.example.yaml` for a minimal templa
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | `"browsernerd-mcp"` | MCP server name |
-| `version` | string | `"0.0.3"` | Server version |
+| `version` | string | `"0.0.6"` | Server version |
 | `log_file` | string | `"browsernerd-mcp.log"` | Log file path (required for stdio mode to avoid stderr pollution) |
 
 ### browser
@@ -109,13 +109,14 @@ launch:
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `sse_port` | int | `0` | Port for SSE HTTP transport (0 = stdio mode for Claude Code) |
+| `progressive_only` | bool | `true` | When true, agents see only 6 tools (2 lifecycle + 4 progressive). Set to false to expose all individual tools. |
 
 ### docker
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | `false` | Enable Docker log integration for full-stack error correlation |
-| `containers` | []string | `["symbiogen-backend", "symbiogen-frontend"]` | Container names to monitor |
+| `containers` | []string | `["backend", "frontend"]` | Container names to monitor |
 | `log_window` | string | `"30s"` | How far back to query logs when correlating errors |
 | `host` | string | `""` | Docker host (empty = local socket, or `tcp://host:2375`) |
 
@@ -134,11 +135,28 @@ launch:
 | `fact_buffer_limit` | int | `2048` | Circular buffer size for facts (higher = more history, more memory) |
 | `disable_builtin_rules` | bool | `false` | Disable built-in causal reasoning rules |
 
-## Tools
+## Tools (Progressive Disclosure - Default 6 Tools)
 
-**Session Management:**
+By default (`progressive_only: true`), agents see only **6 tools** instead of 37, reducing context window usage by ~80%. All individual tools remain available internally via delegation.
+
+**Lifecycle (2 tools):**
 - `launch-browser` - Start Chrome (idempotent)
 - `shutdown-browser` - Stop Chrome and clear sessions
+
+**Progressive Disclosure (4 tools):**
+- `browser-observe` - All observation: page state, navigation, interactive elements, hidden content, sessions, screenshots, React Fiber, DOM snapshots. Modes: `state|nav|interactive|hidden|composite|sessions|screenshot|react|dom_snapshot`. Views: `summary|compact|full`. Intents: `quick_status|find_actions|map_navigation|hidden_content|deep_audit|check_sessions|visual_check`.
+- `browser-act` - All actions: navigate, interact, forms, keyboard, session management, waits, JS evaluation, batch plans. Operation types: `navigate|click|type|select|toggle|scroll|fill_form|press_key|history|session_create|session_attach|session_fork|wait|await_stable|await_fact|await_conditions|js|plan`.
+- `browser-reason` - Diagnostics and analysis: health assessment, root cause analysis, blocking issues, recommendations. Topics: `health|next_best_action|blocking_issue|why_failed|what_changed_since`.
+- `browser-mangle` - Raw Mangle access: queries, rules, facts, temporal reasoning, subscriptions. Operations: `query|temporal|evaluate|read|submit_rule|subscribe|push|await_fact|await_conditions`.
+
+### All Tools Mode (`progressive_only: false`)
+
+Set `progressive_only: false` in config to expose all individual tools alongside progressive tools. This is useful for debugging, power users, or backwards compatibility.
+
+<details>
+<summary>Individual tools (31 tools, hidden by default)</summary>
+
+**Session Management:**
 - `list-sessions` - List active browser tabs
 - `create-session` - Open new tab (incognito)
 - `attach-session` - Attach to existing tab by TargetID
@@ -152,23 +170,17 @@ launch:
 - `fill-form` - Batch fill form fields
 - `press-key` - Send keyboard input
 - `browser-history` - Navigate back/forward
-
-**Progressive Disclosure (Consolidated):**
-- `browser-observe` - Unified observe tool (state/nav/interactive/hidden) with `summary|compact|full` views and intent presets (`quick_status`, `find_actions`, `map_navigation`, `hidden_content`, `deep_audit`)
-- `browser-act` - Unified action tool for multi-step operations
-- `browser-reason` - Mangle-first reasoning with confidence, contradictions, evidence handles, and action-plan recommendations from Mangle candidates
-
-**Diagnostics:**
-- `get-console-errors` - Browser console + Docker container errors
 - `get-page-state` - Current URL, title, cookies, storage
+- `discover-hidden-content` - Find elements outside viewport
+
+**Diagnostics & Advanced:**
+- `get-console-errors` - Browser console + Docker container errors
+- `get-toast-notifications` - UI toast/snackbar notifications
 - `screenshot` - Capture page screenshot
 - `diagnose-page` - Run all diagnostic Mangle queries
-- `evaluate-js` - Advanced JS escape hatch (now gated by progressive disclosure reason/handle)
-
-**React & DOM:**
-- `reify-react` - Deep React Fiber extraction escape hatch (gated by progressive disclosure reason/handle)
-- `snapshot-dom` - Deep DOM extraction escape hatch (gated by progressive disclosure reason/handle)
-- `discover-hidden-content` - Find elements outside viewport
+- `evaluate-js` - Execute JavaScript (gated by progressive disclosure)
+- `reify-react` - React Fiber extraction (gated by progressive disclosure)
+- `snapshot-dom` - DOM snapshot extraction (gated by progressive disclosure)
 
 **Mangle Facts & Rules:**
 - `push-facts` - Add custom facts
@@ -177,13 +189,16 @@ launch:
 - `query-temporal` - Query facts with time range
 - `submit-rule` - Add custom Mangle rule
 - `evaluate-rule` - Evaluate rule and return results
+- `subscribe-rule` - Watch mode subscription
 
 **Automation & Waiting:**
 - `await-fact` - Wait for predicate to become true
 - `await-conditions` - Wait for multiple conditions
-- `await-stable-state` - Wait for page to stabilize (no network/DOM activity)
+- `await-stable-state` - Wait for page to stabilize
 - `wait-for-condition` - Wait for Mangle rule to match
 - `execute-plan` - Execute batch of actions from Mangle facts
+
+</details>
 
 ## Schema
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/mangle"
 )
@@ -31,9 +32,19 @@ func TestProgressiveToolContracts(t *testing.T) {
 			t.Fatalf("unexpected name: %s", tool.Name())
 		}
 		schema := tool.InputSchema()
-		required, ok := schema["required"].([]string)
-		if !ok || len(required) == 0 || required[0] != "session_id" {
-			t.Fatalf("browser-observe should require session_id")
+		if schema["type"] != "object" {
+			t.Fatalf("expected schema type=object")
+		}
+		// session_id is no longer required at schema level (sessions mode doesn't need it)
+		props, ok := schema["properties"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected properties in schema")
+		}
+		if _, ok := props["session_id"]; !ok {
+			t.Fatalf("expected session_id property in schema")
+		}
+		if _, ok := props["mode"]; !ok {
+			t.Fatalf("expected mode property in schema")
 		}
 	})
 
@@ -44,8 +55,17 @@ func TestProgressiveToolContracts(t *testing.T) {
 		}
 		schema := tool.InputSchema()
 		required, ok := schema["required"].([]string)
-		if !ok || len(required) < 2 {
-			t.Fatalf("browser-act should require session_id and operations")
+		if !ok || len(required) == 0 {
+			t.Fatalf("browser-act should require operations")
+		}
+		foundOps := false
+		for _, r := range required {
+			if r == "operations" {
+				foundOps = true
+			}
+		}
+		if !foundOps {
+			t.Fatalf("browser-act should require operations, got %v", required)
 		}
 	})
 
@@ -58,6 +78,18 @@ func TestProgressiveToolContracts(t *testing.T) {
 		required, ok := schema["required"].([]string)
 		if !ok || len(required) == 0 || required[0] != "session_id" {
 			t.Fatalf("browser-reason should require session_id")
+		}
+	})
+
+	t.Run("browser-mangle contract", func(t *testing.T) {
+		tool := &BrowserMangleTool{}
+		if tool.Name() != "browser-mangle" {
+			t.Fatalf("unexpected name: %s", tool.Name())
+		}
+		schema := tool.InputSchema()
+		required, ok := schema["required"].([]string)
+		if !ok || len(required) == 0 || required[0] != "operation" {
+			t.Fatalf("browser-mangle should require operation")
 		}
 	})
 }
@@ -392,7 +424,7 @@ func TestBuildActionPlanRecommendationsHandlesNavigate(t *testing.T) {
 		{"action": "navigate", "ref": "a1", "label": "/about", "priority": 58, "reason": "internal_nav_link"},
 	}
 
-	recs := buildActionPlanRecommendations(candidates, 5, "s-nav", "https://symbiogen.ai")
+	recs := buildActionPlanRecommendations(candidates, 5, "s-nav", "https://example.com")
 	if len(recs) != 1 {
 		t.Fatalf("expected 1 recommendation, got %d", len(recs))
 	}
@@ -410,7 +442,7 @@ func TestBuildActionPlanRecommendationsHandlesNavigate(t *testing.T) {
 	if ops[0]["type"] != "navigate" {
 		t.Fatalf("expected navigate operation type, got %v", ops[0]["type"])
 	}
-	if ops[0]["url"] != "https://symbiogen.ai/about" {
+	if ops[0]["url"] != "https://example.com/about" {
 		t.Fatalf("expected absolute url, got %v", ops[0]["url"])
 	}
 }
@@ -436,6 +468,331 @@ func TestFilterRowsSince(t *testing.T) {
 	}
 	if !ids["unknown"] {
 		t.Fatal("expected row without timestamp to be retained")
+	}
+}
+
+func TestBrowserMangleToolContract(t *testing.T) {
+	tool := &BrowserMangleTool{}
+	if tool.Name() != "browser-mangle" {
+		t.Fatalf("unexpected name: %s", tool.Name())
+	}
+	schema := tool.InputSchema()
+	required, ok := schema["required"].([]string)
+	if !ok || len(required) == 0 || required[0] != "operation" {
+		t.Fatalf("browser-mangle should require operation")
+	}
+}
+
+func TestBrowserMangleQueryOperation(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	ctx := context.Background()
+
+	// Push a fact first
+	_ = engine.AddFacts(ctx, []mangle.Fact{{
+		Predicate: "test_mangle_fact",
+		Args:      []interface{}{"hello", "world"},
+		Timestamp: time.Now(),
+	}})
+
+	tool := &BrowserMangleTool{engine: engine}
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"operation": "query",
+		"query":     "test_mangle_fact(X, Y).",
+		"view":      "compact",
+	})
+	if err != nil {
+		t.Fatalf("browser-mangle query failed: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if !resultMap["success"].(bool) {
+		t.Fatalf("expected success=true, got %v", resultMap)
+	}
+	if resultMap["operation"] != "query" {
+		t.Fatalf("expected operation=query, got %v", resultMap["operation"])
+	}
+}
+
+func TestBrowserManglePushOperation(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	tool := &BrowserMangleTool{engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"operation": "push",
+		"facts": []interface{}{
+			map[string]interface{}{
+				"predicate": "push_test_fact",
+				"args":      []interface{}{"a", "b"},
+			},
+		},
+		"view": "summary",
+	})
+	if err != nil {
+		t.Fatalf("browser-mangle push failed: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if !resultMap["success"].(bool) {
+		t.Fatalf("expected success=true, got %v", resultMap)
+	}
+	summary := resultMap["summary"].(string)
+	if !strings.Contains(summary, "pushed") {
+		t.Fatalf("expected summary to contain 'pushed', got %s", summary)
+	}
+}
+
+func TestBrowserMangleReadOperation(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	tool := &BrowserMangleTool{engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"operation": "read",
+		"limit":     10,
+		"view":      "full",
+	})
+	if err != nil {
+		t.Fatalf("browser-mangle read failed: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if !resultMap["success"].(bool) {
+		t.Fatalf("expected success=true, got %v", resultMap)
+	}
+}
+
+func TestBrowserMangleUnknownOperation(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	tool := &BrowserMangleTool{engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"operation": "nonexistent",
+	})
+	if err != nil {
+		t.Fatalf("execute should not return error for unknown op: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["success"].(bool) {
+		t.Fatal("expected success=false for unknown operation")
+	}
+}
+
+func TestBrowserMangleNoEngine(t *testing.T) {
+	tool := &BrowserMangleTool{engine: nil}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"operation": "query",
+		"query":     "test(X).",
+	})
+	if err != nil {
+		t.Fatalf("execute should not error: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["success"].(bool) {
+		t.Fatal("expected success=false when engine is nil")
+	}
+}
+
+func testSessionManagerForProgressive(t *testing.T, engine *mangle.Engine) *browser.SessionManager {
+	t.Helper()
+	return browser.NewSessionManager(config.BrowserConfig{}, engine)
+}
+
+func TestObserveSessionsMode(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserObserveTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"mode": "sessions",
+		"view": "summary",
+	})
+	if err != nil {
+		t.Fatalf("sessions mode failed: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if !resultMap["success"].(bool) {
+		t.Fatalf("expected success=true, got %v", resultMap)
+	}
+	if resultMap["mode"] != "sessions" {
+		t.Fatalf("expected mode=sessions, got %v", resultMap["mode"])
+	}
+}
+
+func TestObserveCheckSessionsIntent(t *testing.T) {
+	cfg, ok := resolveObserveIntentDefaults("check_sessions")
+	if !ok {
+		t.Fatal("expected check_sessions intent to resolve")
+	}
+	if cfg.mode != "sessions" {
+		t.Fatalf("expected mode=sessions, got %s", cfg.mode)
+	}
+}
+
+func TestObserveVisualCheckIntent(t *testing.T) {
+	cfg, ok := resolveObserveIntentDefaults("visual_check")
+	if !ok {
+		t.Fatal("expected visual_check intent to resolve")
+	}
+	if cfg.mode != "screenshot" {
+		t.Fatalf("expected mode=screenshot, got %s", cfg.mode)
+	}
+}
+
+func TestObserveScreenshotModeRequiresSessionID(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserObserveTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"mode": "screenshot",
+	})
+	if err != nil {
+		t.Fatalf("screenshot mode should not error: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["success"].(bool) {
+		t.Fatal("expected success=false for screenshot without session_id")
+	}
+}
+
+func TestObserveReactModeRequiresSessionID(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserObserveTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"mode": "react",
+	})
+	if err != nil {
+		t.Fatalf("react mode should not error: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["success"].(bool) {
+		t.Fatal("expected success=false for react without session_id")
+	}
+}
+
+func TestObserveDomSnapshotModeRequiresSessionID(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserObserveTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"mode": "dom_snapshot",
+	})
+	if err != nil {
+		t.Fatalf("dom_snapshot mode should not error: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["success"].(bool) {
+		t.Fatal("expected success=false for dom_snapshot without session_id")
+	}
+}
+
+func TestActSessionCreateOp(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserActTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	// session_create without browser will fail, but should not panic
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"operations": []interface{}{
+			map[string]interface{}{
+				"type": "session_create",
+				"url":  "about:blank",
+			},
+		},
+		"view": "compact",
+	})
+	// May error because no browser is running, but should be handled gracefully
+	if err != nil {
+		t.Fatalf("session_create should not return raw error: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	// Should have counts
+	if resultMap["counts"] == nil {
+		t.Fatal("expected counts in response")
+	}
+}
+
+func TestActAwaitStableOp(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserActTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"session_id": "test-session",
+		"operations": []interface{}{
+			map[string]interface{}{
+				"type":       "await_stable",
+				"timeout_ms": 100,
+			},
+		},
+		"view": "compact",
+	})
+	if err != nil {
+		t.Fatalf("await_stable failed: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["counts"] == nil {
+		t.Fatal("expected counts in response")
+	}
+}
+
+func TestActJsOp(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserActTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	// JS operation without gate metadata should be gated
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"session_id": "test-session",
+		"operations": []interface{}{
+			map[string]interface{}{
+				"type":   "js",
+				"script": "document.title",
+			},
+		},
+		"view": "compact",
+	})
+	if err != nil {
+		t.Fatalf("js op should not return raw error: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["counts"] == nil {
+		t.Fatal("expected counts in response")
+	}
+}
+
+func TestActUnknownOp(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	sessions := testSessionManagerForProgressive(t, engine)
+	tool := &BrowserActTool{sessions: sessions, engine: engine}
+	ctx := context.Background()
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"session_id": "test-session",
+		"operations": []interface{}{
+			map[string]interface{}{
+				"type": "nonexistent_op",
+			},
+		},
+		"view": "compact",
+	})
+	if err != nil {
+		t.Fatalf("unknown op should not return raw error: %v", err)
+	}
+	resultMap := result.(map[string]interface{})
+	if resultMap["success"].(bool) {
+		t.Fatal("expected success=false for unknown operation type")
 	}
 }
 

@@ -79,7 +79,7 @@ func (c *Client) queryContainer(ctx context.Context, container string, since tim
 // parseLogs parses Docker log output into structured entries.
 // Handles multiple formats:
 // 1. Docker timestamp prefix: "2025-01-25T12:03:45.123456789Z message"
-// 2. SymbioGen tag format: "[TAG] message"
+// 2. Bracketed tag format: "[TAG] message"
 // 3. Python logging: "LEVEL: message"
 // 4. Next.js format: "- event compiled successfully" or "- error ..."
 func (c *Client) parseLogs(container string, output string) []LogEntry {
@@ -88,7 +88,7 @@ func (c *Client) parseLogs(container string, output string) []LogEntry {
 	// Docker timestamp pattern: RFC3339Nano at start of line
 	dockerTsPattern := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)\s+(.*)$`)
 
-	// SymbioGen tag pattern: [TAG] message
+	// Bracketed tag pattern: [TAG] message
 	tagPattern := regexp.MustCompile(`^\[([A-Z_]+)\]\s+(.*)$`)
 
 	// Python level pattern: LEVEL: message or level | message
@@ -170,7 +170,7 @@ func (c *Client) parseLogs(container string, output string) []LogEntry {
 			}
 		}
 
-		// Try SymbioGen tag format: [TAG] message
+		// Try bracketed tag format: [TAG] message
 		if matches := tagPattern.FindStringSubmatch(remaining); len(matches) == 3 {
 			entry.Tag = matches[1]
 			entry.Message = matches[2]
@@ -225,7 +225,7 @@ func (c *Client) parseLogs(container string, output string) []LogEntry {
 	return entries
 }
 
-// inferLevelFromTag determines log level from SymbioGen tags.
+// inferLevelFromTag determines log level from bracketed log tags.
 func inferLevelFromTag(tag, message string) string {
 	// Some tags are inherently error-level
 	errorTags := map[string]bool{

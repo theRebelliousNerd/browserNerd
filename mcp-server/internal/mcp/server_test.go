@@ -12,10 +12,32 @@ import (
 )
 
 func setupTestServerConfig() config.Config {
+	// Default: progressive_only is nil (defaults to true) -- only 6 tools
 	return config.Config{
 		Server: config.ServerConfig{
 			Name:    "test-server",
 			Version: "1.0.0",
+		},
+		Mangle: config.MangleConfig{
+			Enable:          true,
+			SchemaPath:      "../../schemas/browser.mg",
+			FactBufferLimit: 1000,
+		},
+		Docker: config.DockerConfig{
+			Enabled: false,
+		},
+	}
+}
+
+func setupTestServerConfigAllTools() config.Config {
+	progressiveOnly := false
+	return config.Config{
+		Server: config.ServerConfig{
+			Name:    "test-server",
+			Version: "1.0.0",
+		},
+		MCP: config.MCPConfig{
+			ProgressiveOnly: &progressiveOnly,
 		},
 		Mangle: config.MangleConfig{
 			Enable:          true,
@@ -86,7 +108,7 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestExecuteTool(t *testing.T) {
-	cfg := setupTestServerConfig()
+	cfg := setupTestServerConfigAllTools()
 	engine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
@@ -148,7 +170,7 @@ func TestExecuteTool(t *testing.T) {
 }
 
 func TestToolInterface(t *testing.T) {
-	cfg := setupTestServerConfig()
+	cfg := setupTestServerConfigAllTools()
 	engine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
@@ -192,28 +214,45 @@ func TestToolInterface(t *testing.T) {
 }
 
 func TestToolCount(t *testing.T) {
-	cfg := setupTestServerConfig()
-	engine, err := mangle.NewEngine(cfg.Mangle)
-	if err != nil {
-		t.Fatalf("Failed to create engine: %v", err)
-	}
+	t.Run("progressive_only mode has exactly 6 tools", func(t *testing.T) {
+		cfg := setupTestServerConfig() // progressive_only defaults to true
+		engine, err := mangle.NewEngine(cfg.Mangle)
+		if err != nil {
+			t.Fatalf("Failed to create engine: %v", err)
+		}
+		sessions := browser.NewSessionManager(cfg.Browser, engine)
+		server, err := NewServer(cfg, sessions, engine)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
+		}
+		if len(server.tools) != 6 {
+			t.Errorf("expected exactly 6 tools in progressive_only mode, got %d", len(server.tools))
+			for name := range server.tools {
+				t.Logf("  registered: %s", name)
+			}
+		}
+	})
 
-	sessions := browser.NewSessionManager(cfg.Browser, engine)
-	server, err := NewServer(cfg, sessions, engine)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
-
-	// We expect a significant number of tools to be registered
-	// Based on registerAllTools, there should be at least 30 tools
-	expectedMinTools := 25
-	if len(server.tools) < expectedMinTools {
-		t.Errorf("expected at least %d tools, got %d", expectedMinTools, len(server.tools))
-	}
+	t.Run("all_tools mode has at least 30 tools", func(t *testing.T) {
+		cfg := setupTestServerConfigAllTools() // progressive_only = false
+		engine, err := mangle.NewEngine(cfg.Mangle)
+		if err != nil {
+			t.Fatalf("Failed to create engine: %v", err)
+		}
+		sessions := browser.NewSessionManager(cfg.Browser, engine)
+		server, err := NewServer(cfg, sessions, engine)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
+		}
+		expectedMinTools := 30
+		if len(server.tools) < expectedMinTools {
+			t.Errorf("expected at least %d tools in all_tools mode, got %d", expectedMinTools, len(server.tools))
+		}
+	})
 }
 
 func TestWrapTool(t *testing.T) {
-	cfg := setupTestServerConfig()
+	cfg := setupTestServerConfigAllTools()
 	engine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
@@ -259,71 +298,101 @@ func TestMarshalToolPayloadFallback(t *testing.T) {
 }
 
 func TestServerToolRegistration(t *testing.T) {
-	cfg := setupTestServerConfig()
-	engine, err := mangle.NewEngine(cfg.Mangle)
-	if err != nil {
-		t.Fatalf("Failed to create engine: %v", err)
-	}
+	t.Run("progressive_only registers 6 progressive tools", func(t *testing.T) {
+		cfg := setupTestServerConfig()
+		engine, err := mangle.NewEngine(cfg.Mangle)
+		if err != nil {
+			t.Fatalf("Failed to create engine: %v", err)
+		}
+		sessions := browser.NewSessionManager(cfg.Browser, engine)
+		server, err := NewServer(cfg, sessions, engine)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
+		}
 
-	sessions := browser.NewSessionManager(cfg.Browser, engine)
-	server, err := NewServer(cfg, sessions, engine)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+		progressiveTools := []string{
+			"launch-browser",
+			"shutdown-browser",
+			"browser-observe",
+			"browser-act",
+			"browser-reason",
+			"browser-mangle",
+		}
 
-	// Verify specific expected tools are registered
-	expectedTools := []string{
-		"list-sessions",
-		"create-session",
-		"attach-session",
-		"fork-session",
-		"reify-react",
-		"snapshot-dom",
-		"launch-browser",
-		"shutdown-browser",
-		"push-facts",
-		"read-facts",
-		"query-facts",
-		"submit-rule",
-		"query-temporal",
-		"evaluate-rule",
-		"subscribe-rule",
-		"await-fact",
-		"await-conditions",
-		"get-console-errors",
-		"get-toast-notifications",
-		"get-navigation-links",
-		"get-interactive-elements",
-		"discover-hidden-content",
-		"interact",
-		"get-page-state",
-		"navigate-url",
-		"press-key",
-		"browser-observe",
-		"browser-act",
-		"browser-reason",
-		"screenshot",
-		"browser-history",
-		"evaluate-js",
-		"fill-form",
-		"execute-plan",
-		"wait-for-condition",
-		"diagnose-page",
-		"await-stable-state",
-	}
-
-	for _, toolName := range expectedTools {
-		t.Run("tool_"+toolName, func(t *testing.T) {
+		for _, toolName := range progressiveTools {
 			if _, exists := server.tools[toolName]; !exists {
-				t.Errorf("expected tool %q to be registered", toolName)
+				t.Errorf("expected progressive tool %q to be registered", toolName)
 			}
-		})
-	}
+		}
+	})
+
+	t.Run("all_tools registers all individual tools", func(t *testing.T) {
+		cfg := setupTestServerConfigAllTools()
+		engine, err := mangle.NewEngine(cfg.Mangle)
+		if err != nil {
+			t.Fatalf("Failed to create engine: %v", err)
+		}
+		sessions := browser.NewSessionManager(cfg.Browser, engine)
+		server, err := NewServer(cfg, sessions, engine)
+		if err != nil {
+			t.Fatalf("NewServer failed: %v", err)
+		}
+
+		expectedTools := []string{
+			// Lifecycle (always)
+			"launch-browser",
+			"shutdown-browser",
+			// Progressive (always)
+			"browser-observe",
+			"browser-act",
+			"browser-reason",
+			"browser-mangle",
+			// Individual (only when progressive_only=false)
+			"list-sessions",
+			"create-session",
+			"attach-session",
+			"fork-session",
+			"reify-react",
+			"snapshot-dom",
+			"push-facts",
+			"read-facts",
+			"query-facts",
+			"submit-rule",
+			"query-temporal",
+			"evaluate-rule",
+			"subscribe-rule",
+			"await-fact",
+			"await-conditions",
+			"get-console-errors",
+			"get-toast-notifications",
+			"get-navigation-links",
+			"get-interactive-elements",
+			"discover-hidden-content",
+			"interact",
+			"get-page-state",
+			"navigate-url",
+			"press-key",
+			"screenshot",
+			"browser-history",
+			"evaluate-js",
+			"fill-form",
+			"execute-plan",
+			"wait-for-condition",
+			"diagnose-page",
+			"await-stable-state",
+		}
+
+		for _, toolName := range expectedTools {
+			if _, exists := server.tools[toolName]; !exists {
+				t.Errorf("expected tool %q to be registered in all_tools mode", toolName)
+			}
+		}
+	})
 }
 
 // TestSessionToolsWithoutBrowser tests session tools return proper errors when no browser
 func TestSessionToolsWithoutBrowser(t *testing.T) {
-	cfg := setupTestServerConfig()
+	cfg := setupTestServerConfigAllTools()
 	engine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
@@ -404,7 +473,7 @@ func TestSessionToolsWithoutBrowser(t *testing.T) {
 
 // TestNavigationToolsValidation tests navigation tools parameter validation
 func TestNavigationToolsValidation(t *testing.T) {
-	cfg := setupTestServerConfig()
+	cfg := setupTestServerConfigAllTools()
 	engine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)
@@ -498,7 +567,7 @@ func TestNavigationToolsValidation(t *testing.T) {
 
 // TestDiagnosticTools tests diagnostic tool execution
 func TestDiagnosticTools(t *testing.T) {
-	cfg := setupTestServerConfig()
+	cfg := setupTestServerConfigAllTools()
 	engine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
 		t.Fatalf("Failed to create engine: %v", err)

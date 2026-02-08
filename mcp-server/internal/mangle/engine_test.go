@@ -1674,13 +1674,13 @@ func TestEngineKeyedAPIBackendCorrelation(t *testing.T) {
 		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-a", "GET", "/api/a", "fetch", int64(2000)}, Timestamp: now},
 		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-a", int64(500), int64(20), int64(100)}, Timestamp: now},
 		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-a", "request_id", "rid-a"}, Timestamp: now},
-		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-a", int64(1985)}, Timestamp: now},
-		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-a", "backend panic rid-a", int64(1985)}, Timestamp: now},
+		{Predicate: "docker_log", Args: []interface{}{"backend", "ERROR", "TRACEBACK", "backend panic rid-a", int64(1985)}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"backend", "request_id", "rid-a", "backend panic rid-a", int64(1985)}, Timestamp: now},
 		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-b", "GET", "/api/b", "fetch", int64(3000)}, Timestamp: now},
 		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-b", int64(502), int64(20), int64(100)}, Timestamp: now},
 		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-b", "request_id", "rid-b"}, Timestamp: now},
-		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-z", int64(2990)}, Timestamp: now},
-		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-z", "backend panic rid-z", int64(2990)}, Timestamp: now},
+		{Predicate: "docker_log", Args: []interface{}{"backend", "ERROR", "TRACEBACK", "backend panic rid-z", int64(2990)}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"backend", "request_id", "rid-z", "backend panic rid-z", int64(2990)}, Timestamp: now},
 	})
 	if err != nil {
 		t.Fatalf("AddFacts failed: %v", err)
@@ -1729,8 +1729,8 @@ func TestEngineAPIBackendCorrelationRequiresSharedKey(t *testing.T) {
 		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-c", "GET", "/api/c", "fetch", int64(4000)}, Timestamp: now},
 		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-c", int64(500), int64(20), int64(100)}, Timestamp: now},
 		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-c", "request_id", "rid-c"}, Timestamp: now},
-		{Predicate: "docker_log", Args: []interface{}{"symbiogen-backend", "ERROR", "TRACEBACK", "backend panic rid-x", int64(3990)}, Timestamp: now},
-		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "request_id", "rid-x", "backend panic rid-x", int64(3990)}, Timestamp: now},
+		{Predicate: "docker_log", Args: []interface{}{"backend", "ERROR", "TRACEBACK", "backend panic rid-x", int64(3990)}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"backend", "request_id", "rid-x", "backend panic rid-x", int64(3990)}, Timestamp: now},
 	})
 	if err != nil {
 		t.Fatalf("AddFacts failed: %v", err)
@@ -1763,7 +1763,7 @@ func TestEngineSlowBackendCorrelationUsesKeyedJoin(t *testing.T) {
 		{Predicate: "net_request", Args: []interface{}{testSessionID, "req-slow", "GET", "/api/slow", "fetch", int64(5000)}, Timestamp: now},
 		{Predicate: "net_response", Args: []interface{}{testSessionID, "req-slow", int64(200), int64(40), int64(2200)}, Timestamp: now},
 		{Predicate: "net_correlation_key", Args: []interface{}{testSessionID, "req-slow", "trace_id", "trace-slow"}, Timestamp: now},
-		{Predicate: "docker_log_correlation", Args: []interface{}{"symbiogen-backend", "trace_id", "trace-slow", "db pool exhausted", int64(4995)}, Timestamp: now},
+		{Predicate: "docker_log_correlation", Args: []interface{}{"backend", "trace_id", "trace-slow", "db pool exhausted", int64(4995)}, Timestamp: now},
 	})
 	if err != nil {
 		t.Fatalf("AddFacts failed: %v", err)

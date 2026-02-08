@@ -426,7 +426,7 @@ func TestParseLogsNextjsEvent(t *testing.T) {
 	}
 }
 
-func TestParseLogsSymbioGenTags(t *testing.T) {
+func TestParseLogsBracketedTags(t *testing.T) {
 	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	tests := []struct {

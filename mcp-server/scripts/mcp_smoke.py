@@ -531,7 +531,7 @@ def main() -> int:
     p_call.set_defaults(func=_cmd_call)
 
     p_smoke = sub.add_parser("smoke", help="Basic end-to-end browser flow (launch, create session, inspect)")
-    p_smoke.add_argument("--url", default="https://symbiogen.ai/", help="URL to navigate to")
+    p_smoke.add_argument("--url", default="https://example.com/", help="URL to navigate to")
     p_smoke.add_argument("--build", action="store_true", help="Run go build before starting the MCP server")
     p_smoke.add_argument("--go-test", action="store_true", help="Run go test ./... before build (implies --build)")
     p_smoke.add_argument(

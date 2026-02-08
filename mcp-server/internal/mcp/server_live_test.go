@@ -20,6 +20,7 @@ func TestLiveServerWithBrowser(t *testing.T) {
 	_, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
+	progressiveOnly := false
 	cfg := config.Config{
 		Server: config.ServerConfig{
 			Name:    "test-server",
@@ -30,6 +31,9 @@ func TestLiveServerWithBrowser(t *testing.T) {
 			EnableDOMIngestion:    true,
 			EnableHeaderIngestion: true,
 			EventThrottleMs:       50,
+		},
+		MCP: config.MCPConfig{
+			ProgressiveOnly: &progressiveOnly,
 		},
 		Mangle: config.MangleConfig{
 			Enable:          true,
@@ -594,6 +598,7 @@ func TestLiveAttachSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	progressiveOnly := false
 	cfg := config.Config{
 		Server: config.ServerConfig{
 			Name:    "test-server",
@@ -601,6 +606,9 @@ func TestLiveAttachSession(t *testing.T) {
 		},
 		Browser: config.BrowserConfig{
 			Headless: boolPtr(true),
+		},
+		MCP: config.MCPConfig{
+			ProgressiveOnly: &progressiveOnly,
 		},
 		Mangle: config.MangleConfig{
 			Enable:          true,
@@ -649,10 +657,14 @@ func TestLiveAttachSession(t *testing.T) {
 
 // TestWrapToolWithError tests the wrapTool function error path.
 func TestWrapToolWithError(t *testing.T) {
+	progressiveOnly := false
 	cfg := config.Config{
 		Server: config.ServerConfig{
 			Name:    "test-server",
 			Version: "1.0.0",
+		},
+		MCP: config.MCPConfig{
+			ProgressiveOnly: &progressiveOnly,
 		},
 		Mangle: config.MangleConfig{
 			Enable:          true,

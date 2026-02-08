@@ -890,7 +890,7 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 					"status":        cf.Args[3],
 					"backend_error": fmt.Sprintf("%v", cf.Args[4]),
 					"time_delta_ms": cf.Args[5],
-					"container":     "symbiogen-backend",
+					"container":     "backend",
 					"mode":          "keyed",
 				})
 			}

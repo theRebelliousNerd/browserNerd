@@ -83,6 +83,11 @@ screenshots/
 *.webp
 
 # --------------------------------------------
+# Workspace runtime data
+# --------------------------------------------
+**/.browsernerd/data/
+
+# --------------------------------------------
 # Config with secrets (keep example only)
 # --------------------------------------------
 mcp-server/config.yaml

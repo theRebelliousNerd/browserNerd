@@ -17,17 +17,41 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "Path to the BrowserNERD MCP config file")
+	configPath := flag.String("config", "", "Path to the BrowserNERD MCP config file (overrides workspace config)")
 	ssePort := flag.Int("sse-port", 0, "Optional SSE port override (falls back to config)")
+	noWorkspace := flag.Bool("no-workspace", false, "Disable .browsernerd/ workspace discovery")
+	workspaceDir := flag.String("workspace-dir", "", "Explicit workspace root (skip walk-up discovery)")
+	initWorkspace := flag.Bool("init-workspace", false, "Create .browsernerd/ template in current directory and exit")
 	flag.Parse()
+
+	// Handle --init-workspace early exit
+	if *initWorkspace {
+		root := "."
+		if *workspaceDir != "" {
+			root = *workspaceDir
+		}
+		if err := config.InitWorkspace(root); err != nil {
+			log.Fatalf("failed to initialize workspace: %v", err)
+		}
+		log.Printf("created .browsernerd/ workspace in %s", root)
+		return
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.Load(*configPath)
+	opts := config.WorkspaceOptions{
+		Disable:     *noWorkspace,
+		ExplicitDir: *workspaceDir,
+	}
+
+	cfg, wsDir, err := config.LoadWithWorkspace(*configPath, opts)
 	if err != nil {
 		// Before we can redirect logs, write to stderr as last resort
 		log.Fatalf("failed to load config: %v", err)
+	}
+	if wsDir != "" {
+		log.Printf("using workspace config from %s", wsDir)
 	}
 
 	// Redirect logging to file for stdio mode (stderr interferes with MCP protocol)

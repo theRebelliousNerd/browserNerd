@@ -383,35 +383,27 @@ func (t *LaunchBrowserTool) Name() string { return "launch-browser" }
 func (t *LaunchBrowserTool) Description() string {
 	return `Start a Chrome browser instance for automation.
 
-CALL THIS FIRST before any browser automation.
+CALL THIS FIRST before any other browser tool.
 
 WHAT IT DOES:
 - Launches Chrome with DevTools Protocol enabled
 - Configures based on server settings (headless, user data dir, etc.)
 - Returns control URL for debugging
-
-WHEN TO USE:
-- Starting a new automation session
-- After shutdown-browser to restart
 - Idempotent: safe to call if already running
 
 TYPICAL WORKFLOW:
-1. launch-browser         -> Start Chrome
-2. create-session         -> Open a tab
-3. navigate-url/interact  -> Automate
-4. shutdown-browser       -> Cleanup (optional)
+1. launch-browser                                               -> Start Chrome
+2. browser-act   operations: [{type:"session_create", url:...}] -> Open a tab
+3. browser-observe  mode:"composite"                            -> Understand the page
+4. browser-act   operations: [{type:"click", ref:...}]          -> Interact
+5. browser-reason   topic:"health"                              -> Diagnose if needed
+6. shutdown-browser                                             -> Cleanup (optional)
 
 EXAMPLE OUTPUT (fresh start):
-{
-  "status": "started",
-  "control_url": "ws://127.0.0.1:9222/devtools/browser/abc123"
-}
+{"status":"started","control_url":"ws://127.0.0.1:9222/devtools/browser/abc123"}
 
 EXAMPLE OUTPUT (already running):
-{
-  "status": "already_connected",
-  "control_url": "ws://127.0.0.1:9222/devtools/browser/abc123"
-}`
+{"status":"already_connected","control_url":"ws://127.0.0.1:9222/devtools/browser/abc123"}`
 }
 func (t *LaunchBrowserTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
