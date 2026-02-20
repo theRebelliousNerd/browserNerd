@@ -127,8 +127,22 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 		const limit = %d;
 		const verbose = %v;
 
+		const escapeCss = (value) => {
+			const raw = String(value ?? '');
+			if (window.CSS && typeof window.CSS.escape === 'function') {
+				return window.CSS.escape(raw);
+			}
+			return raw.replace(/([ !"#$%%&'()*+,./:;<=>?@[\\\]^{|}~])/g, '\\$1');
+		};
+
+		const escapeAttr = (value) => String(value ?? '')
+			.replace(/\\/g, '\\\\')
+			.replace(/"/g, '\\"');
+
+		const encodeRefPart = (value) => encodeURIComponent(String(value ?? '')).substring(0, 120);
+
 		const selectors = {
-			buttons: 'button, input[type="submit"], input[type="button"], [role="button"]',
+			buttons: 'button, input[type="submit"], input[type="button"], [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"], [role="checkbox"], [role="radio"], [role="row"][aria-rowindex], [role="row"][data-rowindex], [role="row"][data-row-id], [role="row"][data-row-key], [role="gridcell"][tabindex], tr[aria-rowindex], tr[data-rowindex], tr[data-row-id], tr[data-row-key], .ag-row, .MuiDataGrid-row',
 			inputs: 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea, [contenteditable="true"]',
 			links: 'a[href]',
 			selects: 'select, [role="combobox"], [role="listbox"]'
@@ -142,7 +156,7 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 		}
 
 		const elements = [];
-		const seen = new Set();
+		const seenCounts = new Map();
 
 		document.querySelectorAll(selector).forEach((el, idx) => {
 			if (elements.length >= limit) return;
@@ -164,6 +178,20 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 			const role = el.getAttribute('role') || '';
 			const tag = el.tagName.toLowerCase();
 			const classes = Array.from(el.classList);
+			const rowClassLike = classes.some((cls) => cls === 'ag-row' || cls === 'MuiDataGrid-row' || cls === 'grid-row' || cls === 'table-row');
+			const isRowLike = role === 'row' || tag === 'tr' || rowClassLike;
+			const rowIndex = el.getAttribute('aria-rowindex') ||
+			                 el.getAttribute('data-rowindex') ||
+			                 el.getAttribute('row-index') ||
+			                 el.getAttribute('data-row-index') ||
+			                 '';
+			const rowKeyRaw = el.getAttribute('data-row-id') ||
+			                  el.getAttribute('data-row-key') ||
+			                  el.getAttribute('data-id') ||
+			                  el.getAttribute('data-key') ||
+			                  el.getAttribute('data-item-id') ||
+			                  el.getAttribute('data-uid') ||
+			                  '';
 
 			// Generate ref
 			let ref;
@@ -175,27 +203,39 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 				ref = elId;
 			} else if (elName) {
 				ref = elName;
+			} else if (isRowLike && rowKeyRaw) {
+				ref = 'rowkey:' + encodeRefPart(rowKeyRaw);
+			} else if (isRowLike && rowIndex) {
+				ref = 'row:' + encodeRefPart(rowIndex);
 			} else {
 				const classStr = classes.slice(0, 2).join('.');
 				ref = classStr ? tag + '.' + classStr : tag + '[' + idx + ']';
 			}
 
-			if (seen.has(ref)) {
-				ref = ref + '_' + idx;
+			const baseRef = ref;
+			const dupCount = seenCounts.get(baseRef) || 0;
+			if (dupCount > 0) {
+				ref = baseRef + '_' + dupCount;
 			}
-			seen.add(ref);
+			seenCounts.set(baseRef, dupCount + 1);
 
 			// Determine type and action
 			let type, action;
 			if (tag === 'button' || el.type === 'submit' || el.type === 'button' || role === 'button') {
 				type = 'button';
 				action = 'click';
+			} else if (role === 'checkbox' || role === 'radio' || role === 'switch') {
+				type = role === 'switch' ? 'checkbox' : role;
+				action = 'toggle';
 			} else if (tag === 'a') {
 				type = 'link';
 				action = 'click';
 			} else if (tag === 'select' || role === 'combobox' || role === 'listbox') {
 				type = 'select';
 				action = 'select';
+			} else if (isRowLike) {
+				type = 'row';
+				action = 'click';
 			} else if (tag === 'input') {
 				const inputType = el.type || 'text';
 				if (inputType === 'checkbox' || inputType === 'radio') {
@@ -262,6 +302,10 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 				if (ariaLabel) elem.fingerprint.aria_label = ariaLabel;
 				if (dataTestId) elem.fingerprint.data_testid = dataTestId;
 				if (role) elem.fingerprint.role = role;
+				if (rowIndex) elem.fingerprint.row_index = rowIndex;
+				if (rowKeyRaw) elem.fingerprint.row_key = rowKeyRaw;
+				const textContent = (el.innerText || '').replace(/\s+/g, ' ').trim().substring(0, 100);
+				if (textContent) elem.fingerprint.text_content = textContent;
 				if (classes.length > 0) elem.fingerprint.classes = classes.slice(0, 5);
 				if (tag === 'input' && el.type) elem.fingerprint.input_type = el.type;
 				if (tag === 'button' && el.type) elem.fingerprint.button_type = el.type;
@@ -271,11 +315,40 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 
 				// Build alt_selectors only in verbose mode
 				const altSelectors = [];
-				if (dataTestId) altSelectors.push('[data-testid="' + dataTestId + '"]');
-				if (ariaLabel && ariaLabel.length < 100) altSelectors.push('[aria-label="' + ariaLabel.replace(/"/g, '\\\\"') + '"]');
+				if (dataTestId) altSelectors.push('[data-testid="' + escapeAttr(dataTestId) + '"]');
+				if (ariaLabel && ariaLabel.length < 100) altSelectors.push('[aria-label="' + escapeAttr(ariaLabel) + '"]');
 				if (elId) altSelectors.push('#' + elId);
-				if (elName) altSelectors.push('[name="' + elName + '"]');
-				if (altSelectors.length > 0) elem.alt_selectors = altSelectors;
+				if (elName) altSelectors.push('[name="' + escapeAttr(elName) + '"]');
+				if (role) {
+					altSelectors.push('[role="' + escapeAttr(role) + '"]');
+				}
+				if (isRowLike && rowIndex) {
+					altSelectors.push('[role="row"][aria-rowindex="' + escapeAttr(rowIndex) + '"]');
+					altSelectors.push('[role="row"][data-rowindex="' + escapeAttr(rowIndex) + '"]');
+					altSelectors.push('tr[aria-rowindex="' + escapeAttr(rowIndex) + '"]');
+					altSelectors.push('tr[data-rowindex="' + escapeAttr(rowIndex) + '"]');
+					altSelectors.push('[row-index="' + escapeAttr(rowIndex) + '"]');
+					altSelectors.push('[data-row-index="' + escapeAttr(rowIndex) + '"]');
+				}
+				if (isRowLike && rowKeyRaw) {
+					altSelectors.push('[role="row"][data-row-id="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('[role="row"][data-row-key="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('tr[data-row-id="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('tr[data-row-key="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('[data-row-id="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('[data-row-key="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('[data-id="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('[data-key="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('[data-item-id="' + escapeAttr(rowKeyRaw) + '"]');
+					altSelectors.push('[data-uid="' + escapeAttr(rowKeyRaw) + '"]');
+				}
+				if (classes.length > 0) {
+					const classSelector = classes.slice(0, 3).map((cls) => '.' + escapeCss(cls)).join('');
+					if (classSelector) {
+						altSelectors.push(tag + classSelector);
+					}
+				}
+				if (altSelectors.length > 0) elem.alt_selectors = Array.from(new Set(altSelectors));
 			}
 
 			elements.push(elem);
@@ -367,6 +440,9 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 						fp.AriaLabel = getStringFromMap(fpData, "aria_label")
 						fp.DataTestID = getStringFromMap(fpData, "data_testid")
 						fp.Role = getStringFromMap(fpData, "role")
+						fp.RowKey = getStringFromMap(fpData, "row_key")
+						fp.RowIndex = getStringFromMap(fpData, "row_index")
+						fp.TextContent = getStringFromMap(fpData, "text_content")
 
 						appendAttr := func(attrName, attrValue string) {
 							if strings.TrimSpace(attrName) == "" || strings.TrimSpace(attrValue) == "" {
@@ -383,6 +459,8 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 						appendAttr("aria_label", fp.AriaLabel)
 						appendAttr("data_testid", fp.DataTestID)
 						appendAttr("role", fp.Role)
+						appendAttr("row_key", fp.RowKey)
+						appendAttr("row_index", fp.RowIndex)
 						appendAttr("input_type", getStringFromMap(fpData, "input_type"))
 						appendAttr("button_type", getStringFromMap(fpData, "button_type"))
 
@@ -455,6 +533,311 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 				registry.RegisterBatch(fingerprints)
 			}
 		}
+	}
+
+	return result.Value.Val(), nil
+}
+
+// DiscoverGridsTool identifies grid/table surfaces and row interaction strategies.
+type DiscoverGridsTool struct {
+	sessions *browser.SessionManager
+}
+
+func (t *DiscoverGridsTool) Name() string { return "discover-grids" }
+func (t *DiscoverGridsTool) Description() string {
+	return `Discover grid/table surfaces and robust row refs.
+Returns grid type, row counts, preferred row strategy, and optional sample row refs.
+Use returned refs with interact/browser-act.`
+}
+func (t *DiscoverGridsTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Session ID",
+			},
+			"max_grids": map[string]interface{}{
+				"type":        "integer",
+				"description": "Max grids (default 10)",
+			},
+			"sample_rows": map[string]interface{}{
+				"type":        "integer",
+				"description": "Sample rows per grid (default 3, max 10)",
+			},
+			"include_samples": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Include sample row refs (default true)",
+			},
+		},
+		"required": []string{"session_id"},
+	}
+}
+func (t *DiscoverGridsTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionID := getStringArg(args, "session_id")
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+
+	maxGrids := getIntArg(args, "max_grids", 10)
+	if maxGrids <= 0 {
+		maxGrids = 10
+	}
+	if maxGrids > 50 {
+		maxGrids = 50
+	}
+	sampleRows := getIntArg(args, "sample_rows", 3)
+	if sampleRows <= 0 {
+		sampleRows = 3
+	}
+	if sampleRows > 10 {
+		sampleRows = 10
+	}
+	includeSamples := getBoolArg(args, "include_samples", true)
+
+	page, ok := t.sessions.Page(sessionID)
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	js := fmt.Sprintf(`
+	() => {
+		const maxGrids = %d;
+		const sampleRows = %d;
+		const includeSamples = %v;
+
+		const gridSelectors = [
+			'[role="grid"]',
+			'[role="treegrid"]',
+			'[role="table"]',
+			'table',
+			'.ag-root',
+			'.ag-center-cols-viewport',
+			'.ag-body-viewport',
+			'.MuiDataGrid-root',
+			'.ReactVirtualized__Grid',
+			'.ReactVirtualized__Table',
+			'.rdg',
+			'[data-grid]',
+			'[data-testid*="grid"]',
+			'[data-testid*="table"]'
+		];
+		const rowSelectors = [
+			'[role="row"]',
+			'tr',
+			'.ag-row',
+			'.MuiDataGrid-row',
+			'[data-row-id]',
+			'[data-row-key]',
+			'[aria-rowindex]',
+			'[data-rowindex]',
+			'[row-index]',
+			'[data-row-index]'
+		];
+		const rowKeyAttrs = ['data-row-id', 'data-row-key', 'data-id', 'data-key', 'data-item-id', 'data-uid'];
+		const rowIndexAttrs = ['aria-rowindex', 'data-rowindex', 'row-index', 'data-row-index'];
+
+		const escapeCss = (value) => {
+			const raw = String(value ?? '');
+			if (window.CSS && typeof window.CSS.escape === 'function') {
+				return window.CSS.escape(raw);
+			}
+			return raw.replace(/([ !"#$%%&'()*+,./:;<=>?@[\\\]^{|}~])/g, '\\$1');
+		};
+		const encodeRefPart = (value) => encodeURIComponent(String(value ?? '')).substring(0, 120);
+		const cleanText = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+
+		const isVisible = (el) => {
+			if (!el) return false;
+			const rect = el.getBoundingClientRect();
+			const style = getComputedStyle(el);
+			return !(rect.width === 0 || rect.height === 0 ||
+				style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+		};
+
+		const detectGridType = (el) => {
+			const cls = Array.from(el.classList || []);
+			if (cls.includes('MuiDataGrid-root')) return 'mui-datagrid';
+			if (cls.includes('ag-root') || cls.includes('ag-center-cols-viewport') || cls.includes('ag-body-viewport')) return 'ag-grid';
+			if (cls.some((c) => c.startsWith('ReactVirtualized__'))) return 'react-virtualized';
+			if (cls.includes('rdg')) return 'react-data-grid';
+			const role = (el.getAttribute('role') || '').toLowerCase();
+			if (role === 'grid' || role === 'treegrid') return 'aria-grid';
+			if (role === 'table') return 'aria-table';
+			if (el.tagName.toLowerCase() === 'table') return 'html-table';
+			return 'generic-grid';
+		};
+
+		const readFirstAttr = (el, attrs) => {
+			for (const attr of attrs) {
+				const value = el.getAttribute(attr);
+				if (value && String(value).trim() !== '') return [attr, String(value)];
+			}
+			return ['', ''];
+		};
+
+		const buildRowRef = (row, idx) => {
+			const [keyAttr, keyVal] = readFirstAttr(row, rowKeyAttrs);
+			if (keyVal) {
+				return { ref: 'rowkey:' + encodeRefPart(keyVal), strategy: 'rowkey', key_attr: keyAttr };
+			}
+
+			const [indexAttr, indexVal] = readFirstAttr(row, rowIndexAttrs);
+			if (indexVal) {
+				return { ref: 'row:' + encodeRefPart(indexVal), strategy: 'rowindex', index_attr: indexAttr };
+			}
+
+			const dataTestId = row.getAttribute('data-testid') || row.getAttribute('data-test-id') || '';
+			if (dataTestId) {
+				return { ref: 'testid:' + dataTestId, strategy: 'testid' };
+			}
+
+			const rowId = row.id || row.getAttribute('id') || '';
+			if (rowId) {
+				return { ref: rowId, strategy: 'id_or_name' };
+			}
+
+			const rowName = row.getAttribute('name') || '';
+			if (rowName) {
+				return { ref: rowName, strategy: 'id_or_name' };
+			}
+
+			const tag = row.tagName.toLowerCase();
+			const classes = Array.from(row.classList || []).slice(0, 2);
+			if (classes.length > 0) {
+				const classSelector = classes.map((cls) => escapeCss(cls)).join('.');
+				return { ref: tag + '.' + classSelector, strategy: 'class_or_position' };
+			}
+
+			return { ref: tag + '[' + idx + ']', strategy: 'class_or_position' };
+		};
+
+		const selector = gridSelectors.join(', ');
+		const allCandidates = Array.from(document.querySelectorAll(selector));
+
+		const rootCandidates = [];
+		const seenCandidates = new Set();
+		for (const candidate of allCandidates) {
+			if (rootCandidates.length >= maxGrids) break;
+			if (seenCandidates.has(candidate)) continue;
+			seenCandidates.add(candidate);
+
+			const parentGrid = candidate.parentElement ? candidate.parentElement.closest(selector) : null;
+			if (parentGrid) continue;
+			rootCandidates.push(candidate);
+		}
+
+		const grids = [];
+		for (let gridIdx = 0; gridIdx < rootCandidates.length; gridIdx++) {
+			const gridEl = rootCandidates[gridIdx];
+			const rowElementsRaw = Array.from(gridEl.querySelectorAll(rowSelectors.join(', ')));
+			const seenRows = new Set();
+			const rows = [];
+			for (const row of rowElementsRaw) {
+				if (seenRows.has(row)) continue;
+				seenRows.add(row);
+				rows.push(row);
+			}
+			if (rows.length === 0) continue;
+
+			const visibleRows = rows.filter(isVisible);
+			const probeRows = (visibleRows.length > 0 ? visibleRows : rows).slice(0, Math.max(sampleRows, 8));
+
+			const keyAttrsSet = new Set();
+			const indexAttrsSet = new Set();
+			let hasTestId = false;
+			let hasIdOrName = false;
+
+			for (const row of probeRows) {
+				const [keyAttr, keyVal] = readFirstAttr(row, rowKeyAttrs);
+				if (keyVal) keyAttrsSet.add(keyAttr);
+
+				const [indexAttr, indexVal] = readFirstAttr(row, rowIndexAttrs);
+				if (indexVal) indexAttrsSet.add(indexAttr);
+
+				const dataTestId = row.getAttribute('data-testid') || row.getAttribute('data-test-id') || '';
+				if (dataTestId) hasTestId = true;
+
+				const rowId = row.id || row.getAttribute('id') || '';
+				const rowName = row.getAttribute('name') || '';
+				if (rowId || rowName) hasIdOrName = true;
+			}
+
+			let preferredRowRef = 'class_or_position';
+			if (keyAttrsSet.size > 0) preferredRowRef = 'rowkey';
+			else if (indexAttrsSet.size > 0) preferredRowRef = 'rowindex';
+			else if (hasTestId) preferredRowRef = 'testid';
+			else if (hasIdOrName) preferredRowRef = 'id_or_name';
+
+			const gridDataTestId = gridEl.getAttribute('data-testid') || gridEl.getAttribute('data-test-id') || '';
+			const gridRole = gridEl.getAttribute('role') || '';
+			const gridId = gridEl.id || '';
+			let gridRef = '';
+			if (gridDataTestId) gridRef = 'testid:' + gridDataTestId;
+			else if (gridId) gridRef = gridId;
+			else if (gridRole) gridRef = 'grid:' + gridRole + '_' + gridIdx;
+			else gridRef = 'grid[' + gridIdx + ']';
+
+			const style = getComputedStyle(gridEl);
+			const overflowY = (style.overflowY || '').toLowerCase();
+			const virtualized = (rows.length > visibleRows.length + 10) ||
+				(gridEl.scrollHeight > (gridEl.clientHeight * 2)) ||
+				((overflowY === 'auto' || overflowY === 'scroll') && visibleRows.length > 0 && rows.length <= visibleRows.length + 2 && indexAttrsSet.size > 0);
+
+			const gridInfo = {
+				grid_ref: gridRef,
+				grid_type: detectGridType(gridEl),
+				role: gridRole || null,
+				row_count: rows.length,
+				visible_row_count: visibleRows.length,
+				virtualized,
+				preferred_row_ref: preferredRowRef,
+				row_key_attributes: Array.from(keyAttrsSet),
+				row_index_attributes: Array.from(indexAttrsSet),
+				grid_bbox: (() => {
+					const rect = gridEl.getBoundingClientRect();
+					return {
+						x: Math.round(rect.x),
+						y: Math.round(rect.y),
+						width: Math.round(rect.width),
+						height: Math.round(rect.height)
+					};
+				})()
+			};
+
+			if (includeSamples) {
+				const samplePool = visibleRows.length > 0 ? visibleRows : rows;
+				const sampleRowRefs = [];
+				for (let i = 0; i < samplePool.length && sampleRowRefs.length < sampleRows; i++) {
+					const row = samplePool[i];
+					const built = buildRowRef(row, i);
+					const rowText = cleanText(row.innerText || '').substring(0, 80);
+					const sample = {
+						ref: built.ref,
+						strategy: built.strategy
+					};
+					if (built.key_attr) sample.key_attr = built.key_attr;
+					if (built.index_attr) sample.index_attr = built.index_attr;
+					if (rowText) sample.text_preview = rowText;
+					sampleRowRefs.push(sample);
+				}
+				gridInfo.sample_row_refs = sampleRowRefs;
+			}
+
+			grids.push(gridInfo);
+		}
+
+		return {
+			success: true,
+			total_grids: grids.length,
+			grids
+		};
+	}
+	`, maxGrids, sampleRows, includeSamples)
+
+	result, err := page.Eval(js)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover grids: %w", err)
 	}
 
 	return result.Value.Val(), nil

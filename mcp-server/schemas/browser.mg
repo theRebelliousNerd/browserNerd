@@ -29,7 +29,7 @@ Decl dom_updated(SessionId, Timestamp).
 Decl dom_layout(SessionId, NodeId, X, Y, Width, Height, Visible).
 
 # --- Page Stability (for await-stable-state) ---
-Decl page_stable().
+# 1. No network requests in last 500ms
 # A page is stable if:
 # 1. No network requests in last 500ms
 # 2. No DOM updates in last 200ms
@@ -91,6 +91,60 @@ Decl toast_after_api_failure(SessionId, ToastText, RequestId, Url, Status, TimeD
 Decl user_visible_error(SessionId, Source, Message, Timestamp).
 Decl repeated_toast_error(SessionId, Message).
 Decl toast_error_chain(SessionId, ToastText, RequestId, Url, Status).
+
+# =============================================================================
+# DATALOG_MTL TEMPORAL MACROS (Temporal Ext)
+# =============================================================================
+Decl mt_click_event(SessionId, NodeId, Timestamp) temporal.
+Decl mt_dom_node(SessionId, NodeId, Tag, Text, ParentId) temporal.
+Decl mt_net_request(SessionId, ReqId, Context, Url, ParentId, Duration, Ts) temporal.
+Decl mt_net_response(SessionId, ReqId, Status, Source, Duration, Ts) temporal.
+Decl page_stable() temporal.
+
+# DatalogMTL Rule: Network API has failed in recent temporal window
+Decl recently_failed_api(SessionId, Url).
+recently_failed_api(SessionId, Url) :-
+   mt_net_request(SessionId, ReqId, _, Url, _, _, _)@[TReq],
+   mt_net_response(SessionId, ReqId, Status, _, _, _)@[TRes],
+   Status >= 400,
+   :time:ge(TRes, TReq),
+   Diff = fn:time:sub(TRes, TReq),
+   Limit = fn:duration:parse('30s'),
+   :duration:le(Diff, Limit).
+
+# =============================================================================
+# PREDICTIVE ASSERTIONS (Contract Engine)
+# =============================================================================
+
+# A task expects a UI response (like a modal appearing) within 2 seconds of a click
+Decl modal_expected(SessionId, NodeId).
+modal_expected(SessionId, ClickNodeId) :-
+    mt_click_event(SessionId, ClickNodeId, _)@[TClick],
+    <+[0s, 2s] mt_dom_node(SessionId, _, "dialog", _, _).
+
+# Expect the page to maintain stability without requests for the next 1 second
+Decl stable_expected(SessionId).
+stable_expected(SessionId) :-
+    current_url(SessionId, _),
+    [+[0s, 1s] page_stable().
+
+# =============================================================================
+# EXTERNAL PREDICATES (Custom Transform Functions)
+# =============================================================================
+Decl my_distance(X1, Y1, X2, Y2, Dist)
+  descr [
+      external(),
+      mode('+', '+', '+', '+', '-')
+  ]
+  bound [ /number, /number, /number, /number, /number ].
+
+# Detect if elements are far apart
+Decl elements_far_apart(SessionId, NodeId1, NodeId2, Dist).
+elements_far_apart(SessionId, NodeId1, NodeId2, Dist) :-
+    dom_layout(SessionId, NodeId1, X1, Y1, _, _, _),
+    dom_layout(SessionId, NodeId2, X2, Y2, _, _, _),
+    my_distance(X1, Y1, X2, Y2, Dist),
+    Dist > 100.0.
 
 # =============================================================================
 # CAUSAL REASONING RULES (PRD Section 3.4)

@@ -169,6 +169,7 @@ func (s *Server) registerIndividualTools() {
 	// Navigation tools - Token-efficient interaction
 	s.registerTool(&GetNavigationLinksTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&GetInteractiveElementsTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&DiscoverGridsTool{sessions: s.sessions})
 	s.registerTool(&DiscoverHiddenContentTool{sessions: s.sessions})
 	s.registerTool(&InteractTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&GetPageStateTool{sessions: s.sessions})

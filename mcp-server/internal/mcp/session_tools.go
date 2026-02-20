@@ -381,29 +381,11 @@ type LaunchBrowserTool struct {
 
 func (t *LaunchBrowserTool) Name() string { return "launch-browser" }
 func (t *LaunchBrowserTool) Description() string {
-	return `Start a Chrome browser instance for automation.
+	return `Start Chrome with DevTools Protocol. Call this FIRST before any other browser tool.
 
-CALL THIS FIRST before any other browser tool.
-
-WHAT IT DOES:
-- Launches Chrome with DevTools Protocol enabled
-- Configures based on server settings (headless, user data dir, etc.)
-- Returns control URL for debugging
-- Idempotent: safe to call if already running
-
-TYPICAL WORKFLOW:
-1. launch-browser                                               -> Start Chrome
-2. browser-act   operations: [{type:"session_create", url:...}] -> Open a tab
-3. browser-observe  mode:"composite"                            -> Understand the page
-4. browser-act   operations: [{type:"click", ref:...}]          -> Interact
-5. browser-reason   topic:"health"                              -> Diagnose if needed
-6. shutdown-browser                                             -> Cleanup (optional)
-
-EXAMPLE OUTPUT (fresh start):
-{"status":"started","control_url":"ws://127.0.0.1:9222/devtools/browser/abc123"}
-
-EXAMPLE OUTPUT (already running):
-{"status":"already_connected","control_url":"ws://127.0.0.1:9222/devtools/browser/abc123"}`
+Idempotent -- safe to call if already running. Returns a control URL for debugging.
+After launching, use browser-act with {type:"session_create", url:"..."} to open a tab,
+then browser-observe to understand the page before interacting.`
 }
 func (t *LaunchBrowserTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -435,26 +417,9 @@ type ShutdownBrowserTool struct {
 
 func (t *ShutdownBrowserTool) Name() string { return "shutdown-browser" }
 func (t *ShutdownBrowserTool) Description() string {
-	return `Stop the Chrome browser and clean up all sessions.
+	return `Stop Chrome and close all browser sessions. Use when done with automation.
 
-WHEN TO USE:
-- End of automation to release resources
-- Before restarting with different settings
-- Cleanup after test failures
-
-WHAT IT DOES:
-- Closes all tracked sessions
-- Terminates Chrome process
-- Clears session state (NOT Mangle facts)
-
-NOTE: Mangle fact buffer persists after shutdown.
-Use this when you're done with browser automation.
-
-EXAMPLE OUTPUT:
-{
-  "status": "shutdown_complete",
-  "sessions_closed": 2
-}`
+Clears session state but Mangle facts persist after shutdown.`
 }
 func (t *ShutdownBrowserTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{

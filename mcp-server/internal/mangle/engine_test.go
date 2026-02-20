@@ -6,7 +6,8 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/config"
-	"github.com/google/mangle/ast"
+
+	"codeberg.org/TauCeti/mangle-go/ast"
 )
 
 const testSessionID = "session-1"

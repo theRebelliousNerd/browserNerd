@@ -32,50 +32,9 @@ type BrowserObserveTool struct {
 
 func (t *BrowserObserveTool) Name() string { return "browser-observe" }
 func (t *BrowserObserveTool) Description() string {
-	return `Observe the browser -- page state, elements, sessions, screenshots, React trees, DOM.
-
-USE THIS TOOL to understand what is on the page before acting. Start here.
-
-QUICK START (use intent for common tasks):
-  intent:"quick_status"    -> Is the page loaded? Any errors?
-  intent:"find_actions"    -> What can I click/type/select?
-  intent:"map_navigation"  -> Where can I navigate from here?
-  intent:"check_sessions"  -> What tabs are open? (no session_id needed)
-  intent:"visual_check"    -> Screenshot the current page
-  intent:"deep_audit"      -> Everything: state + nav + interactive + diagnostics
-
-MODES (explicit control -- override intent defaults):
-  state:        Page URL, title, loading status, dialog info
-  nav:          Navigation links grouped by region (header, sidebar, main, footer) + counts
-  interactive:  Clickable elements (buttons, inputs, links, selects) with ref IDs for browser-act
-  hidden:       Elements outside the viewport or display:none
-  composite:    state + nav + interactive combined (default)
-  sessions:     List all active browser tabs (no session_id required)
-  screenshot:   Capture page image (params: full_page, format, save_path)
-  react:        Extract React Fiber component tree (requires disclosure handle)
-  dom_snapshot: Snapshot full DOM as Mangle facts (requires disclosure handle)
-
-VIEWS (control output size):
-  summary: Minimal -- counts and handles only (~200 tokens). Start here.
-  compact: Practical -- enough detail for decisions (~500-1500 tokens). Default.
-  full:    Complete -- all data, for debugging (~2000+ tokens).
-
-EXAMPLES:
-  {session_id:"sess-1", intent:"quick_status"}
-  {session_id:"sess-1", mode:"interactive", view:"compact"}
-  {session_id:"sess-1", mode:"screenshot", full_page:true}
-  {intent:"check_sessions"}
-
-WHEN TO USE EACH MODE:
-  "I need to understand this page"         -> mode:"composite" or intent:"quick_status"
-  "What can I click?"                      -> mode:"interactive" or intent:"find_actions"
-  "Where can I navigate?"                  -> mode:"nav" or intent:"map_navigation"
-  "What tabs are open?"                    -> mode:"sessions" (no session_id needed)
-  "I need to see the page visually"        -> mode:"screenshot"
-  "I need React component state/props"     -> mode:"react" (gated -- needs handle)
-  "I need raw DOM structure as facts"      -> mode:"dom_snapshot" (gated -- needs handle)
-
-NEXT STEP: Use ref IDs from interactive mode in browser-act to click/type/select.`
+	return `Progressive page observation with token-aware modes.
+Returns state/navigation/interactive data plus refs for browser-act.
+Use mode for explicit slices (state, nav, interactive, hidden, grids, composite, sessions, screenshot, react, dom_snapshot).`
 }
 
 func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
@@ -89,12 +48,12 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			"intent": map[string]interface{}{
 				"type":        "string",
 				"description": "Token-aware intent preset that applies progressive defaults when explicit knobs are omitted",
-				"enum":        []string{"quick_status", "find_actions", "map_navigation", "hidden_content", "deep_audit", "check_sessions", "visual_check"},
+				"enum":        []string{"quick_status", "find_actions", "map_navigation", "hidden_content", "deep_audit", "check_sessions", "visual_check", "grid_hunt"},
 			},
 			"mode": map[string]interface{}{
 				"type":        "string",
 				"description": "Observation mode",
-				"enum":        []string{"state", "nav", "interactive", "hidden", "composite", "sessions", "screenshot", "react", "dom_snapshot"},
+				"enum":        []string{"state", "nav", "interactive", "hidden", "grids", "composite", "sessions", "screenshot", "react", "dom_snapshot"},
 			},
 			"full_page": map[string]interface{}{
 				"type":        "boolean",
@@ -146,6 +105,18 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			"max_recommendations": map[string]interface{}{
 				"type":        "integer",
 				"description": "Maximum recommendation rows to return (default 3)",
+			},
+			"max_grids": map[string]interface{}{
+				"type":        "integer",
+				"description": "Grids mode: max grids (default max_items)",
+			},
+			"sample_rows": map[string]interface{}{
+				"type":        "integer",
+				"description": "Grids mode: sample rows (default 3, max 10)",
+			},
+			"include_samples": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Grids mode: include sample refs (default true; summary defaults false)",
 			},
 		},
 	}
@@ -290,6 +261,102 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			"evidence_handles": handles,
 			"truncated":        false,
 		}, nil
+
+	case "grids":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for grids mode"}, nil
+		}
+		delegate := &DiscoverGridsTool{sessions: t.sessions}
+		delegateArgs := map[string]interface{}{
+			"session_id": sessionID,
+			"max_grids":  maxItems,
+		}
+		if argHasInt(args, "max_grids") {
+			delegateArgs["max_grids"] = getIntArg(args, "max_grids", maxItems)
+		}
+		if argHasInt(args, "sample_rows") {
+			delegateArgs["sample_rows"] = getIntArg(args, "sample_rows", 3)
+		}
+		if argPresent(args, "include_samples") {
+			delegateArgs["include_samples"] = getBoolArg(args, "include_samples", true)
+		} else {
+			delegateArgs["include_samples"] = view != "summary"
+		}
+
+		res, err := delegate.Execute(ctx, delegateArgs)
+		if err != nil {
+			return nil, err
+		}
+		resMap := asMap(res)
+		grids, _ := resMap["grids"].([]interface{})
+		totalGrids := asInt(resMap["total_grids"])
+		if totalGrids <= 0 {
+			totalGrids = len(grids)
+		}
+
+		nextStep := map[string]interface{}{
+			"tool": "browser-observe",
+			"args": map[string]interface{}{
+				"session_id": sessionID,
+				"mode":       "interactive",
+				"view":       "compact",
+			},
+		}
+		if len(grids) > 0 {
+			if firstGrid, ok := grids[0].(map[string]interface{}); ok {
+				if rowRefs, ok := firstGrid["sample_row_refs"].([]interface{}); ok && len(rowRefs) > 0 {
+					if firstRow, ok := rowRefs[0].(map[string]interface{}); ok {
+						ref := getStringFromMap(firstRow, "ref")
+						if ref != "" {
+							nextStep = map[string]interface{}{
+								"tool": "browser-act",
+								"args": map[string]interface{}{
+									"session_id": sessionID,
+									"operations": []map[string]interface{}{
+										{
+											"type":   "interact",
+											"action": "click",
+											"ref":    ref,
+										},
+									},
+								},
+								"reason": "Try the first sampled row ref to validate row targeting",
+							}
+						}
+					}
+				}
+			}
+		}
+
+		handles := []string{"observe:" + sessionID + ":grids"}
+		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
+
+		response := map[string]interface{}{
+			"success":          true,
+			"status":           "ok",
+			"intent":           ternaryStatus(hasIntent, intent, "custom"),
+			"intent_applied":   intentApplied,
+			"mode":             mode,
+			"view":             view,
+			"summary":          fmt.Sprintf("%d grid surface(s) detected", totalGrids),
+			"evidence_handles": handles,
+			"truncated":        false,
+			"next_step":        nextStep,
+		}
+		switch view {
+		case "summary":
+			response["data"] = map[string]interface{}{
+				"total_grids": totalGrids,
+			}
+		case "compact":
+			response["data"] = map[string]interface{}{
+				"total_grids": totalGrids,
+				"grids":       limitAnySlice(grids, maxItems),
+			}
+		default:
+			response["data"] = resMap
+		}
+		return response, nil
 
 	case "react":
 		if sessionID == "" {
@@ -659,62 +726,22 @@ type BrowserActTool struct {
 
 func (t *BrowserActTool) Name() string { return "browser-act" }
 func (t *BrowserActTool) Description() string {
-	return `Do things in the browser -- navigate, click, type, manage sessions, wait, run JS.
+	return `Perform browser actions -- navigate, click, type, manage sessions, wait, run JS.
 
-USE THIS TOOL to perform actions. Use browser-observe first to get ref IDs for elements.
+Pass an operations array; they execute in sequence. Use browser-observe first to get ref IDs.
 
-OPERATIONS (pass as array -- multiple ops execute in sequence):
+Operation types:
+  Session:  session_create (url), session_attach (target_id), session_fork (clone auth state)
+  Navigate: navigate (url), history (back/forward/reload)
+  Interact: click, type, select, toggle -- requires ref from browser-observe
+  Forms:    fill -- batch multiple fields [{ref, value}] + optional submit
+  Keyboard: key -- e.g. "Enter", "Tab", "Control+a"
+  Waiting:  await_stable (idle detection), await_fact, await_conditions, wait, sleep
+  Advanced: js (eval JavaScript, gated), plan (Mangle-derived action sequence)
 
-  Session management (no session_id needed):
-    {type:"session_create", url:"https://example.com"}         -> Open new tab
-    {type:"session_attach", target_id:"TARGET-ID"}             -> Attach to existing tab
-    {type:"session_fork", source_session_id:"s1", url:"..."}   -> Clone tab with cookies/auth
+Options: stop_on_error (default true), view (summary|compact|full).
 
-  Navigation:
-    {type:"navigate", url:"https://example.com"}               -> Go to URL
-    {type:"history", action:"back"}                            -> back, forward, reload
-
-  Interaction (use ref from browser-observe interactive mode):
-    {type:"interact", ref:"btn-submit", action:"click"}                          -> Click element
-    {type:"interact", ref:"input-email", action:"type", value:"user@test.com"}   -> Type into input
-    {type:"interact", ref:"select-country", action:"select", value:"US"}         -> Select dropdown
-    {type:"interact", ref:"checkbox-agree", action:"toggle"}                     -> Toggle checkbox
-
-  Forms (batch fill multiple fields at once):
-    {type:"fill", fields:[{ref:"input-email",value:"a@b.com"},{ref:"input-pass",value:"x"}]}
-
-  Keyboard:
-    {type:"key", key:"Enter"}                                  -> Press key
-    {type:"key", key:"Control+a"}                              -> Key combination
-
-  Waiting:
-    {type:"await_stable", timeout_ms:10000}                    -> Wait for no network/DOM activity
-    {type:"await_fact", predicate:"login_succeeded", args:["sess-1"], timeout_ms:15000}
-    {type:"await_conditions", conditions:[{predicate:"p1",args:["a"]}], timeout_ms:10000}
-    {type:"wait", predicate:"current_url", match_args:{"Url":"/dashboard"}, timeout_ms:10000}
-    {type:"sleep", ms:2000}                                    -> Hard pause (avoid if possible)
-
-  Advanced:
-    {type:"js", script:"document.title", timeout_ms:5000}      -> Eval JS (gated)
-    {type:"plan", actions:[...], predicate:"done()", delay_ms:500} -> Mangle-derived plan
-
-MULTI-STEP EXAMPLE (login flow):
-  {session_id:"sess-1", operations:[
-    {type:"interact", ref:"input-email", action:"type", value:"user@co.com"},
-    {type:"interact", ref:"input-pass", action:"type", value:"secret"},
-    {type:"interact", ref:"btn-login", action:"click"},
-    {type:"await_stable", timeout_ms:5000}
-  ]}
-
-OPTIONS:
-  stop_on_error: true (default) -- halt sequence on first failure
-  view: "compact" (default) -- summary|compact|full controls result detail
-
-WHEN TO USE vs OTHER TOOLS:
-  "I need to click/type/navigate"          -> browser-act
-  "I need to understand the page first"    -> browser-observe
-  "Something went wrong, why?"             -> browser-reason
-  "I need to query Mangle facts directly"  -> browser-mangle`
+Use browser-observe to understand the page, browser-reason if something goes wrong.`
 }
 
 func (t *BrowserActTool) InputSchema() map[string]interface{} {
@@ -1024,54 +1051,24 @@ type BrowserReasonTool struct {
 
 func (t *BrowserReasonTool) Name() string { return "browser-reason" }
 func (t *BrowserReasonTool) Description() string {
-	return `Diagnose browser problems -- health checks, root cause analysis, blocking issues, recommendations.
+	return `Diagnose browser problems -- health checks, root cause analysis, blocking issues.
 
-USE THIS TOOL when something goes wrong or you need guidance on what to do next.
-Uses Mangle causal reasoning over collected facts (network, console, DOM, Docker logs).
+Use when something goes wrong or you need guidance on what to do next.
+Analyzes Mangle facts (network, console, DOM) with optional Docker log correlation.
 
-TOPICS:
-  health:             Overall page health score with error/warning counts.
-                      "Is this page healthy? Any errors?"
-  next_best_action:   Ranked recommendations for what to do next.
-                      "What should I do now?"
-  blocking_issue:     Identify what prevents progress (modals, auth walls, errors).
-                      "Why can't I interact with the page?"
-  why_failed:         Root cause analysis of failures with causal chains.
-                      "The last action failed -- why?"
-  what_changed_since: Diff facts since a timestamp to detect state changes.
-                      "What changed after I clicked that button?"
+Topics:
+  health:             Page health score with error/warning counts
+  next_best_action:   Ranked recommendations for what to do next
+  blocking_issue:     What prevents progress (modals, auth walls, errors)
+  why_failed:         Root cause analysis with causal chains
+  what_changed_since: Diff facts since a timestamp (pass time_window_ms or since_ms)
 
-INTENTS (shortcuts that set topic + view defaults):
-  triage:        -> topic:"health", view:"summary"    Quick health check
-  act_now:       -> topic:"next_best_action"           What should I do?
-  debug_failure: -> topic:"why_failed", view:"full"    Deep failure analysis
-  unblock:       -> topic:"blocking_issue"             Find what's blocking me
+Intents (presets that apply topic + view defaults): triage, act_now, debug_failure, unblock
 
-VIEWS:
-  summary: Verdict + counts only. Includes handles for drill-down.
-  compact: Verdict + key evidence. Default -- good for decisions.
-  full:    Everything -- all root causes, causal chains, recommendations.
+Views: summary (verdict + counts), compact (default, verdict + key evidence), full (all evidence).
 
-EVIDENCE HANDLES:
-  Results include handles like "failed_requests", "root_causes", "slow_apis".
-  Pass these back via handles:["failed_requests"] to expand specific sections.
-
-EXAMPLES:
-  {session_id:"sess-1", intent:"triage"}
-  {session_id:"sess-1", topic:"why_failed", view:"full"}
-  {session_id:"sess-1", topic:"health", handles:["failed_requests","slow_apis"]}
-  {session_id:"sess-1", topic:"what_changed_since", since_ms:1706000000000}
-
-WHEN TO USE vs OTHER TOOLS:
-  "Page looks broken"                      -> browser-reason topic:"health"
-  "What should I do next?"                 -> browser-reason topic:"next_best_action"
-  "Something is blocking the page"         -> browser-reason topic:"blocking_issue"
-  "My click didn't work"                   -> browser-reason topic:"why_failed"
-  "I need to query Mangle facts directly"  -> browser-mangle (not browser-reason)
-
-INCLUDES DOCKER LOG CORRELATION:
-  When Docker integration is enabled, failed API requests are automatically correlated
-  with backend container logs, providing full-stack error chains.`
+Results include evidence handles for drill-down -- pass them back via expand_handles to dig deeper.
+Use browser-mangle instead for raw Mangle queries; use browser-observe to re-check page state.`
 }
 
 func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
@@ -1772,6 +1769,18 @@ func resolveObserveIntentDefaults(intent string) (observeIntentDefaults, bool) {
 			includeDiagnostics: false,
 			maxRecommendations: 0,
 		}, true
+	case "grid_hunt":
+		return observeIntentDefaults{
+			mode:               "grids",
+			view:               "compact",
+			maxItems:           12,
+			filter:             "all",
+			visibleOnly:        true,
+			internalOnly:       false,
+			includeActionPlan:  false,
+			includeDiagnostics: false,
+			maxRecommendations: 0,
+		}, true
 	default:
 		return observeIntentDefaults{}, false
 	}
@@ -2032,6 +2041,7 @@ func toolRequiresSessionID(tool string) bool {
 		"browser-observe",
 		"browser-reason",
 		"create-session",
+		"discover-grids",
 		"discover-hidden-content",
 		"evaluate-js",
 		"fill-form",
@@ -2694,66 +2704,26 @@ type BrowserMangleTool struct {
 
 func (t *BrowserMangleTool) Name() string { return "browser-mangle" }
 func (t *BrowserMangleTool) Description() string {
-	return `Query and manipulate the Mangle fact engine directly -- facts, rules, queries, temporal reasoning.
+	return `Query and manipulate the Mangle fact engine directly.
 
-USE THIS TOOL for direct Mangle access. Prefer browser-reason for high-level diagnostics.
-Mangle is a logic programming engine that stores facts about the browser (network events,
-console logs, DOM state, navigation) and derives new facts through rules.
+Use for raw fact access. Prefer browser-reason for high-level diagnostics.
+Mangle stores browser facts (network, console, DOM, navigation) and derives new facts via rules.
 
-OPERATIONS:
+Operations:
+  query:            Execute Mangle query. E.g. query:"current_url(S, U)."
+  read:             Read recent buffered facts (newest first, optional predicate_filter)
+  temporal:         Query facts in a time window (after_ms / before_ms, epoch ms)
+  evaluate:         Check if a derived predicate currently has matches
+  push:             Add facts to the engine
+  submit_rule:      Add a derivation rule (Datalog syntax)
+  subscribe:        Watch for a predicate match with timeout
+  await_fact:       Wait for a specific fact (predicate + args)
+  await_conditions: Wait for multiple facts simultaneously (AND logic)
 
-  Reading facts:
-    query:     Execute a Mangle query string. Returns matching facts.
-               {operation:"query", query:"current_url(S, U)."}
-               {operation:"query", query:"slow_api(ReqId, Url, Duration)."}
-               {operation:"query", query:"caused_by(ConsoleErr, ReqId)."}
+Common built-in predicates: current_url, net_request, net_response, console_event,
+navigation_event, slow_api (derived), caused_by (derived), login_succeeded (derived).
 
-    temporal:  Query facts within a time window (epoch milliseconds).
-               {operation:"temporal", predicate:"net_request", after_ms:1706000000000}
-
-    evaluate:  Evaluate a derived predicate (rules that combine base facts).
-               {operation:"evaluate", predicate:"cascading_failure"}
-
-    read:      Read recent buffered facts (newest first).
-               {operation:"read", limit:50}
-               {operation:"read", predicate_filter:"net_response"}
-
-  Writing facts/rules:
-    push:         Add new facts to the engine.
-                  {operation:"push", facts:["test_fact(1,2,3).","status(ok)."]}
-
-    submit_rule:  Add a Mangle rule (derives new facts from existing ones).
-                  {operation:"submit_rule", rule:"my_rule(X) :- net_response(X,S,_,_), S >= 500."}
-
-  Waiting:
-    subscribe:        Watch for a predicate match with timeout.
-                      {operation:"subscribe", predicate:"login_succeeded", timeout_ms:15000}
-
-    await_fact:       Wait for a specific fact to appear.
-                      {operation:"await_fact", predicate:"current_url", args:["sess-1","/dashboard"], timeout_ms:10000}
-
-    await_conditions: Wait for multiple conditions simultaneously.
-                      {operation:"await_conditions", conditions:[{predicate:"p1",args:["a"]}], timeout_ms:10000}
-
-VIEWS:
-  summary: Counts and status only (~100 tokens)
-  compact: Truncated results, default (~500 tokens)
-  full:    Complete results, all rows
-
-COMMON PREDICATES (built-in from CDP events):
-  current_url(SessionId, Url)                     Page URL per session
-  net_request(Id, Method, Url, Initiator, Time)   HTTP requests
-  net_response(Id, Status, Latency, Duration)     HTTP responses
-  console_event(Level, Message, Time)             Console logs
-  navigation_event(Session, Url, Time)            Page navigations
-  slow_api(ReqId, Url, Duration)                  Requests > 1s (derived)
-  caused_by(ConsoleErr, ReqId)                    Error causality (derived)
-  login_succeeded(SessionId)                      Login detection (derived)
-
-WHEN TO USE vs OTHER TOOLS:
-  "I need raw fact data"                   -> browser-mangle
-  "Is the page healthy? What went wrong?"  -> browser-reason (higher-level)
-  "I want to wait for a fact during a flow"-> browser-act (await_fact/await_stable ops)`
+Views: summary (~100 tokens), compact (default ~500), full (all rows).`
 }
 
 func (t *BrowserMangleTool) InputSchema() map[string]interface{} {

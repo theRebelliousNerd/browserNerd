@@ -284,6 +284,33 @@ func TestDiscoverHiddenContentTool(t *testing.T) {
 	})
 }
 
+func TestDiscoverGridsTool(t *testing.T) {
+	tool := &DiscoverGridsTool{}
+
+	t.Run("name", func(t *testing.T) {
+		if name := tool.Name(); name != "discover-grids" {
+			t.Errorf("expected name 'discover-grids', got %q", name)
+		}
+	})
+
+	t.Run("description", func(t *testing.T) {
+		if desc := tool.Description(); desc == "" {
+			t.Error("expected non-empty description")
+		}
+	})
+
+	t.Run("schema", func(t *testing.T) {
+		schema := tool.InputSchema()
+		if schema == nil {
+			t.Error("expected non-nil schema")
+		}
+		required, ok := schema["required"].([]string)
+		if !ok || len(required) == 0 {
+			t.Error("expected required fields in schema")
+		}
+	})
+}
+
 // TestNavigationToolSchemaDetails tests specific schema properties of navigation tools
 func TestNavigationToolSchemaDetails(t *testing.T) {
 	t.Run("GetPageStateTool requires session_id", func(t *testing.T) {
@@ -495,6 +522,37 @@ func TestNavigationToolSchemaDetails(t *testing.T) {
 		props := schema["properties"].(map[string]interface{})
 		if props["session_id"] == nil {
 			t.Error("expected session_id property")
+		}
+	})
+
+	t.Run("DiscoverGridsTool has session_id and grid controls", func(t *testing.T) {
+		tool := &DiscoverGridsTool{}
+		schema := tool.InputSchema()
+
+		props := schema["properties"].(map[string]interface{})
+		if props["session_id"] == nil {
+			t.Error("expected session_id property")
+		}
+		if props["max_grids"] == nil {
+			t.Error("expected max_grids property")
+		}
+		if props["sample_rows"] == nil {
+			t.Error("expected sample_rows property")
+		}
+		if props["include_samples"] == nil {
+			t.Error("expected include_samples property")
+		}
+
+		required := schema["required"].([]string)
+		foundSessionID := false
+		for _, r := range required {
+			if r == "session_id" {
+				foundSessionID = true
+				break
+			}
+		}
+		if !foundSessionID {
+			t.Error("expected session_id in required fields")
 		}
 	})
 }

@@ -367,6 +367,7 @@ func TestServerToolRegistration(t *testing.T) {
 			"get-toast-notifications",
 			"get-navigation-links",
 			"get-interactive-elements",
+			"discover-grids",
 			"discover-hidden-content",
 			"interact",
 			"get-page-state",

@@ -12,11 +12,11 @@ import (
 
 	"browsernerd-mcp-server/internal/config"
 
-	"github.com/google/mangle/analysis"
-	"github.com/google/mangle/ast"
-	"github.com/google/mangle/engine"
-	"github.com/google/mangle/factstore"
-	"github.com/google/mangle/parse"
+	"codeberg.org/TauCeti/mangle-go/analysis"
+	"codeberg.org/TauCeti/mangle-go/ast"
+	"codeberg.org/TauCeti/mangle-go/engine"
+	"codeberg.org/TauCeti/mangle-go/factstore"
+	"codeberg.org/TauCeti/mangle-go/parse"
 )
 
 // Fact represents a normalized event emitted by the browser bridge.
@@ -58,7 +58,8 @@ type Engine struct {
 
 	// Mangle core components
 	programInfo *analysis.ProgramInfo
-	store       factstore.FactStore
+	store       *factstore.TemporalStore       // Eternal facts
+	tempStore   *factstore.TeeingTemporalStore // Active temporal + derived facts
 	schemaUnits []parse.SourceUnit
 	ruleUnits   []parse.SourceUnit
 
@@ -86,11 +87,13 @@ type WatchEvent struct {
 }
 
 func NewEngine(cfg config.MangleConfig) (*Engine, error) {
+	baseStore := factstore.NewTemporalStore()
 	e := &Engine{
 		cfg:                cfg,
 		facts:              make([]Fact, 0, cfg.FactBufferLimit),
 		index:              make(map[string][]int),
-		store:              factstore.NewSimpleInMemoryStore(),
+		store:              baseStore,
+		tempStore:          factstore.NewTeeingTemporalStore(baseStore),
 		schemaUnits:        make([]parse.SourceUnit, 0, 1),
 		ruleUnits:          make([]parse.SourceUnit, 0),
 		samplingRate:       1.0,
@@ -132,7 +135,58 @@ func (e *Engine) LoadSchema(path string) error {
 		return fmt.Errorf("analyze schema: %w", err)
 	}
 
+	e.rebuildTempStoreLocked()
+
 	return nil
+}
+
+// getEvalOptions constructs the unified configuration for Mangle evaluation
+func (e *Engine) getEvalOptions() []engine.EvalOption {
+	extPreds := map[ast.PredicateSym]engine.ExternalPredicateCallback{
+		{Symbol: "my_distance", Arity: 5}: DistanceCallback{},
+	}
+
+	opts := []engine.EvalOption{
+		engine.WithEvaluationTime(time.Now()),
+		engine.WithExternalPredicates(extPreds),
+	}
+
+	if e.tempStore != nil {
+		opts = append(opts, engine.WithTemporalStore(e.tempStore))
+	}
+
+	return opts
+}
+
+// rebuildTempStoreLocked recreates the active temporal store from the eternal store + buffer.
+func (e *Engine) rebuildTempStoreLocked() {
+	e.tempStore = factstore.NewTeeingTemporalStore(e.store)
+	var activePredicates = make(map[ast.PredicateSym]bool)
+
+	for _, f := range e.facts {
+		atom, err := e.factToAtom(f)
+		if err == nil && !f.Timestamp.IsZero() {
+			_, _ = e.tempStore.Add(atom, ast.NewPointInterval(f.Timestamp))
+			activePredicates[atom.Predicate] = true
+
+			// Create a temporal specific copy with mt_ prefix for DatalogMTL reasoning rules
+			mtAtom := atom
+			mtAtom.Predicate.Symbol = "mt_" + atom.Predicate.Symbol
+			_, _ = e.tempStore.Add(mtAtom, ast.NewPointInterval(f.Timestamp))
+			activePredicates[mtAtom.Predicate] = true
+		}
+	}
+
+	// Native Interval Coalescing
+	// Merge overlapping consecutive facts (e.g. `loading`=true at T1, T2, T3 -> True [T1, T3])
+	for predSym := range activePredicates {
+		_ = e.tempStore.Coalesce(predSym)
+	}
+
+	if e.schemaLoaded && e.programInfo != nil {
+		evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
+		_ = engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...)
+	}
 }
 
 // AddRule dynamically adds a Mangle rule to the program for runtime assertions.
@@ -166,7 +220,8 @@ func (e *Engine) AddRule(ruleSource string) error {
 	// Materialize derivations immediately so evaluate-rule / wait-for-condition
 	// can see the new rule without waiting for another fact insertion.
 	if e.programInfo != nil {
-		if err := engine.EvalProgram(e.programInfo, e.store); err != nil {
+		evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
+		if err := engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...); err != nil {
 			e.ruleUnits = prevRules
 			e.programInfo = prevProgram
 			e.schemaLoaded = prevLoaded
@@ -202,6 +257,8 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 	// Add to temporal buffer with circular buffering
 	baseIdx := len(e.facts)
 	e.facts = append(e.facts, filtered...)
+
+	needsRebuild := false
 	if e.cfg.FactBufferLimit > 0 && len(e.facts) > e.cfg.FactBufferLimit {
 		trimCount := len(e.facts) - e.cfg.FactBufferLimit
 		e.facts = e.facts[trimCount:]
@@ -209,6 +266,7 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 
 		// Rebuild index after trim
 		e.rebuildIndex()
+		needsRebuild = true
 	} else {
 		// Incremental index update
 		for i, f := range filtered {
@@ -219,34 +277,50 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 		}
 	}
 
-	// Add to Mangle store for rule evaluation
-	for _, f := range filtered {
-		atom, err := e.factToAtom(f)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[DEBUG] factToAtom failed for %s: %v\n", f.Predicate, err)
-			continue // Skip malformed facts
+	if needsRebuild {
+		e.rebuildTempStoreLocked()
+	} else {
+		// Add to Mangle store for rule evaluation incrementally
+		for _, f := range filtered {
+			atom, err := e.factToAtom(f)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[DEBUG] factToAtom failed for %s: %v\n", f.Predicate, err)
+				continue // Skip malformed facts
+			}
+			if f.Timestamp.IsZero() {
+				added, _ := e.store.AddEternal(atom)
+				if added {
+					fmt.Fprintf(os.Stderr, "[DEBUG] Added eternal fact to store: %s (Arity: %d)\n", f.Predicate, len(f.Args))
+				}
+			} else {
+				added, _ := e.tempStore.Add(atom, ast.NewPointInterval(f.Timestamp))
+				if added {
+					fmt.Fprintf(os.Stderr, "[DEBUG] Added temporal fact to store: %s (Arity: %d)\n", f.Predicate, len(f.Args))
+				}
+			}
 		}
-		added := e.store.Add(atom)
-		fmt.Fprintf(os.Stderr, "[DEBUG] Added fact to store: %s (Arity: %d) -> %v\n", f.Predicate, len(f.Args), added)
+
+		// Trigger incremental evaluation if schema loaded
+		if e.schemaLoaded && e.programInfo != nil {
+			evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
+			if err := engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...); err != nil {
+				fmt.Fprintf(os.Stderr, "[DEBUG] EvalProgram failed: %v\n", err)
+				return fmt.Errorf("eval program after fact insertion: %w", err)
+			}
+		}
 	}
 
-	// Trigger incremental evaluation if schema loaded
 	if e.schemaLoaded && e.programInfo != nil {
-		// Incremental evaluation (semi-naive)
-		if err := engine.EvalProgram(e.programInfo, e.store); err != nil {
-			fmt.Fprintf(os.Stderr, "[DEBUG] EvalProgram failed: %v\n", err)
-			return fmt.Errorf("eval program after fact insertion: %w", err)
-		}
-
+		evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
 		// Check watched predicates and notify subscribers (Watch Mode - PRD 5.2)
-		e.checkAndNotifyWatchers()
+		e.checkAndNotifyWatchers(evalStore)
 	}
 
 	return nil
 }
 
 // checkAndNotifyWatchers evaluates watched predicates and notifies subscribers.
-func (e *Engine) checkAndNotifyWatchers() {
+func (e *Engine) checkAndNotifyWatchers(store factstore.FactStore) {
 	watchedPredicates := e.WatchPredicates()
 	if len(watchedPredicates) == 0 {
 		return
@@ -258,7 +332,7 @@ func (e *Engine) checkAndNotifyWatchers() {
 		wildcardAtom := ast.Atom{Predicate: predSym}
 
 		var derivedFacts []Fact
-		_ = e.store.GetFacts(wildcardAtom, func(atom ast.Atom) error {
+		_ = store.GetFacts(wildcardAtom, func(atom ast.Atom) error {
 			fact, err := e.atomToFact(atom)
 			if err == nil {
 				derivedFacts = append(derivedFacts, fact)
@@ -425,7 +499,8 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 	// Get all facts matching the query predicate using callback pattern
 	results := make([]QueryResult, 0)
 
-	err = e.store.GetFacts(queryAtom, func(atom ast.Atom) error {
+	evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
+	err = evalStore.GetFacts(queryAtom, func(atom ast.Atom) error {
 		result := make(QueryResult)
 		matched := true
 
@@ -540,7 +615,8 @@ func (e *Engine) Evaluate(ctx context.Context, predicate string) ([]Fact, error)
 	defer e.mu.Unlock()
 
 	// Run evaluation
-	if err := engine.EvalProgram(e.programInfo, e.store); err != nil {
+	evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
+	if err := engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...); err != nil {
 		return nil, fmt.Errorf("eval program: %w", err)
 	}
 
@@ -572,7 +648,7 @@ func (e *Engine) Evaluate(ctx context.Context, predicate string) ([]Fact, error)
 		queryAtom = ast.Atom{Predicate: predSym}
 	}
 
-	err := e.store.GetFacts(queryAtom, func(atom ast.Atom) error {
+	err := evalStore.GetFacts(queryAtom, func(atom ast.Atom) error {
 		fact, err := e.atomToFact(atom)
 		if err != nil {
 			return nil // Skip malformed atoms
@@ -594,21 +670,76 @@ func (e *Engine) QueryTemporal(predicate string, after, before time.Time) []Fact
 	defer e.mu.RUnlock()
 
 	results := make([]Fact, 0)
-	indices, exists := e.index[predicate]
-	if !exists {
+	if e.tempStore == nil || (!e.schemaLoaded) {
 		return results
 	}
 
-	for _, idx := range indices {
-		if idx < 0 || idx >= len(e.facts) {
-			continue
-		}
-		f := e.facts[idx]
-		if (after.IsZero() || f.Timestamp.After(after)) &&
-			(before.IsZero() || f.Timestamp.Before(before)) {
-			results = append(results, f)
+	// 1. Determine Arity from schema Definitions
+	arity := -1
+	if e.programInfo != nil {
+		for sym := range e.programInfo.Decls {
+			if sym.Symbol == predicate {
+				arity = sym.Arity
+				break
+			}
 		}
 	}
+
+	// Fallback to buffered fact length if not in schema (e.g. ad-hoc unit test predicates)
+	if arity == -1 {
+		if indices, ok := e.index[predicate]; ok && len(indices) > 0 {
+			if len(e.facts) > indices[0] {
+				arity = len(e.facts[indices[0]].Args)
+			}
+		}
+	}
+
+	if arity == -1 {
+		return results // Unknown predicate with no facts
+	}
+
+	predSym := ast.PredicateSym{Symbol: predicate, Arity: arity}
+
+	// 2. Build Query Atom with wildcard Variables
+	var queryAtom ast.Atom
+	if arity >= 0 {
+		args := make([]ast.BaseTerm, arity)
+		for i := 0; i < arity; i++ {
+			args[i] = ast.Variable{Symbol: fmt.Sprintf("V%d", i)}
+		}
+		queryAtom = ast.Atom{Predicate: predSym, Args: args}
+	} else {
+		queryAtom = ast.Atom{Predicate: predSym}
+	}
+
+	// 3. Construct Temporal Bounds dynamically
+	var startBound, endBound ast.TemporalBound
+	if after.IsZero() {
+		startBound = ast.NegativeInfinity()
+	} else {
+		startBound = ast.NewTimestampBound(after)
+	}
+
+	if before.IsZero() {
+		endBound = ast.PositiveInfinity()
+	} else {
+		endBound = ast.NewTimestampBound(before)
+	}
+
+	interval := ast.Interval{Start: startBound, End: endBound}
+
+	// 4. Time-Windowed Fact Extraction API via TeeingTemporalStore
+	_ = e.tempStore.GetFactsDuring(queryAtom, interval, func(tf factstore.TemporalFact) error {
+		fact, err := e.atomToFact(tf.Atom)
+		if err == nil {
+			// Attach exact interval start time to the result for correlation context
+			if tf.Interval.Start.Type == ast.TimestampBound {
+				fact.Timestamp = tf.Interval.Start.Time()
+			}
+			results = append(results, fact)
+		}
+		return nil
+	})
 
 	return results
 }

@@ -85,6 +85,8 @@ type ElementFingerprint struct {
 	AriaLabel    string             `json:"aria_label,omitempty"`    // aria-label attribute
 	DataTestID   string             `json:"data_testid,omitempty"`   // data-testid attribute
 	Role         string             `json:"role,omitempty"`          // ARIA role attribute
+	RowKey       string             `json:"row_key,omitempty"`       // Grid row key/id (if detected)
+	RowIndex     string             `json:"row_index,omitempty"`     // Grid row index (if detected)
 	BoundingBox  map[string]float64 `json:"bounding_box,omitempty"`  // x, y, width, height
 	AltSelectors []string           `json:"alt_selectors,omitempty"` // Alternative CSS selectors for fallback
 	GeneratedAt  time.Time          `json:"generated_at,omitempty"`  // When the element was discovered

@@ -19,6 +19,7 @@ Evaluation on 8 navigation tasks using Gemini 3 Flash (February 2026):
 - **Granular control** - Progressive disclosure surfaces 6 tools (vs 37) while retaining full capability via mode/operation dispatch, reducing agent context window by ~80%
 
 **Per-task highlights:**
+
 - `mdn_navigate_to_fetch`: BrowserNERD 245K tokens vs Playwright 456K tokens (46% more efficient)
 - `wikipedia_linked_article`: BrowserNERD 103K tokens vs Playwright 255K tokens (60% more efficient)
 
@@ -30,6 +31,8 @@ Evaluation on 8 navigation tasks using Gemini 3 Flash (February 2026):
 - **CDP Event Stream**: Network requests, console logs, navigation, DOM mutations
 - **Docker Integration**: Correlate browser errors with backend container logs
 - **Mangle Reasoning**: Causal rules for root cause analysis (API failures, cascading errors)
+- **DatalogMTL Engine**: Advanced temporal reasoning across time-windowed memory intervals
+- **Geometric Computing**: Custom external predicate math operations mapped via Mangle (`my_distance`)
 
 ## Quickstart
 
@@ -64,7 +67,7 @@ All settings go in `config.yaml`. See `config.example.yaml` for a minimal templa
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `name` | string | `"browsernerd-mcp"` | MCP server name |
-| `version` | string | `"0.0.6"` | Server version |
+| `version` | string | `"0.0.7"` | Server version |
 | `log_file` | string | `"browsernerd-mcp.log"` | Log file path (required for stdio mode to avoid stderr pollution) |
 
 ### browser
@@ -86,6 +89,7 @@ All settings go in `config.yaml`. See `config.example.yaml` for a minimal templa
 | `viewport_height` | int | `1080` | Browser viewport height |
 
 **Launch command example (Windows):**
+
 ```yaml
 launch:
   - "C:\\Users\\you\\AppData\\Roaming\\rod\\browser\\chromium-1321438\\chrome.exe"
@@ -96,6 +100,7 @@ launch:
 ```
 
 **Launch command example (Linux/Mac):**
+
 ```yaml
 launch:
   - "/home/you/.rod/browser/chromium-1321438/chrome"
@@ -121,6 +126,7 @@ launch:
 | `host` | string | `""` | Docker host (empty = local socket, or `tcp://host:2375`) |
 
 **Docker integration** correlates browser API failures with backend exceptions using shared correlation keys:
+
 - `api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta)` - links failed requests to backend errors
 - `full_stack_error(ConsoleMsg, ReqId, Url, BackendMsg)` - complete chain from browser to backend
 - `net_correlation_key(ReqId, KeyType, KeyValue)` - normalized request/trace identifiers from headers
@@ -140,10 +146,12 @@ launch:
 By default (`progressive_only: true`), agents see only **6 tools** instead of 37, reducing context window usage by ~80%. All individual tools remain available internally via delegation.
 
 **Lifecycle (2 tools):**
+
 - `launch-browser` - Start Chrome (idempotent)
 - `shutdown-browser` - Stop Chrome and clear sessions
 
 **Progressive Disclosure (4 tools):**
+
 - `browser-observe` - All observation: page state, navigation, interactive elements, hidden content, sessions, screenshots, React Fiber, DOM snapshots. Modes: `state|nav|interactive|hidden|composite|sessions|screenshot|react|dom_snapshot`. Views: `summary|compact|full`. Intents: `quick_status|find_actions|map_navigation|hidden_content|deep_audit|check_sessions|visual_check`.
 - `browser-act` - All actions: navigate, interact, forms, keyboard, session management, waits, JS evaluation, batch plans. Operation types: `navigate|click|type|select|toggle|scroll|fill_form|press_key|history|session_create|session_attach|session_fork|wait|await_stable|await_fact|await_conditions|js|plan`.
 - `browser-reason` - Diagnostics and analysis: health assessment, root cause analysis, blocking issues, recommendations. Topics: `health|next_best_action|blocking_issue|why_failed|what_changed_since`.
@@ -157,12 +165,14 @@ Set `progressive_only: false` in config to expose all individual tools alongside
 <summary>Individual tools (31 tools, hidden by default)</summary>
 
 **Session Management:**
+
 - `list-sessions` - List active browser tabs
 - `create-session` - Open new tab (incognito)
 - `attach-session` - Attach to existing tab by TargetID
 - `fork-session` - Clone session with auth state (cookies, storage)
 
 **Navigation & Interaction:**
+
 - `navigate-url` - Navigate to URL
 - `get-interactive-elements` - Discover clickable elements
 - `get-navigation-links` - Extract page links by area (nav, side, main, footer)
@@ -174,6 +184,7 @@ Set `progressive_only: false` in config to expose all individual tools alongside
 - `discover-hidden-content` - Find elements outside viewport
 
 **Diagnostics & Advanced:**
+
 - `get-console-errors` - Browser console + Docker container errors
 - `get-toast-notifications` - UI toast/snackbar notifications
 - `screenshot` - Capture page screenshot
@@ -183,6 +194,7 @@ Set `progressive_only: false` in config to expose all individual tools alongside
 - `snapshot-dom` - DOM snapshot extraction (gated by progressive disclosure)
 
 **Mangle Facts & Rules:**
+
 - `push-facts` - Add custom facts
 - `read-facts` - Read all facts (optionally filtered)
 - `query-facts` - Query facts by predicate
@@ -192,6 +204,7 @@ Set `progressive_only: false` in config to expose all individual tools alongside
 - `subscribe-rule` - Watch mode subscription
 
 **Automation & Waiting:**
+
 - `await-fact` - Wait for predicate to become true
 - `await-conditions` - Wait for multiple conditions
 - `await-stable-state` - Wait for page to stabilize
@@ -205,6 +218,7 @@ Set `progressive_only: false` in config to expose all individual tools alongside
 `schemas/browser.mg` defines the Mangle predicates and causal reasoning rules:
 
 **Core Predicates:**
+
 - `dom_node`, `dom_attr`, `dom_text`, `dom_layout` - DOM structure
 - `react_component`, `react_prop`, `react_state` - React Fiber tree
 - `net_request`, `net_response`, `net_header`, `net_correlation_key` - Network events + request correlation keys
@@ -215,6 +229,7 @@ Set `progressive_only: false` in config to expose all individual tools alongside
 - `action_candidate`, `global_action` - Mangle-native action planning candidates for browser-act
 
 **Causal Rules:**
+
 - `caused_by(ConsoleErr, ReqId)` - Console error caused by failed request
 - `slow_api(ReqId, Url, Duration)` - API calls exceeding 1 second
 - `cascading_failure(ChildReqId, ParentReqId)` - Request chain failures
@@ -224,9 +239,17 @@ Set `progressive_only: false` in config to expose all individual tools alongside
 - `interaction_blocked(SessionId, Reason)` - Page interaction blocked by modal/overlay
 - `action_candidate(...)` - Ranked click candidates derived from semantic UI + nav + interactive facts
 
+**DatalogMTL Temporal Reasoning:**
+
+- `recently_failed_api(Url)` - Network failure detection across continuous temporal frames (`:time:ge`)
+- `modal_expected(...)` - Predictive `<+[0s, 2s]` contract asserting a UI consequence following clicks
+- `stable_expected(...)` - Box-Plus `[+[0s, 1s]` assertion for predicting page stability locks
+- `elements_far_apart(...)` - DOM bounding box logic using Go-injected geometric metrics (`my_distance(A,B,C,D,Dist)`)
+
 ## Claude Code Integration
 
 Add to `.mcp.json`:
+
 ```json
 {
   "mcpServers": {

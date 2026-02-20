@@ -3,6 +3,8 @@ package mcp
 import (
 	"fmt"
 	"math"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,7 +45,7 @@ func findElementByRef(page *rod.Page, ref string) (*rod.Element, error) {
 
 // findElementByRefWithRegistry finds an element using multi-strategy search with fingerprint support.
 // Search order prioritizes stable identifiers:
-// 1. Prefixed refs (testid:X, aria:X) - parsed and used directly
+// 1. Prefixed refs (testid:X, aria:X, row:X, rowkey:X) - parsed and used directly
 // 2. data-testid attribute from fingerprint
 // 3. aria-label attribute from fingerprint
 // 4. ID attribute (from ref or fingerprint)
@@ -51,28 +53,32 @@ func findElementByRef(page *rod.Page, ref string) (*rod.Element, error) {
 // 6. Original ref as CSS selector
 func findElementByRefWithRegistry(page *rod.Page, ref string, registry *browser.ElementRegistry) (*rod.Element, error) {
 	timeout := 2 * time.Second
+	baseRef, duplicateIndex, hasDuplicateSuffix := splitDuplicateSuffix(ref)
 
-	// Strategy 1: Handle prefixed refs (testid:X or aria:X)
-	if strings.HasPrefix(ref, "testid:") {
-		testID := strings.TrimPrefix(ref, "testid:")
-		el, err := page.Timeout(timeout).Element(`[data-testid="` + testID + `"]`)
-		if err == nil {
-			return el, nil
+	// Strategy 1: Handle prefixed refs (testid:X, aria:X, row:X)
+	if strings.HasPrefix(baseRef, "testid:") {
+		testID := strings.TrimPrefix(baseRef, "testid:")
+		selectors := []string{
+			`[data-testid="` + escapeAttributeValue(testID) + `"]`,
+			`[data-test-id="` + escapeAttributeValue(testID) + `"]`,
 		}
-		// Also try data-test-id variant
-		el, err = page.Timeout(timeout).Element(`[data-test-id="` + testID + `"]`)
-		if err == nil {
-			return el, nil
+		for _, sel := range selectors {
+			if el, ok := findBySelectorWithFingerprint(page, timeout, sel, nil, duplicateIndex, hasDuplicateSuffix); ok {
+				return el, nil
+			}
 		}
 	}
 
-	if strings.HasPrefix(ref, "aria:") {
+	if strings.HasPrefix(baseRef, "aria:") {
 		// Reconstruct aria-label from sanitized ref
-		ariaRef := strings.TrimPrefix(ref, "aria:")
+		ariaRef := strings.TrimPrefix(baseRef, "aria:")
 		// We need to iterate since aria-label was sanitized during ref generation
 		elements, err := page.Timeout(timeout).Elements(`[aria-label]`)
 		if err == nil {
-			for _, elem := range elements {
+			for i, elem := range elements {
+				if hasDuplicateSuffix && i != duplicateIndex {
+					continue
+				}
 				label, _ := elem.Attribute("aria-label")
 				if label != nil {
 					// Check if sanitized version matches
@@ -85,73 +91,179 @@ func findElementByRefWithRegistry(page *rod.Page, ref string, registry *browser.
 		}
 	}
 
+	if strings.HasPrefix(baseRef, "row:") {
+		rowCandidates := []string{decodeRefPart(strings.TrimPrefix(baseRef, "row:"))}
+		if baseRef != ref && strings.HasPrefix(ref, "row:") {
+			rowCandidates = append(rowCandidates, decodeRefPart(strings.TrimPrefix(ref, "row:")))
+		}
+		for _, rowID := range rowCandidates {
+			selectors := buildRowIndexSelectors(rowID)
+			for _, sel := range selectors {
+				if el, ok := findBySelectorWithFingerprint(page, timeout, sel, nil, duplicateIndex, hasDuplicateSuffix); ok {
+					return el, nil
+				}
+			}
+		}
+	}
+
+	if strings.HasPrefix(baseRef, "rowkey:") {
+		rowKeyCandidates := []string{decodeRefPart(strings.TrimPrefix(baseRef, "rowkey:"))}
+		if baseRef != ref && strings.HasPrefix(ref, "rowkey:") {
+			rowKeyCandidates = append(rowKeyCandidates, decodeRefPart(strings.TrimPrefix(ref, "rowkey:")))
+		}
+		for _, rowKey := range rowKeyCandidates {
+			selectors := buildRowKeySelectors(rowKey)
+			for _, sel := range selectors {
+				if el, ok := findBySelectorWithFingerprint(page, timeout, sel, nil, duplicateIndex, hasDuplicateSuffix); ok {
+					return el, nil
+				}
+			}
+		}
+	}
+
 	// Strategy 2-5: Use fingerprint data if available from registry
 	var fp *browser.ElementFingerprint
 	if registry != nil {
 		fp = registry.Get(ref)
+		if fp == nil && baseRef != ref {
+			fp = registry.Get(baseRef)
+		}
 	}
 
 	if fp != nil {
 		// Try data-testid from fingerprint
 		if fp.DataTestID != "" {
-			el, err := page.Timeout(timeout).Element(`[data-testid="` + fp.DataTestID + `"]`)
-			if err == nil {
-				return el, nil
+			selectors := []string{
+				`[data-testid="` + escapeAttributeValue(fp.DataTestID) + `"]`,
+				`[data-test-id="` + escapeAttributeValue(fp.DataTestID) + `"]`,
+			}
+			for _, sel := range selectors {
+				if el, ok := findBySelectorWithFingerprint(page, timeout, sel, fp, duplicateIndex, hasDuplicateSuffix); ok {
+					return el, nil
+				}
 			}
 		}
 
 		// Try aria-label from fingerprint
 		if fp.AriaLabel != "" {
-			el, err := page.Timeout(timeout).Element(`[aria-label="` + escapeAttributeValue(fp.AriaLabel) + `"]`)
-			if err == nil {
+			if el, ok := findBySelectorWithFingerprint(page, timeout, `[aria-label="`+escapeAttributeValue(fp.AriaLabel)+`"]`, fp, duplicateIndex, hasDuplicateSuffix); ok {
 				return el, nil
 			}
 		}
 
 		// Try ID from fingerprint
 		if fp.ID != "" {
-			el, err := page.Timeout(timeout).Element("#" + escapeCSSSelector(fp.ID))
-			if err == nil {
+			if el, ok := findBySelectorWithFingerprint(page, timeout, "#"+escapeCSSSelector(fp.ID), fp, duplicateIndex, hasDuplicateSuffix); ok {
 				return el, nil
 			}
 		}
 
 		// Try name from fingerprint
 		if fp.Name != "" {
-			el, err := page.Timeout(timeout).Element(`[name="` + fp.Name + `"]`)
-			if err == nil {
+			if el, ok := findBySelectorWithFingerprint(page, timeout, `[name="`+escapeAttributeValue(fp.Name)+`"]`, fp, duplicateIndex, hasDuplicateSuffix); ok {
 				return el, nil
+			}
+		}
+
+		// Try tag + classes from fingerprint (supports utility classes with special chars)
+		if selector := buildSelectorFromFingerprintClasses(fp); selector != "" {
+			if el, ok := findBySelectorWithFingerprint(page, timeout, selector, fp, duplicateIndex, hasDuplicateSuffix); ok {
+				return el, nil
+			}
+		}
+
+		if fp.Role != "" {
+			roleSelector := `[role="` + escapeAttributeValue(fp.Role) + `"]`
+			if fp.TagName != "" {
+				roleSelector = fp.TagName + roleSelector
+			}
+			if el, ok := findBySelectorWithFingerprint(page, timeout, roleSelector, fp, duplicateIndex, hasDuplicateSuffix); ok {
+				return el, nil
+			}
+		}
+
+		if fp.RowIndex != "" {
+			for _, sel := range buildRowIndexSelectors(fp.RowIndex) {
+				if el, ok := findBySelectorWithFingerprint(page, timeout, sel, fp, duplicateIndex, hasDuplicateSuffix); ok {
+					return el, nil
+				}
+			}
+		}
+
+		if fp.RowKey != "" {
+			for _, sel := range buildRowKeySelectors(fp.RowKey) {
+				if el, ok := findBySelectorWithFingerprint(page, timeout, sel, fp, duplicateIndex, hasDuplicateSuffix); ok {
+					return el, nil
+				}
 			}
 		}
 	}
 
 	// Strategy 6: Fallback to original ref-based search
-	// Try by ID (ref might be an element ID)
-	el, err := page.Timeout(timeout).Element("#" + escapeCSSSelector(ref))
-	if err == nil {
-		return el, nil
+	tryByIDOrName := func(candidate string) (*rod.Element, bool) {
+		if candidate == "" {
+			return nil, false
+		}
+		if el, ok := findBySelectorWithFingerprint(page, timeout, "#"+escapeCSSSelector(candidate), fp, duplicateIndex, hasDuplicateSuffix); ok {
+			return el, true
+		}
+		if el, ok := findBySelectorWithFingerprint(page, timeout, `[name="`+escapeAttributeValue(candidate)+`"]`, fp, duplicateIndex, hasDuplicateSuffix); ok {
+			return el, true
+		}
+		return nil, false
 	}
 
-	// Try by name attribute
-	el, err = page.Timeout(timeout).Element(`[name="` + ref + `"]`)
-	if err == nil {
+	if el, ok := tryByIDOrName(ref); ok {
 		return el, nil
+	}
+	if baseRef != ref {
+		if el, ok := tryByIDOrName(baseRef); ok {
+			return el, nil
+		}
 	}
 
 	// Try as raw CSS selector first if it looks like a valid tag.class pattern
 	// Refs like "button.inline-flex.items-center" are already valid CSS selectors
 	if looksLikeCSSSelector(ref) {
-		el, err = page.Timeout(timeout).Element(ref)
-		if err == nil {
+		if el, ok := findBySelectorWithFingerprint(page, timeout, ref, fp, duplicateIndex, hasDuplicateSuffix); ok {
 			return el, nil
+		}
+	}
+	if baseRef != ref && looksLikeCSSSelector(baseRef) {
+		if el, ok := findBySelectorWithFingerprint(page, timeout, baseRef, fp, duplicateIndex, hasDuplicateSuffix); ok {
+			return el, nil
+		}
+	}
+
+	// Try a parsed/escaped class selector for refs with utility syntax:
+	// e.g. "div.group-hover:bg-slate-50.data-[state=open]:opacity-100"
+	if selector, dedupeIdx, hasDedupe, ok := buildEscapedClassSelector(ref); ok {
+		if el, ok := findBySelectorWithFingerprint(page, timeout, selector, fp, dedupeIdx, hasDedupe); ok {
+			return el, nil
+		}
+	} else if strings.Contains(baseRef, ".") {
+		if classSelector := escapeClassSegments(baseRef); classSelector != "" {
+			if el, ok := findBySelectorWithFingerprint(page, timeout, classSelector, fp, duplicateIndex, hasDuplicateSuffix); ok {
+				return el, nil
+			}
+		}
+	}
+
+	// Refs like "button[14]" are emitted when no better identifier exists.
+	if tag, idx, ok := parseIndexedTagRef(ref); ok {
+		elements, err := page.Timeout(timeout).Elements(tag)
+		if err == nil && len(elements) > 0 {
+			if idx >= 0 && idx < len(elements) {
+				return elements[idx], nil
+			}
+			return elements[len(elements)-1], nil
 		}
 	}
 
 	// Try as escaped CSS selector (for refs that need escaping like IDs with special chars)
 	escapedRef := escapeCSSSelector(ref)
 	if escapedRef != ref { // Only try if escaping changed something
-		el, err = page.Timeout(timeout).Element(escapedRef)
-		if err == nil {
+		if el, ok := findBySelectorWithFingerprint(page, timeout, escapedRef, fp, duplicateIndex, hasDuplicateSuffix); ok {
 			return el, nil
 		}
 	}
@@ -160,8 +272,7 @@ func findElementByRefWithRegistry(page *rod.Page, ref string, registry *browser.
 	// These are pre-computed CSS selectors that were captured during element discovery
 	if fp != nil && len(fp.AltSelectors) > 0 {
 		for _, altSel := range fp.AltSelectors {
-			el, err = page.Timeout(timeout).Element(altSel)
-			if err == nil {
+			if el, ok := findBySelectorWithFingerprint(page, timeout, altSel, fp, duplicateIndex, hasDuplicateSuffix); ok {
 				return el, nil
 			}
 		}
@@ -197,6 +308,59 @@ func escapeAttributeValue(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return s
+}
+
+func decodeRefPart(value string) string {
+	decoded, err := url.QueryUnescape(value)
+	if err != nil {
+		return value
+	}
+	return decoded
+}
+
+func buildRowIndexSelectors(rowIndex string) []string {
+	if strings.TrimSpace(rowIndex) == "" {
+		return nil
+	}
+	escaped := escapeAttributeValue(rowIndex)
+	return []string{
+		`[role="row"][aria-rowindex="` + escaped + `"]`,
+		`[role="row"][data-rowindex="` + escaped + `"]`,
+		`[role="row"][row-index="` + escaped + `"]`,
+		`[role="row"][data-row-index="` + escaped + `"]`,
+		`tr[aria-rowindex="` + escaped + `"]`,
+		`tr[data-rowindex="` + escaped + `"]`,
+		`tr[row-index="` + escaped + `"]`,
+		`tr[data-row-index="` + escaped + `"]`,
+		`[aria-rowindex="` + escaped + `"]`,
+		`[data-rowindex="` + escaped + `"]`,
+		`[row-index="` + escaped + `"]`,
+		`[data-row-index="` + escaped + `"]`,
+	}
+}
+
+func buildRowKeySelectors(rowKey string) []string {
+	if strings.TrimSpace(rowKey) == "" {
+		return nil
+	}
+	escaped := escapeAttributeValue(rowKey)
+	attrs := []string{
+		"data-row-id",
+		"data-row-key",
+		"data-id",
+		"data-key",
+		"data-item-id",
+		"data-uid",
+	}
+	selectors := make([]string, 0, len(attrs)*3)
+	for _, attr := range attrs {
+		selectors = append(selectors,
+			`[role="row"][`+attr+`="`+escaped+`"]`,
+			`tr[`+attr+`="`+escaped+`"]`,
+			`[`+attr+`="`+escaped+`"]`,
+		)
+	}
+	return selectors
 }
 
 // FingerprintValidationResult contains the result of validating an element against its fingerprint
@@ -284,6 +448,46 @@ func validateFingerprint(element *rod.Element, fp *browser.ElementFingerprint) F
 		}
 	}
 
+	// Check role consistency (warning-level)
+	if fp.Role != "" {
+		actualRole, err := element.Attribute("role")
+		actual := ""
+		if err == nil && actualRole != nil {
+			actual = *actualRole
+		}
+		if actual != "" && actual != fp.Role {
+			result.Changes = append(result.Changes, fmt.Sprintf("role: expected %s, got %s", fp.Role, actual))
+			result.Score -= 0.1
+		}
+	}
+
+	// Check class overlap (useful when refs are class-derived in utility-heavy UIs)
+	if len(fp.Classes) > 0 {
+		actualClassAttr, err := element.Attribute("class")
+		if err == nil {
+			classSet := make(map[string]bool)
+			if actualClassAttr != nil {
+				for _, cls := range strings.Fields(*actualClassAttr) {
+					classSet[cls] = true
+				}
+			}
+
+			matches := 0
+			for _, cls := range fp.Classes {
+				if classSet[cls] {
+					matches++
+				}
+			}
+
+			if matches == 0 {
+				result.Changes = append(result.Changes, "classes: changed")
+				result.Score -= 0.2
+			} else if matches < len(fp.Classes) {
+				result.Score -= 0.05
+			}
+		}
+	}
+
 	// Ensure score doesn't go negative
 	if result.Score < 0 {
 		result.Score = 0
@@ -306,6 +510,20 @@ func escapeCSSSelector(s string) string {
 		}
 	}
 	return string(result)
+}
+
+func escapeClassSegments(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	parts := strings.Split(ref, ".")
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		parts[i] = escapeCSSSelector(part)
+	}
+	return strings.Join(parts, ".")
 }
 
 // looksLikeCSSSelector checks if a string looks like a valid CSS tag.class selector.
@@ -347,6 +565,156 @@ func looksLikeCSSSelector(s string) bool {
 	}
 
 	return true
+}
+
+func splitDuplicateSuffix(ref string) (string, int, bool) {
+	idx := strings.LastIndex(ref, "_")
+	if idx <= 0 || idx >= len(ref)-1 {
+		return ref, 0, false
+	}
+
+	base := ref[:idx]
+	if !strings.Contains(base, ".") && !strings.Contains(base, "[") && !strings.HasPrefix(base, "row:") && !strings.HasPrefix(base, "rowkey:") {
+		return ref, 0, false
+	}
+
+	n, err := strconv.Atoi(ref[idx+1:])
+	if err != nil || n < 0 {
+		return ref, 0, false
+	}
+
+	return base, n, true
+}
+
+func isSimpleTagToken(tag string) bool {
+	if tag == "" {
+		return false
+	}
+	for _, r := range tag {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func buildEscapedClassSelector(ref string) (string, int, bool, bool) {
+	baseRef, duplicateIndex, hasDuplicate := splitDuplicateSuffix(ref)
+	if !strings.Contains(baseRef, ".") {
+		return "", 0, false, false
+	}
+
+	parts := strings.Split(baseRef, ".")
+	if len(parts) < 2 {
+		return "", 0, false, false
+	}
+
+	tag := strings.TrimSpace(parts[0])
+	classParts := make([]string, 0, len(parts)-1)
+	for _, part := range parts[1:] {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return "", 0, false, false
+		}
+		classParts = append(classParts, escapeCSSSelector(part))
+	}
+	if len(classParts) == 0 {
+		return "", 0, false, false
+	}
+
+	selector := "." + strings.Join(classParts, ".")
+	if tag != "" {
+		if !isSimpleTagToken(tag) {
+			return "", 0, false, false
+		}
+		selector = tag + selector
+	}
+
+	return selector, duplicateIndex, hasDuplicate, true
+}
+
+func parseIndexedTagRef(ref string) (string, int, bool) {
+	baseRef, _, _ := splitDuplicateSuffix(ref)
+	openIdx := strings.LastIndex(baseRef, "[")
+	closeIdx := strings.LastIndex(baseRef, "]")
+	if openIdx <= 0 || closeIdx != len(baseRef)-1 || openIdx+1 >= closeIdx {
+		return "", 0, false
+	}
+
+	tag := strings.TrimSpace(baseRef[:openIdx])
+	if !isSimpleTagToken(tag) {
+		return "", 0, false
+	}
+
+	n, err := strconv.Atoi(baseRef[openIdx+1 : closeIdx])
+	if err != nil || n < 0 {
+		return "", 0, false
+	}
+
+	return tag, n, true
+}
+
+func buildSelectorFromFingerprintClasses(fp *browser.ElementFingerprint) string {
+	if fp == nil || fp.TagName == "" || len(fp.Classes) == 0 {
+		return ""
+	}
+
+	classes := make([]string, 0, len(fp.Classes))
+	for i, cls := range fp.Classes {
+		if i >= 3 {
+			break
+		}
+		cls = strings.TrimSpace(cls)
+		if cls == "" {
+			continue
+		}
+		classes = append(classes, escapeCSSSelector(cls))
+	}
+	if len(classes) == 0 {
+		return ""
+	}
+
+	return fp.TagName + "." + strings.Join(classes, ".")
+}
+
+func selectBestElementCandidate(elements []*rod.Element, fp *browser.ElementFingerprint, duplicateIndex int, hasDuplicateSuffix bool) *rod.Element {
+	if len(elements) == 0 {
+		return nil
+	}
+
+	if hasDuplicateSuffix && duplicateIndex >= 0 && duplicateIndex < len(elements) {
+		return elements[duplicateIndex]
+	}
+
+	if fp == nil || len(elements) == 1 {
+		return elements[0]
+	}
+
+	best := elements[0]
+	bestScore := -1.0
+	for _, element := range elements {
+		score := validateFingerprint(element, fp).Score
+		if score > bestScore {
+			best = element
+			bestScore = score
+		}
+	}
+
+	return best
+}
+
+func findBySelectorWithFingerprint(page *rod.Page, timeout time.Duration, selector string, fp *browser.ElementFingerprint, duplicateIndex int, hasDuplicateSuffix bool) (*rod.Element, bool) {
+	elements, err := page.Timeout(timeout).Elements(selector)
+	if err != nil || len(elements) == 0 {
+		return nil, false
+	}
+
+	chosen := selectBestElementCandidate(elements, fp, duplicateIndex, hasDuplicateSuffix)
+	if chosen == nil {
+		return nil, false
+	}
+
+	return chosen, true
 }
 
 func getStringArg(args map[string]interface{}, key string) string {
@@ -483,4 +851,3 @@ func formatJSError(err error) string {
 
 	return errStr
 }
-

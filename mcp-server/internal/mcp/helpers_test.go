@@ -654,3 +654,265 @@ func TestLooksLikeCSSSelector(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitDuplicateSuffix(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantBase     string
+		wantIndex    int
+		wantHasSplit bool
+	}{
+		{
+			name:         "class ref duplicate suffix",
+			input:        "div.grid-row.group-hover:bg-blue-50_2",
+			wantBase:     "div.grid-row.group-hover:bg-blue-50",
+			wantIndex:    2,
+			wantHasSplit: true,
+		},
+		{
+			name:         "indexed tag ref duplicate suffix",
+			input:        "button[10]_1",
+			wantBase:     "button[10]",
+			wantIndex:    1,
+			wantHasSplit: true,
+		},
+		{
+			name:         "plain id with underscore does not split",
+			input:        "row_12",
+			wantBase:     "row_12",
+			wantIndex:    0,
+			wantHasSplit: false,
+		},
+		{
+			name:         "rowkey ref with dedupe suffix splits",
+			input:        "rowkey:acme_order_123_2",
+			wantBase:     "rowkey:acme_order_123",
+			wantIndex:    2,
+			wantHasSplit: true,
+		},
+		{
+			name:         "non-numeric suffix does not split",
+			input:        "div.row_alpha",
+			wantBase:     "div.row_alpha",
+			wantIndex:    0,
+			wantHasSplit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base, idx, hasSplit := splitDuplicateSuffix(tt.input)
+			if base != tt.wantBase || idx != tt.wantIndex || hasSplit != tt.wantHasSplit {
+				t.Fatalf(
+					"splitDuplicateSuffix(%q) = (%q, %d, %v), want (%q, %d, %v)",
+					tt.input,
+					base,
+					idx,
+					hasSplit,
+					tt.wantBase,
+					tt.wantIndex,
+					tt.wantHasSplit,
+				)
+			}
+		})
+	}
+}
+
+func TestBuildEscapedClassSelector(t *testing.T) {
+	tests := []struct {
+		name               string
+		input              string
+		wantSelector       string
+		wantDuplicateIndex int
+		wantHasDuplicate   bool
+		wantOK             bool
+	}{
+		{
+			name:               "simple selector passes through",
+			input:              "button.primary",
+			wantSelector:       "button.primary",
+			wantDuplicateIndex: 0,
+			wantHasDuplicate:   false,
+			wantOK:             true,
+		},
+		{
+			name:               "complex utility classes are escaped",
+			input:              "div.grid-row.group-hover:bg-blue-50.data-[state=selected]:bg-slate-100_2",
+			wantSelector:       `div.grid-row.group-hover\:bg-blue-50.data-\[state\=selected\]\:bg-slate-100`,
+			wantDuplicateIndex: 2,
+			wantHasDuplicate:   true,
+			wantOK:             true,
+		},
+		{
+			name:               "non-class ref is rejected",
+			input:              "submit-button",
+			wantSelector:       "",
+			wantDuplicateIndex: 0,
+			wantHasDuplicate:   false,
+			wantOK:             false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			selector, duplicateIndex, hasDuplicate, ok := buildEscapedClassSelector(tt.input)
+			if selector != tt.wantSelector || duplicateIndex != tt.wantDuplicateIndex || hasDuplicate != tt.wantHasDuplicate || ok != tt.wantOK {
+				t.Fatalf(
+					"buildEscapedClassSelector(%q) = (%q, %d, %v, %v), want (%q, %d, %v, %v)",
+					tt.input,
+					selector,
+					duplicateIndex,
+					hasDuplicate,
+					ok,
+					tt.wantSelector,
+					tt.wantDuplicateIndex,
+					tt.wantHasDuplicate,
+					tt.wantOK,
+				)
+			}
+		})
+	}
+}
+
+func TestParseIndexedTagRef(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantTag   string
+		wantIndex int
+		wantOK    bool
+	}{
+		{
+			name:      "valid indexed ref",
+			input:     "button[4]",
+			wantTag:   "button",
+			wantIndex: 4,
+			wantOK:    true,
+		},
+		{
+			name:      "valid indexed ref with duplicate suffix",
+			input:     "div[12]_1",
+			wantTag:   "div",
+			wantIndex: 12,
+			wantOK:    true,
+		},
+		{
+			name:      "invalid indexed ref",
+			input:     "div[abc]",
+			wantTag:   "",
+			wantIndex: 0,
+			wantOK:    false,
+		},
+		{
+			name:      "non-indexed ref",
+			input:     "div.row",
+			wantTag:   "",
+			wantIndex: 0,
+			wantOK:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tag, idx, ok := parseIndexedTagRef(tt.input)
+			if tag != tt.wantTag || idx != tt.wantIndex || ok != tt.wantOK {
+				t.Fatalf(
+					"parseIndexedTagRef(%q) = (%q, %d, %v), want (%q, %d, %v)",
+					tt.input,
+					tag,
+					idx,
+					ok,
+					tt.wantTag,
+					tt.wantIndex,
+					tt.wantOK,
+				)
+			}
+		})
+	}
+}
+
+func TestDecodeRefPart(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "plain value unchanged",
+			input:    "123",
+			expected: "123",
+		},
+		{
+			name:     "url-encoded decoded",
+			input:    "Acme%20Corp%2FNorth",
+			expected: "Acme Corp/North",
+		},
+		{
+			name:     "invalid encoding falls back",
+			input:    "%ZZ",
+			expected: "%ZZ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decodeRefPart(tt.input)
+			if got != tt.expected {
+				t.Fatalf("decodeRefPart(%q)=%q, expected %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildRowSelectors(t *testing.T) {
+	t.Run("row index selectors include key variants", func(t *testing.T) {
+		selectors := buildRowIndexSelectors("42")
+		if len(selectors) == 0 {
+			t.Fatal("expected non-empty selectors")
+		}
+
+		required := []string{
+			`[role="row"][aria-rowindex="42"]`,
+			`tr[data-rowindex="42"]`,
+			`[data-row-index="42"]`,
+		}
+		for _, want := range required {
+			found := false
+			for _, s := range selectors {
+				if s == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected selector %q in %v", want, selectors)
+			}
+		}
+	})
+
+	t.Run("row key selectors include common grid attrs", func(t *testing.T) {
+		selectors := buildRowKeySelectors("org-123")
+		if len(selectors) == 0 {
+			t.Fatal("expected non-empty selectors")
+		}
+
+		required := []string{
+			`[role="row"][data-row-id="org-123"]`,
+			`tr[data-key="org-123"]`,
+			`[data-uid="org-123"]`,
+		}
+		for _, want := range required {
+			found := false
+			for _, s := range selectors {
+				if s == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected selector %q in %v", want, selectors)
+			}
+		}
+	})
+}

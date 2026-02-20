@@ -111,6 +111,7 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 	if !ok {
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("session not found: %s", sessionID)}, nil
 	}
+	registry := t.sessions.Registry(sessionID)
 
 	// Get actions either from args or from Mangle-derived facts
 	var actions []map[string]interface{}
@@ -172,7 +173,7 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 
 		switch actionType {
 		case "click":
-			element, err := findElementByRef(page, ref)
+			element, err := findElementByRefWithRegistry(page, ref, registry)
 			if err != nil {
 				actionErr = fmt.Errorf("element not found: %s", ref)
 			} else {
@@ -181,7 +182,7 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 			result["ref"] = ref
 
 		case "type":
-			element, err := findElementByRef(page, ref)
+			element, err := findElementByRefWithRegistry(page, ref, registry)
 			if err != nil {
 				actionErr = fmt.Errorf("element not found: %s", ref)
 			} else {

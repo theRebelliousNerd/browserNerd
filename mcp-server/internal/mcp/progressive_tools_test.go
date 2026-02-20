@@ -46,6 +46,24 @@ func TestProgressiveToolContracts(t *testing.T) {
 		if _, ok := props["mode"]; !ok {
 			t.Fatalf("expected mode property in schema")
 		}
+		modeProp, ok := props["mode"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected mode property to be object")
+		}
+		enumVals, ok := modeProp["enum"].([]string)
+		if !ok {
+			t.Fatalf("expected mode enum in schema")
+		}
+		foundGrids := false
+		for _, v := range enumVals {
+			if v == "grids" {
+				foundGrids = true
+				break
+			}
+		}
+		if !foundGrids {
+			t.Fatalf("expected mode enum to include grids")
+		}
 	})
 
 	t.Run("browser-act contract", func(t *testing.T) {
