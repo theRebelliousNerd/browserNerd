@@ -14,6 +14,7 @@ import (
 	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/docker"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/recorder"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -25,6 +26,7 @@ type Server struct {
 	sessions     *browser.SessionManager
 	engine       *mangle.Engine
 	dockerClient *docker.Client
+	recorder     *recorder.Recorder
 	tools        map[string]Tool
 	mcpServer    *mcpserver.MCPServer
 }
@@ -60,11 +62,30 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 		log.Printf("Docker log integration enabled for containers: %v", cfg.Docker.Containers)
 	}
 
+	var flightRecorder *recorder.Recorder
+	if cfg.Recorder.Enabled {
+		var err error
+		flightRecorder, err = recorder.NewRecorderWithOptions(cfg.Recorder.TraceDir, cfg.Recorder.MaxRotatedFiles)
+		if err != nil {
+			return nil, fmt.Errorf("initialize recorder: %w", err)
+		}
+		if err := flightRecorder.Start("mcp"); err != nil {
+			return nil, fmt.Errorf("start recorder trace: %w", err)
+		}
+		flightRecorder.Log("server_start", "", map[string]interface{}{
+			"server_name":    cfg.Server.Name,
+			"server_version": cfg.Server.Version,
+			"progressive":    cfg.MCP.IsProgressiveOnly(),
+		})
+		log.Printf("flight recorder enabled: %s", flightRecorder.CurrentPath())
+	}
+
 	server := &Server{
 		cfg:          cfg,
 		sessions:     sessions,
 		engine:       engine,
 		dockerClient: dockerClient,
+		recorder:     flightRecorder,
 		tools:        make(map[string]Tool),
 		mcpServer:    mcpSrv,
 	}
@@ -114,6 +135,17 @@ func (s *Server) StartSSE(ctx context.Context, port int) error {
 	}
 }
 
+// Close releases optional recorder resources.
+func (s *Server) Close() error {
+	if s.recorder == nil {
+		return nil
+	}
+	s.recorder.Log("server_stop", "", map[string]interface{}{
+		"server_name": s.cfg.Server.Name,
+	})
+	return s.recorder.Close()
+}
+
 // ExecuteTool executes a tool directly (used by demos/tests).
 func (s *Server) ExecuteTool(name string, args map[string]interface{}) (interface{}, error) {
 	tool, exists := s.tools[name]
@@ -132,7 +164,13 @@ func (s *Server) registerAllTools() {
 	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&BrowserActTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&BrowserReasonTool{engine: s.engine, dockerClient: s.dockerClient})
-	s.registerTool(&BrowserMangleTool{engine: s.engine})
+	s.registerTool(&BrowserMangleTool{
+		engine:           s.engine,
+		dockerClient:     s.dockerClient,
+		recorder:         s.recorder,
+		defaultTraceDir:  s.cfg.Recorder.TraceDir,
+		defaultLogWindow: s.cfg.Docker.GetLogWindow(),
+	})
 
 	// When progressive_only is false, also register all individual tools
 	if !s.cfg.MCP.IsProgressiveOnly() {
@@ -203,13 +241,32 @@ func (s *Server) registerTool(tool Tool) {
 
 func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		start := time.Now()
 		args := request.GetArguments()
 		if args == nil {
 			args = map[string]interface{}{}
 		}
+		sessionID := ""
+		if rawSessionID, ok := args["session_id"]; ok {
+			sessionID = fmt.Sprintf("%v", rawSessionID)
+		}
+		if s.recorder != nil {
+			s.recorder.Log("tool_call", sessionID, map[string]interface{}{
+				"tool": tool.Name(),
+				"args": args,
+			})
+		}
 
 		result, err := tool.Execute(ctx, args)
 		if err != nil {
+			if s.recorder != nil {
+				s.recorder.Log("tool_result", sessionID, map[string]interface{}{
+					"tool":        tool.Name(),
+					"success":     false,
+					"error":       err.Error(),
+					"duration_ms": time.Since(start).Milliseconds(),
+				})
+			}
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("tool %s failed: %v", tool.Name(), err))},
 				IsError: true,
@@ -217,6 +274,22 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 		}
 
 		payload := marshalToolPayload(tool.Name(), result)
+		if s.recorder != nil {
+			payloadString := string(payload)
+			payloadTruncated := false
+			if len(payloadString) > 65536 {
+				payloadString = payloadString[:65536]
+				payloadTruncated = true
+			}
+			s.recorder.Log("tool_result", sessionID, map[string]interface{}{
+				"tool":              tool.Name(),
+				"success":           true,
+				"duration_ms":       time.Since(start).Milliseconds(),
+				"result_json":       payloadString,
+				"result_truncated":  payloadTruncated,
+				"result_size_bytes": len(payload),
+			})
+		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{mcp.NewTextContent(string(payload))},
 			IsError: false,

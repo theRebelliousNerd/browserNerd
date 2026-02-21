@@ -1,6 +1,6 @@
 server:
   name: browsernerd-mcp
-  version: 0.0.2
+  version: 0.0.8
   log_file: browsernerd-mcp.log
 
 browser:
@@ -16,9 +16,19 @@ browser:
 mcp:
   # When zero, stdio mode is used. Set to 2024 for SSE/HTTP testing.
   sse_port: 0
+  # Keep the focused 6-tool interface by default.
+  progressive_only: true
 
 mangle:
   enable: true
   schema_path: schemas/browser.mg
   disable_builtin_rules: false
   fact_buffer_limit: 2048
+
+recorder:
+  # Enables MCP call/result flight logs and export_flight output support.
+  enabled: true
+  # Relative paths resolve from workspace root when .browsernerd discovery is used.
+  trace_dir: data/traces
+  # Keep newest N trace files when rotating startup captures.
+  max_rotated_files: 3

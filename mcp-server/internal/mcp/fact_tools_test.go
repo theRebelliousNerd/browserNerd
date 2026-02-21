@@ -184,6 +184,37 @@ func TestReadFactsTool(t *testing.T) {
 		}
 	})
 
+	t.Run("read with predicate_filter", func(t *testing.T) {
+		ctx := context.Background()
+
+		_ = engine.AddFacts(ctx, []mangle.Fact{
+			{Predicate: "filtered_fact", Args: []interface{}{"a"}, Timestamp: time.Now()},
+			{Predicate: "other_fact", Args: []interface{}{"b"}, Timestamp: time.Now()},
+		})
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"predicate_filter": "filtered_fact",
+			"limit":            10,
+		})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+
+		resultMap := result.(map[string]interface{})
+		if resultMap["predicate_filter"] != "filtered_fact" {
+			t.Fatalf("expected predicate_filter to be echoed, got %v", resultMap["predicate_filter"])
+		}
+		facts, ok := resultMap["facts"].([]mangle.Fact)
+		if !ok || len(facts) == 0 {
+			t.Fatalf("expected filtered facts in response, got %v", resultMap["facts"])
+		}
+		for _, fact := range facts {
+			if fact.Predicate != "filtered_fact" {
+				t.Fatalf("expected only filtered_fact rows, got %s", fact.Predicate)
+			}
+		}
+	})
+
 	t.Run("default limit applied", func(t *testing.T) {
 		ctx := context.Background()
 		result, err := tool.Execute(ctx, map[string]interface{}{})
@@ -852,6 +883,9 @@ func TestFactToolsInputSchema(t *testing.T) {
 		}
 		if props["limit"] == nil {
 			t.Error("expected limit property in schema")
+		}
+		if props["predicate_filter"] == nil {
+			t.Error("expected predicate_filter property in schema")
 		}
 	})
 

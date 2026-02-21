@@ -358,6 +358,28 @@ func TestSessionMetadataUpdate(t *testing.T) {
 	}
 }
 
+func TestSessionManagerPageDetachedSessionReturnsFalse(t *testing.T) {
+	manager := NewSessionManager(config.BrowserConfig{}, nil)
+
+	manager.mu.Lock()
+	manager.sessions["detached-session"] = &sessionRecord{
+		meta: Session{
+			ID:     "detached-session",
+			Status: "detached",
+		},
+		page: nil,
+	}
+	manager.mu.Unlock()
+
+	page, ok := manager.Page("detached-session")
+	if ok {
+		t.Fatalf("expected detached session to return ok=false")
+	}
+	if page != nil {
+		t.Fatalf("expected detached session page to be nil")
+	}
+}
+
 func TestEventThrottlerMultipleKeys(t *testing.T) {
 	throttler := newEventThrottler(100) // 100ms interval
 
@@ -773,6 +795,37 @@ func TestSessionManagerShutdownNoSessions(t *testing.T) {
 	}
 	if manager.ControlURL() != "" {
 		t.Error("expected empty control URL after shutdown")
+	}
+}
+
+func TestSessionManagerShutdownCancelsSessionStreams(t *testing.T) {
+	cfg := config.BrowserConfig{}
+	manager := NewSessionManager(cfg, nil)
+
+	cancelCount := 0
+	manager.sessions["session-1"] = &sessionRecord{
+		meta: Session{ID: "session-1", Status: "active"},
+		streamCancel: func() {
+			cancelCount++
+		},
+	}
+	manager.sessions["session-2"] = &sessionRecord{
+		meta: Session{ID: "session-2", Status: "active"},
+		streamCancel: func() {
+			cancelCount++
+		},
+	}
+
+	err := manager.Shutdown(nil)
+	if err != nil {
+		t.Errorf("unexpected error on shutdown: %v", err)
+	}
+
+	if cancelCount != 2 {
+		t.Errorf("expected 2 session stream cancellations, got %d", cancelCount)
+	}
+	if len(manager.sessions) != 0 {
+		t.Errorf("expected no sessions after shutdown, got %d", len(manager.sessions))
 	}
 }
 

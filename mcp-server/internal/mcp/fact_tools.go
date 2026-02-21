@@ -127,6 +127,10 @@ func (t *ReadFactsTool) InputSchema() map[string]interface{} {
 				"type":        "integer",
 				"description": "Maximum number of facts to return (default 25)",
 			},
+			"predicate_filter": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional predicate filter (e.g., net_request, toast_notification)",
+			},
 		},
 	}
 }
@@ -136,14 +140,22 @@ func (t *ReadFactsTool) Execute(_ context.Context, args map[string]interface{}) 
 		limit = 25
 	}
 
+	predicateFilter := strings.TrimSpace(getStringArg(args, "predicate_filter"))
 	facts := t.engine.Facts()
+	if predicateFilter != "" {
+		facts = t.engine.FactsByPredicate(predicateFilter)
+	}
 	if len(facts) > limit {
 		facts = facts[len(facts)-limit:]
 	}
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"count": len(facts),
 		"facts": facts,
-	}, nil
+	}
+	if predicateFilter != "" {
+		result["predicate_filter"] = predicateFilter
+	}
+	return result, nil
 }
 
 // QueryFactsTool executes a Mangle query string and returns variable bindings.
@@ -526,8 +538,10 @@ func (t *AwaitFactTool) Execute(ctx context.Context, args map[string]interface{}
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-
-	deadline := time.Now().Add(timeout)
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		if matchFact(t.engine.FactsByPredicate(predicate), wantArgs) {
 			return map[string]interface{}{
@@ -536,17 +550,15 @@ func (t *AwaitFactTool) Execute(ctx context.Context, args map[string]interface{}
 			}, nil
 		}
 
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timeoutTimer.C:
 			return map[string]interface{}{
 				"predicate": predicate,
 				"status":    "timeout",
 			}, nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(200 * time.Millisecond):
+		case <-ticker.C:
 		}
 	}
 }
@@ -637,7 +649,10 @@ func (t *AwaitConditionsTool) Execute(ctx context.Context, args map[string]inter
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	deadline := time.Now().Add(timeout)
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 
 	for {
 		if t.engine.MatchesAll(conds) {
@@ -646,17 +661,16 @@ func (t *AwaitConditionsTool) Execute(ctx context.Context, args map[string]inter
 				"conditions": len(conds),
 			}, nil
 		}
-		if time.Now().After(deadline) {
-			return map[string]interface{}{
-				"status":     "timeout",
-				"conditions": len(conds),
-			}, nil
-		}
 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(200 * time.Millisecond):
+		case <-timeoutTimer.C:
+			return map[string]interface{}{
+				"status":     "timeout",
+				"conditions": len(conds),
+			}, nil
+		case <-ticker.C:
 		}
 	}
 }

@@ -40,6 +40,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("FATAL PANIC IN MAIN: %v", r)
+			os.Exit(1)
+		}
+	}()
+
 	opts := config.WorkspaceOptions{
 		Disable:     *noWorkspace,
 		ExplicitDir: *workspaceDir,
@@ -87,6 +94,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize MCP server: %v", err)
 	}
+	defer func() {
+		if closeErr := server.Close(); closeErr != nil {
+			log.Printf("failed to close MCP server resources: %v", closeErr)
+		}
+	}()
 
 	var startErr error
 	if cfg.MCP.SSEPort > 0 {

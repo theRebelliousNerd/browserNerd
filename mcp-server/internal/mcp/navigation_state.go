@@ -362,27 +362,20 @@ func (t *PressKeyTool) Execute(ctx context.Context, args map[string]interface{})
 		}
 	}
 
-	// Press modifier keys down
-	for _, modKey := range modifierKeys {
-		if err := page.Keyboard.Press(modKey); err != nil {
-			return map[string]interface{}{
-				"success": false,
-				"error":   fmt.Sprintf("modifier key press failed: %v", err),
-			}, nil
-		}
+	// Execute as a single action chain so modifiers are held while typing the main key.
+	keyActions := page.KeyActions()
+	if len(modifierKeys) > 0 {
+		keyActions.Press(modifierKeys...)
 	}
-
-	// Press the main key
-	if err := page.Keyboard.Press(inputKey); err != nil {
+	keyActions.Type(inputKey)
+	if len(modifierKeys) > 0 {
+		keyActions.Release(modifierKeys...)
+	}
+	if err := keyActions.Do(); err != nil {
 		return map[string]interface{}{
 			"success": false,
-			"error":   fmt.Sprintf("key press failed: %v", err),
+			"error":   fmt.Sprintf("key action failed: %v", err),
 		}, nil
-	}
-
-	// Release modifier keys
-	for _, modKey := range modifierKeys {
-		_ = page.Keyboard.Release(modKey)
 	}
 
 	// Emit Mangle fact
@@ -494,4 +487,3 @@ func (t *BrowserHistoryTool) Execute(ctx context.Context, args map[string]interf
 		"url":     newURL,
 	}, nil
 }
-

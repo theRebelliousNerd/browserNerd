@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -158,6 +159,15 @@ func (e *Engine) getEvalOptions() []engine.EvalOption {
 	return opts
 }
 
+func (e *Engine) evalProgramSafe(store factstore.FactStore, phase string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("mangle eval panic during %s: %v\n%s", phase, r, debug.Stack())
+		}
+	}()
+	return engine.EvalProgram(e.programInfo, store, e.getEvalOptions()...)
+}
+
 // rebuildTempStoreLocked recreates the active temporal store from the eternal store + buffer.
 func (e *Engine) rebuildTempStoreLocked() {
 	e.tempStore = factstore.NewTeeingTemporalStore(e.store)
@@ -185,7 +195,9 @@ func (e *Engine) rebuildTempStoreLocked() {
 
 	if e.schemaLoaded && e.programInfo != nil {
 		evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
-		_ = engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...)
+		if err := e.evalProgramSafe(evalStore, "rebuild_temp_store"); err != nil {
+			fmt.Fprintf(os.Stderr, "[WARN] %v\n", err)
+		}
 	}
 }
 
@@ -221,7 +233,7 @@ func (e *Engine) AddRule(ruleSource string) error {
 	// can see the new rule without waiting for another fact insertion.
 	if e.programInfo != nil {
 		evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
-		if err := engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...); err != nil {
+		if err := e.evalProgramSafe(evalStore, "add_rule"); err != nil {
 			e.ruleUnits = prevRules
 			e.programInfo = prevProgram
 			e.schemaLoaded = prevLoaded
@@ -242,8 +254,8 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// Adaptive sampling: adjust rate based on buffer pressure
-	e.updateSamplingRate()
+	// Adaptive sampling: adjust rate based on buffer pressure and incoming burst size.
+	e.updateSamplingRate(len(facts))
 
 	// Filter facts through adaptive sampling
 	filtered := make([]Fact, 0, len(facts))
@@ -278,6 +290,8 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 	}
 
 	if needsRebuild {
+		// Preserve eternal facts from this batch before rebuilding temporal state.
+		e.addEternalFactsLocked(filtered)
 		e.rebuildTempStoreLocked()
 	} else {
 		// Add to Mangle store for rule evaluation incrementally
@@ -297,13 +311,17 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 				if added {
 					fmt.Fprintf(os.Stderr, "[DEBUG] Added temporal fact to store: %s (Arity: %d)\n", f.Predicate, len(f.Args))
 				}
+				// Mirror temporal facts with mt_ prefix for DatalogMTL rules in incremental mode.
+				mtAtom := atom
+				mtAtom.Predicate.Symbol = "mt_" + atom.Predicate.Symbol
+				_, _ = e.tempStore.Add(mtAtom, ast.NewPointInterval(f.Timestamp))
 			}
 		}
 
 		// Trigger incremental evaluation if schema loaded
 		if e.schemaLoaded && e.programInfo != nil {
 			evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
-			if err := engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...); err != nil {
+			if err := e.evalProgramSafe(evalStore, "add_facts"); err != nil {
 				fmt.Fprintf(os.Stderr, "[DEBUG] EvalProgram failed: %v\n", err)
 				return fmt.Errorf("eval program after fact insertion: %w", err)
 			}
@@ -327,9 +345,17 @@ func (e *Engine) checkAndNotifyWatchers(store factstore.FactStore) {
 	}
 
 	for _, predicate := range watchedPredicates {
-		// Query the store for derived facts
-		predSym := ast.PredicateSym{Symbol: predicate, Arity: -1}
+		// Query the store for derived facts using the declared arity when available.
+		arity := e.predicateArityLocked(predicate)
+		predSym := ast.PredicateSym{Symbol: predicate, Arity: arity}
 		wildcardAtom := ast.Atom{Predicate: predSym}
+		if arity >= 0 {
+			args := make([]ast.BaseTerm, arity)
+			for i := 0; i < arity; i++ {
+				args[i] = ast.Variable{Symbol: fmt.Sprintf("W%d", i)}
+			}
+			wildcardAtom.Args = args
+		}
 
 		var derivedFacts []Fact
 		_ = store.GetFacts(wildcardAtom, func(atom ast.Atom) error {
@@ -346,27 +372,78 @@ func (e *Engine) checkAndNotifyWatchers(store factstore.FactStore) {
 	}
 }
 
+func (e *Engine) predicateArityLocked(predicate string) int {
+	if e.programInfo == nil {
+		if indices, ok := e.index[predicate]; ok && len(indices) > 0 {
+			first := indices[0]
+			if first >= 0 && first < len(e.facts) {
+				return len(e.facts[first].Args)
+			}
+		}
+		return -1
+	}
+	for sym := range e.programInfo.Decls {
+		if sym.Symbol == predicate {
+			return sym.Arity
+		}
+	}
+	if indices, ok := e.index[predicate]; ok && len(indices) > 0 {
+		first := indices[0]
+		if first >= 0 && first < len(e.facts) {
+			return len(e.facts[first].Args)
+		}
+	}
+	return -1
+}
+
 // updateSamplingRate adjusts sampling based on buffer pressure (PRD Section 3.5).
 // When buffer is >80% full, start dropping low-value facts.
-func (e *Engine) updateSamplingRate() {
+func (e *Engine) updateSamplingRate(incomingCount int) {
 	if e.cfg.FactBufferLimit <= 0 {
 		e.samplingRate = 1.0
 		return
 	}
 
 	fillRatio := float64(len(e.facts)) / float64(e.cfg.FactBufferLimit)
+	if fillRatio < 0 {
+		fillRatio = 0
+	}
+	if fillRatio > 1 {
+		fillRatio = 1
+	}
+
+	burstRatio := 0.0
+	if incomingCount > 0 {
+		burstRatio = float64(incomingCount) / float64(e.cfg.FactBufferLimit)
+	}
 
 	switch {
 	case fillRatio < 0.5:
 		e.samplingRate = 1.0 // Accept all
 	case fillRatio < 0.7:
-		e.samplingRate = 0.8 // Drop 20% of low-value
+		e.samplingRate = 0.9 // Drop 10% of low-value
 	case fillRatio < 0.85:
-		e.samplingRate = 0.5 // Drop 50% of low-value
+		e.samplingRate = 0.75 // Drop 25% of low-value
 	case fillRatio < 0.95:
-		e.samplingRate = 0.2 // Drop 80% of low-value
+		switch {
+		case burstRatio < 0.02:
+			e.samplingRate = 0.9
+		case burstRatio < 0.05:
+			e.samplingRate = 0.7
+		default:
+			e.samplingRate = 0.4
+		}
 	default:
-		e.samplingRate = 0.1 // Drop 90% of low-value (emergency)
+		switch {
+		case burstRatio < 0.01:
+			e.samplingRate = 0.85
+		case burstRatio < 0.05:
+			e.samplingRate = 0.6
+		case burstRatio < 0.1:
+			e.samplingRate = 0.3
+		default:
+			e.samplingRate = 0.1 // Drop 90% only for true bursts while saturated.
+		}
 	}
 }
 
@@ -414,7 +491,14 @@ func (e *Engine) Unsubscribe(predicate string, ch chan WatchEvent) {
 	channels := e.subscriptions[predicate]
 	for i, c := range channels {
 		if c == ch {
-			e.subscriptions[predicate] = append(channels[:i], channels[i+1:]...)
+			next := make([]chan WatchEvent, 0, len(channels)-1)
+			next = append(next, channels[:i]...)
+			next = append(next, channels[i+1:]...)
+			if len(next) == 0 {
+				delete(e.subscriptions, predicate)
+			} else {
+				e.subscriptions[predicate] = next
+			}
 			break
 		}
 	}
@@ -424,7 +508,7 @@ func (e *Engine) Unsubscribe(predicate string, ch chan WatchEvent) {
 // Called after rule evaluation when new facts are derived.
 func (e *Engine) notifySubscribers(predicate string, facts []Fact) {
 	e.subMu.RLock()
-	channels := e.subscriptions[predicate]
+	channels := append([]chan WatchEvent(nil), e.subscriptions[predicate]...)
 	e.subMu.RUnlock()
 
 	if len(channels) == 0 || len(facts) == 0 {
@@ -616,7 +700,7 @@ func (e *Engine) Evaluate(ctx context.Context, predicate string) ([]Fact, error)
 
 	// Run evaluation
 	evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
-	if err := engine.EvalProgram(e.programInfo, evalStore, e.getEvalOptions()...); err != nil {
+	if err := e.evalProgramSafe(evalStore, "evaluate"); err != nil {
 		return nil, fmt.Errorf("eval program: %w", err)
 	}
 
@@ -802,6 +886,9 @@ func (e *Engine) MatchesAll(conds []Fact) bool {
 
 			ok := true
 			for i := range cond.Args {
+				if fmt.Sprintf("%v", cond.Args[i]) == "_" {
+					continue
+				}
 				if fmt.Sprintf("%v", f.Args[i]) != fmt.Sprintf("%v", cond.Args[i]) {
 					ok = false
 					break
@@ -820,6 +907,19 @@ func (e *Engine) MatchesAll(conds []Fact) bool {
 	}
 
 	return true
+}
+
+func (e *Engine) addEternalFactsLocked(facts []Fact) {
+	for _, f := range facts {
+		if !f.Timestamp.IsZero() {
+			continue
+		}
+		atom, err := e.factToAtom(f)
+		if err != nil {
+			continue
+		}
+		_, _ = e.store.AddEternal(atom)
+	}
 }
 
 // Ready reports whether the engine has a usable query context.

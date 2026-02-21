@@ -134,7 +134,7 @@ stable_expected(SessionId) :-
 Decl my_distance(X1, Y1, X2, Y2, Dist)
   descr [
       external(),
-      mode('+', '+', '+', '+', '-')
+      mode('-', '-', '-', '-', '-')
   ]
   bound [ /number, /number, /number, /number, /number ].
 
@@ -159,7 +159,8 @@ caused_by(SessionId, ConsoleErr, ReqId) :-
     console_event(SessionId, "error", ConsoleErr, TError),
     failed_request_at(SessionId, ReqId, _, _, TNet),
     TNet < TError,
-    fn:minus(TError, TNet) < 100.
+    TDiff = fn:minus(TError, TNet),
+    TDiff < 100.
 
 # Rule 2: Slow API Detection (>1 second duration)
 # Flags API calls exceeding performance SLA
@@ -427,7 +428,8 @@ login_succeeded(SessionId) :-
     successful_post(SessionId, _, _, TPost),
     TPost >= TSubmit,
     url_changed_after_submit(SessionId, _, _, TNav),
-    fn:minus(TNav, TSubmit) < 5000.
+    TimeDelta = fn:minus(TNav, TSubmit),
+    TimeDelta < 5000.
 
 # --- Alternative: Navigation-only success (no POST required) ---
 # Some sites use client-side routing without a POST (OAuth redirects, etc.)
@@ -436,7 +438,8 @@ Decl login_succeeded_navigation_only(SessionId).
 login_succeeded_navigation_only(SessionId) :-
     form_submitted(SessionId, _, TSubmit),
     url_changed_after_submit(SessionId, _, _, TNav),
-    fn:minus(TNav, TSubmit) < 5000.
+    TimeDelta = fn:minus(TNav, TSubmit),
+    TimeDelta < 5000.
 
 # --- Login failure detection ---
 # Detects when form was submitted but URL didn't change (stayed on login page)
@@ -454,7 +457,8 @@ login_failed_api_error(SessionId, ReqId, Status) :-
     net_request(SessionId, ReqId, "POST", _, _, TReq),
     TReq >= TSubmit,
     net_response(SessionId, ReqId, Status, _, _),
-    fn:minus(TReq, TSubmit) < 2000,
+    TimeDelta = fn:minus(TReq, TSubmit),
+    TimeDelta < 2000,
     Status >= 400.
 
 # --- Session state tracking for login context ---
@@ -550,8 +554,9 @@ frontend_ssr_error_candidate(SessionId, Msg, Ts, ReqTs) :-
 
 frontend_ssr_error(SessionId, Msg, Ts) :-
     frontend_ssr_error_candidate(SessionId, Msg, Ts, ReqTs),
-    fn:minus(Ts, ReqTs) >= 0,
-    fn:minus(Ts, ReqTs) < 5000.
+    TimeDelta = fn:minus(Ts, ReqTs),
+    TimeDelta >= 0,
+    TimeDelta < 5000.
 
 # --- Derived: Python tracebacks (multi-line errors) ---
 Decl python_traceback(Container, Message, Timestamp).
@@ -609,16 +614,16 @@ Decl ssr_hydration_correlation(SessionId, SsrMsg, ConsoleMsg, TimeDelta).
 ssr_hydration_correlation(SessionId, SsrMsg, ConsoleMsg, TimeDelta) :-
     frontend_ssr_error(SessionId, SsrMsg, SsrTs),
     console_event(SessionId, "error", ConsoleMsg, ConsoleTs),
-    fn:minus(ConsoleTs, SsrTs) >= 0,
-    fn:minus(ConsoleTs, SsrTs) < 5000,
-    TimeDelta = fn:minus(ConsoleTs, SsrTs).
+    TimeDelta = fn:minus(ConsoleTs, SsrTs),
+    TimeDelta >= 0,
+    TimeDelta < 5000.
 
 ssr_hydration_correlation(SessionId, SsrMsg, ConsoleMsg, TimeDelta) :-
     frontend_ssr_error(SessionId, SsrMsg, SsrTs),
     console_event(SessionId, "error", ConsoleMsg, ConsoleTs),
-    fn:minus(ConsoleTs, SsrTs) < 0,
-    fn:minus(ConsoleTs, SsrTs) > -5000,
-    TimeDelta = fn:minus(ConsoleTs, SsrTs).
+    TimeDelta = fn:minus(ConsoleTs, SsrTs),
+    TimeDelta < 0,
+    TimeDelta > -5000.
 
 # Rule: Slow API correlates with backend performance issues using shared keys.
 Decl slow_api_request(SessionId, ReqId, Url, Duration, ReqTs).

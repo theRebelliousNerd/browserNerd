@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+browsernerd.exe
+
+# Runtime/session artifacts
+sessions.json
+*.log
+err.log
+error.log
+out.log
+crash.log
+debug_stderr.log
+
+# Local smoke/debug snapshots
+act.json
+launch.json
+observe.json
+browsernerd_regression_report.json
+browsernerd_live_debug_*.md
+
+# Flight recorder traces
+data/traces/

@@ -100,8 +100,12 @@ func (t *ExecutePlanTool) InputSchema() map[string]interface{} {
 }
 func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
+	predicate := getStringArg(args, "predicate")
 	stopOnError := getBoolArg(args, "stop_on_error", true)
 	delayMs := getIntArg(args, "delay_ms", 100)
+	if predicate == "" {
+		predicate = "action"
+	}
 
 	if sessionID == "" {
 		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
@@ -126,8 +130,20 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 			}
 		}
 	} else {
-		// Query Mangle for derived action facts
-		actionFacts := t.engine.FactsByPredicate("action")
+		// Query Mangle for derived action facts.
+		actionFacts, err := t.engine.Evaluate(ctx, predicate)
+		if err != nil {
+			return map[string]interface{}{
+				"success": false,
+				"error":   fmt.Sprintf("failed to evaluate predicate %q: %v", predicate, err),
+			}, nil
+		}
+
+		// Backward-compatibility fallback: "action" may be pushed as raw facts directly.
+		if predicate == "action" && len(actionFacts) == 0 {
+			actionFacts = t.engine.FactsByPredicate("action")
+		}
+
 		for _, f := range actionFacts {
 			if len(f.Args) >= 1 {
 				actionType := fmt.Sprintf("%v", f.Args[0])
@@ -221,9 +237,9 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 				"Enter": input.Enter, "Tab": input.Tab, "Escape": input.Escape,
 			}
 			if k, ok := keyMap[key]; ok {
-				actionErr = page.Keyboard.Press(k)
+				actionErr = page.Keyboard.Type(k)
 			} else if len(key) == 1 {
-				actionErr = page.Keyboard.Press(input.Key(rune(key[0])))
+				actionErr = page.Keyboard.Type(input.Key(rune(key[0])))
 			} else {
 				actionErr = fmt.Errorf("unknown key: %s", key)
 			}
@@ -1417,16 +1433,24 @@ func (t *AwaitStableStateTool) Execute(ctx context.Context, args map[string]inte
 	timeout := time.Duration(getIntArg(args, "timeout_ms", 10000)) * time.Millisecond
 	netIdle := time.Duration(getIntArg(args, "network_idle_ms", 500)) * time.Millisecond
 	domIdle := 200 * time.Millisecond
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	if netIdle <= 0 {
+		netIdle = 500 * time.Millisecond
+	}
 
 	start := time.Now()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(timeout):
+		case <-timeoutTimer.C:
 			return map[string]interface{}{
 				"status":      "timeout",
 				"duration_ms": time.Since(start).Milliseconds(),

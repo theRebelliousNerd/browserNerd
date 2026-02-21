@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -35,9 +36,10 @@ type Session struct {
 }
 
 type sessionRecord struct {
-	meta     Session
-	page     *rod.Page
-	registry *ElementRegistry // Per-session element cache for reliable re-identification
+	meta         Session
+	page         *rod.Page
+	registry     *ElementRegistry   // Per-session element cache for reliable re-identification
+	streamCancel context.CancelFunc // Cancels long-lived background event ingestion for this session
 }
 
 type eventThrottler struct {
@@ -190,7 +192,7 @@ func NewSessionManager(cfg config.BrowserConfig, sink EngineSink) *SessionManage
 }
 
 // Start connects to an existing Chrome or launches a new one using Rod's launcher.
-func (m *SessionManager) Start(ctx context.Context) error {
+func (m *SessionManager) Start(_ context.Context) error {
 	// If we already have a browser, verify it's still alive
 	if m.browser != nil {
 		// Try a simple operation to test connection health
@@ -205,7 +207,7 @@ func (m *SessionManager) Start(ctx context.Context) error {
 		m.controlURL = ""
 		// Clear all sessions since they're orphaned
 		m.mu.Lock()
-		m.sessions = make(map[string]*sessionRecord)
+		m.clearSessionsLocked(false)
 		m.mu.Unlock()
 	}
 
@@ -246,7 +248,9 @@ func (m *SessionManager) Start(ctx context.Context) error {
 		return errors.New("no debugger_url or launch command provided")
 	}
 
-	browser := rod.New().ControlURL(controlURL).Context(ctx)
+	// Browser lifetime must not depend on request-scoped tool contexts.
+	// Use a long-lived background context so later tool calls can reuse the same connection.
+	browser := rod.New().ControlURL(controlURL).Context(context.Background())
 	if err := browser.Connect(); err != nil {
 		return fmt.Errorf("connect to chrome: %w", err)
 	}
@@ -272,16 +276,11 @@ func (m *SessionManager) IsConnected() bool {
 }
 
 // Shutdown closes tracked pages and the underlying browser.
-func (m *SessionManager) Shutdown(ctx context.Context) error {
+func (m *SessionManager) Shutdown(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for id, record := range m.sessions {
-		if record.page != nil {
-			_ = record.page.Close()
-		}
-		delete(m.sessions, id)
-	}
+	m.clearSessionsLocked(true)
 
 	var err error
 	if m.browser != nil {
@@ -291,6 +290,22 @@ func (m *SessionManager) Shutdown(ctx context.Context) error {
 	m.controlURL = ""
 	log.Printf("Browser shutdown complete")
 	return err
+}
+
+// clearSessionsLocked cancels session streams and optionally closes page handles.
+// Caller must hold m.mu.
+func (m *SessionManager) clearSessionsLocked(closePages bool) {
+	for id, record := range m.sessions {
+		if record != nil {
+			if record.streamCancel != nil {
+				record.streamCancel()
+			}
+			if closePages && record.page != nil {
+				_ = record.page.Close()
+			}
+		}
+		delete(m.sessions, id)
+	}
 }
 
 // List returns lightweight metadata for all known sessions.
@@ -306,7 +321,7 @@ func (m *SessionManager) List() []Session {
 }
 
 // CreateSession opens a new page (incognito context by default) and tracks it.
-func (m *SessionManager) CreateSession(ctx context.Context, url string) (*Session, error) {
+func (m *SessionManager) CreateSession(_ context.Context, url string) (*Session, error) {
 	if m.browser == nil {
 		return nil, errors.New("browser not connected")
 	}
@@ -343,18 +358,24 @@ func (m *SessionManager) CreateSession(ctx context.Context, url string) (*Sessio
 		LastActive: time.Now(),
 	}
 
+	streamCtx, streamCancel := context.WithCancel(context.Background())
 	m.mu.Lock()
-	m.sessions[meta.ID] = &sessionRecord{meta: meta, page: page, registry: NewElementRegistry()}
+	m.sessions[meta.ID] = &sessionRecord{
+		meta:         meta,
+		page:         page,
+		registry:     NewElementRegistry(),
+		streamCancel: streamCancel,
+	}
 	m.mu.Unlock()
 
-	m.startEventStream(ctx, meta.ID, page)
+	m.startEventStream(streamCtx, meta.ID, page)
 	_ = m.persistSessions()
 
 	return &meta, nil
 }
 
 // Attach attempts to bind to an existing target by TargetID.
-func (m *SessionManager) Attach(ctx context.Context, targetID string) (*Session, error) {
+func (m *SessionManager) Attach(_ context.Context, targetID string) (*Session, error) {
 	if m.browser == nil {
 		return nil, errors.New("browser not connected")
 	}
@@ -372,11 +393,17 @@ func (m *SessionManager) Attach(ctx context.Context, targetID string) (*Session,
 		LastActive: time.Now(),
 	}
 
+	streamCtx, streamCancel := context.WithCancel(context.Background())
 	m.mu.Lock()
-	m.sessions[meta.ID] = &sessionRecord{meta: meta, page: page, registry: NewElementRegistry()}
+	m.sessions[meta.ID] = &sessionRecord{
+		meta:         meta,
+		page:         page,
+		registry:     NewElementRegistry(),
+		streamCancel: streamCancel,
+	}
 	m.mu.Unlock()
 
-	m.startEventStream(ctx, meta.ID, page)
+	m.startEventStream(streamCtx, meta.ID, page)
 	_ = m.persistSessions()
 	return &meta, nil
 }
@@ -386,7 +413,7 @@ func (m *SessionManager) Page(sessionID string) (*rod.Page, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	rec, ok := m.sessions[sessionID]
-	if !ok {
+	if !ok || rec.page == nil {
 		return nil, false
 	}
 	return rec.page, true
@@ -644,6 +671,12 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[session:%s] event stream panic recovered: %v\n%s", sessionID, r, debug.Stack())
+			}
+		}()
+
 		var wg sync.WaitGroup
 
 		level := strings.ToLower(m.cfg.EventLoggingLevel)
@@ -1037,14 +1070,30 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 		wg.Add(3)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[session:%s] waitNav panic recovered: %v\n%s", sessionID, r, debug.Stack())
+				}
+			}()
 			waitNav()
 		}()
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[session:%s] waitRest panic recovered: %v\n%s", sessionID, r, debug.Stack())
+				}
+			}()
 			waitRest()
 		}()
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("[session:%s] event poller panic recovered: %v\n%s", sessionID, r, debug.Stack())
+				}
+			}()
+
 			ticker := time.NewTicker(500 * time.Millisecond)
 			defer ticker.Stop()
 
@@ -1370,7 +1419,7 @@ func (m *SessionManager) loadSessions() error {
 	for _, s := range sessions {
 		// Mark as detached; a caller can use attach-session to bind to a live target.
 		s.Status = "detached"
-		m.sessions[s.ID] = &sessionRecord{meta: s, page: nil}
+		m.sessions[s.ID] = &sessionRecord{meta: s, page: nil, registry: NewElementRegistry()}
 	}
 	return nil
 }

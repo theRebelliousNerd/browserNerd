@@ -1,7 +1,11 @@
 package mcp
 
 import (
+	"bufio"
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +112,29 @@ func TestProgressiveToolContracts(t *testing.T) {
 		required, ok := schema["required"].([]string)
 		if !ok || len(required) == 0 || required[0] != "operation" {
 			t.Fatalf("browser-mangle should require operation")
+		}
+	})
+}
+
+func TestToAnySliceHandlesTypedSlices(t *testing.T) {
+	t.Run("converts typed session slices", func(t *testing.T) {
+		typed := []browser.Session{
+			{ID: "s1"},
+			{ID: "s2"},
+		}
+		got := toAnySlice(typed)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 sessions, got %d", len(got))
+		}
+		if session, ok := got[0].(browser.Session); !ok || session.ID != "s1" {
+			t.Fatalf("expected first item to be browser.Session s1, got %#v", got[0])
+		}
+	})
+
+	t.Run("returns empty slice for nil", func(t *testing.T) {
+		got := toAnySlice(nil)
+		if len(got) != 0 {
+			t.Fatalf("expected empty slice, got %d items", len(got))
 		}
 	})
 }
@@ -274,6 +301,236 @@ func TestBrowserReasonEmitsGateFacts(t *testing.T) {
 	}
 	if !hasRecentGateFact(engine, "js_gate_open", "s-reason", "contradiction_detected", jsGateTTL) {
 		t.Fatalf("expected contradiction_detected gate fact")
+	}
+}
+
+func TestBrowserReasonIncludesTopErrorsAndInvestigationItems(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	tool := &BrowserReasonTool{engine: engine}
+	ctx := context.Background()
+	now := time.Now()
+
+	_ = engine.AddFacts(ctx, []mangle.Fact{
+		{
+			Predicate: "failed_request",
+			Args:      []interface{}{"s-errors", "req-500", "/api/calendar", 500},
+			Timestamp: now,
+		},
+		{
+			Predicate: "root_cause",
+			Args:      []interface{}{"s-errors", "Module not found", "frontend", "build_failure"},
+			Timestamp: now,
+		},
+	})
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"session_id": "s-errors",
+		"topic":      "why_failed",
+		"view":       "compact",
+	})
+	if err != nil {
+		t.Fatalf("browser-reason execute failed: %v", err)
+	}
+
+	resultMap := result.(map[string]interface{})
+	topErrors, ok := resultMap["top_errors"].([]map[string]interface{})
+	if !ok {
+		topErrorsAny, okAny := resultMap["top_errors"].([]interface{})
+		if !okAny || len(topErrorsAny) == 0 {
+			t.Fatalf("expected top_errors in response, got %v", resultMap["top_errors"])
+		}
+	} else if len(topErrors) == 0 {
+		t.Fatalf("expected non-empty top_errors")
+	}
+
+	investigationItems, ok := resultMap["investigation_items"].([]map[string]interface{})
+	if !ok {
+		itemsAny, okAny := resultMap["investigation_items"].([]interface{})
+		if !okAny || len(itemsAny) == 0 {
+			t.Fatalf("expected investigation_items in response, got %v", resultMap["investigation_items"])
+		}
+	} else if len(investigationItems) == 0 {
+		t.Fatalf("expected non-empty investigation_items")
+	}
+}
+
+func TestBuildReasonTopErrorsPrioritizesCompilerErrorsAndDedupes(t *testing.T) {
+	userVisible := []map[string]interface{}{
+		{
+			"Source":    "toast",
+			"Message":   "At risk",
+			"Timestamp": int64(1000),
+		},
+		{
+			"Source":    "console",
+			"Message":   "./src/components/calendar/FullCalendarView.tsx:4:1 Module not found: Can't resolve '@fullcalendar/daygrid'",
+			"Timestamp": int64(2000),
+		},
+		{
+			"Source":    "console",
+			"Message":   " ./src/components/calendar/FullCalendarView.tsx:4:1   Module not found: Can't resolve '@fullcalendar/daygrid' ",
+			"Timestamp": int64(3000),
+		},
+	}
+
+	topErrors := buildReasonTopErrors("s-compile", nil, nil, userVisible, nil, nil, 10)
+	if len(topErrors) == 0 {
+		t.Fatal("expected non-empty top errors")
+	}
+	if got := topErrors[0]["kind"]; got != "compiler_error" {
+		t.Fatalf("expected first top error kind=compiler_error, got %v", got)
+	}
+
+	compilerCount := 0
+	for _, row := range topErrors {
+		if row["kind"] == "compiler_error" {
+			compilerCount++
+		}
+	}
+	if compilerCount != 1 {
+		t.Fatalf("expected deduped compiler error count=1, got %d", compilerCount)
+	}
+}
+
+func TestDedupeUserVisibleErrors(t *testing.T) {
+	rows := []map[string]interface{}{
+		{
+			"Source":    "console",
+			"Message":   "TypeError: undefined is not a function",
+			"Timestamp": int64(1000),
+		},
+		{
+			"Source":    "console",
+			"Message":   " TypeError: undefined  is not a function ",
+			"Timestamp": int64(2000),
+		},
+		{
+			"Source":    "toast",
+			"Message":   "TypeError: undefined is not a function",
+			"Timestamp": int64(3000),
+		},
+	}
+
+	deduped := dedupeUserVisibleErrors(rows)
+	if len(deduped) != 2 {
+		t.Fatalf("expected 2 deduped rows, got %d", len(deduped))
+	}
+
+	var consoleRow map[string]interface{}
+	for _, row := range deduped {
+		if strings.EqualFold(strings.TrimSpace(getStringFromMap(row, "Source")), "console") {
+			consoleRow = row
+			break
+		}
+	}
+	if len(consoleRow) == 0 {
+		t.Fatal("expected deduped console row")
+	}
+	if got := asInt(consoleRow["Count"]); got != 2 {
+		t.Fatalf("expected console dedupe count=2, got %d", got)
+	}
+	if got := extractTimestamp(consoleRow, "Timestamp"); got != 2000 {
+		t.Fatalf("expected console dedupe latest timestamp=2000, got %d", got)
+	}
+}
+
+func TestBuildInvestigationStepUsesConsoleQueryForCompilerErrors(t *testing.T) {
+	step := buildInvestigationStep("s-investigate", map[string]interface{}{
+		"kind":   "compiler_error",
+		"source": "console",
+	})
+
+	args, ok := step["args"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected args map, got %T", step["args"])
+	}
+	query := strings.TrimSpace(fmt.Sprintf("%v", args["query"]))
+	if !strings.Contains(query, "console_event(") {
+		t.Fatalf("expected compiler error investigation to query console_event, got %q", query)
+	}
+}
+
+func TestBrowserReasonSinceNavigationFiltersOlderErrors(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	tool := &BrowserReasonTool{engine: engine}
+	ctx := context.Background()
+	now := time.Now()
+
+	_ = engine.AddFacts(ctx, []mangle.Fact{
+		{
+			Predicate: "navigation_event",
+			Args:      []interface{}{"s-since-nav", "/network/org-406ventures", int64(4000)},
+			Timestamp: now,
+		},
+		{
+			Predicate: "net_request",
+			Args:      []interface{}{"s-since-nav", "req-old", "GET", "https://api.symbiogen.ai/api/v1/organizations/org-406ventures/full", "", int64(1000)},
+			Timestamp: now,
+		},
+		{
+			Predicate: "net_response",
+			Args:      []interface{}{"s-since-nav", "req-old", 404, 45, -1},
+			Timestamp: now,
+		},
+		{
+			Predicate: "net_request",
+			Args:      []interface{}{"s-since-nav", "req-new", "GET", "https://api.symbiogen.ai/api/v1/organizations/org-406ventures/full", "", int64(5000)},
+			Timestamp: now,
+		},
+		{
+			Predicate: "net_response",
+			Args:      []interface{}{"s-since-nav", "req-new", 404, 44, -1},
+			Timestamp: now,
+		},
+		{
+			Predicate: "console_event",
+			Args:      []interface{}{"s-since-nav", "error", "Old console error", int64(1500)},
+			Timestamp: now,
+		},
+		{
+			Predicate: "console_event",
+			Args:      []interface{}{"s-since-nav", "error", "New console error", int64(5500)},
+			Timestamp: now,
+		},
+	})
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"session_id":          "s-since-nav",
+		"topic":               "why_failed",
+		"view":                "full",
+		"time_window_ms":      0,
+		"since_navigation":    true,
+		"include_action_plan": false,
+	})
+	if err != nil {
+		t.Fatalf("browser-reason execute failed: %v", err)
+	}
+
+	resultMap := result.(map[string]interface{})
+	data, ok := resultMap["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected full data map in response, got %T", resultMap["data"])
+	}
+
+	failedReqs := toMapSlice(data["failed_requests"])
+	if len(failedReqs) != 1 {
+		t.Fatalf("expected 1 failed request after navigation scope, got %d", len(failedReqs))
+	}
+	if reqID := strings.TrimSpace(fmt.Sprintf("%v", failedReqs[0]["ReqId"])); reqID != "req-new" {
+		t.Fatalf("expected req-new after navigation scope, got %q", reqID)
+	}
+
+	userVisible := toMapSlice(data["user_visible_errors"])
+	if len(userVisible) != 1 {
+		t.Fatalf("expected 1 user-visible error after navigation scope, got %d", len(userVisible))
+	}
+	msg := strings.TrimSpace(fmt.Sprintf("%v", userVisible[0]["Message"]))
+	if !strings.Contains(msg, "New console error") {
+		t.Fatalf("expected only new console error after navigation scope, got %q", msg)
+	}
+
+	if asInt64(resultMap["navigation_since_ms"]) != 4000 {
+		t.Fatalf("expected navigation_since_ms=4000, got %v", resultMap["navigation_since_ms"])
 	}
 }
 
@@ -498,6 +755,101 @@ func TestBrowserMangleToolContract(t *testing.T) {
 	required, ok := schema["required"].([]string)
 	if !ok || len(required) == 0 || required[0] != "operation" {
 		t.Fatalf("browser-mangle should require operation")
+	}
+
+	props, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected properties map in schema")
+	}
+	opProp, ok := props["operation"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected operation property in schema")
+	}
+	enumVals, ok := opProp["enum"].([]string)
+	if !ok {
+		t.Fatalf("expected enum values for operation")
+	}
+	foundExport := false
+	for _, v := range enumVals {
+		if v == "export_flight" {
+			foundExport = true
+			break
+		}
+	}
+	if !foundExport {
+		t.Fatalf("expected export_flight operation in schema enum")
+	}
+}
+
+func TestBrowserMangleExportFlight(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	_ = engine.AddFacts(ctx, []mangle.Fact{
+		{
+			Predicate: "toast_notification",
+			Args:      []interface{}{"s-export", "Module not found", "error", "nextjs", now.UnixMilli()},
+			Timestamp: now,
+		},
+		{
+			Predicate: "failed_request",
+			Args:      []interface{}{"s-export", "req-1", "/api/calendar", 500},
+			Timestamp: now,
+		},
+	})
+
+	traceDir := filepath.Join(t.TempDir(), "traces")
+	tool := &BrowserMangleTool{
+		engine:          engine,
+		defaultTraceDir: traceDir,
+	}
+
+	result, err := tool.Execute(ctx, map[string]interface{}{
+		"operation":  "export_flight",
+		"session_id": "s-export",
+		"max_rows":   100,
+		"view":       "compact",
+	})
+	if err != nil {
+		t.Fatalf("browser-mangle export_flight failed: %v", err)
+	}
+
+	resultMap := result.(map[string]interface{})
+	if !resultMap["success"].(bool) {
+		t.Fatalf("expected success=true, got %v", resultMap)
+	}
+	if resultMap["operation"] != "export_flight" {
+		t.Fatalf("expected operation=export_flight, got %v", resultMap["operation"])
+	}
+
+	exportMeta, ok := resultMap["export"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected export metadata map")
+	}
+	path, ok := exportMeta["path"].(string)
+	if !ok || strings.TrimSpace(path) == "" {
+		t.Fatalf("expected export path, got %v", exportMeta["path"])
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("expected export file to exist at %s: %v", path, statErr)
+	}
+
+	file, openErr := os.Open(path)
+	if openErr != nil {
+		t.Fatalf("failed opening export file: %v", openErr)
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	lineCount := 0
+	for scanner.Scan() {
+		lineCount++
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("failed reading export file: %v", err)
+	}
+	if lineCount == 0 {
+		t.Fatalf("expected exported JSONL rows, got none")
 	}
 }
 

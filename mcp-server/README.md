@@ -1,55 +1,129 @@
 # BrowserNERD MCP Server
 
-Detached Rod + Mangle MCP server for browser automation. Ships session management, CDP ingestion (network/console/navigation/DOM), React Fiber reification, Docker log correlation, and logic-based assertions via Google Mangle.
+BrowserNERD is a production-grade browser intelligence copilot: Rod automation plus Mangle reasoning, wrapped in an MCP interface that keeps agents fast, grounded, and debuggable.
 
-## Benchmarks (vs Other Browser MCP Servers)
+If you want fewer blind clicks, fewer hallucinated root causes, and faster time-to-fix, this is the stack.
 
-Evaluation on 8 navigation tasks using Gemini 3 Flash (February 2026):
+## Why BrowserNERD
 
-| MCP Server          | Success Rate  | Avg Tokens  | Avg Tool Calls | Avg Time |
-| ------------------- | ------------- | ----------- | -------------- | -------- |
-| **BrowserNERD**     | **4/8 (50%)** | **137,945** | 9.6            | 23.0s    |
-| Chrome DevTools MCP | 3/8 (38%)     | 142,054     | 4.2            | 11.0s    |
-| Playwright MCP      | 3/8 (38%)     | 156,945     | 3.2            | 15.6s    |
+Most browser automation tools can click. BrowserNERD can explain.
 
-**Key findings:**
+- It observes: network, console, DOM, toasts, navigation, React, and Docker logs.
+- It reasons: causal chains and temporal patterns via Mangle.
+- It acts: guided next-step plans with evidence handles.
+- It records: raw JSONL flight logs for postmortem replay and RCA.
 
-- **Highest success rate** - BrowserNERD outperforms both competitors by 12 percentage points
-- **Best token efficiency** - Uses fewer tokens despite more tool calls, due to sparse JSON responses (v0.0.3 `omitempty` optimization)
-- **Granular control** - Progressive disclosure surfaces 6 tools (vs 37) while retaining full capability via mode/operation dispatch, reducing agent context window by ~80%
+## What Is New In v0.0.8
 
-**Per-task highlights:**
+This release pushes BrowserNERD into a stronger debugging and triage posture:
 
-- `mdn_navigate_to_fetch`: BrowserNERD 245K tokens vs Playwright 456K tokens (46% more efficient)
-- `wikipedia_linked_article`: BrowserNERD 103K tokens vs Playwright 255K tokens (60% more efficient)
+- Progressive disclosure-first UX (6 primary tools, full power behind mode/operation dispatch).
+- Compiler/build error prioritization in `browser-reason` top errors.
+- Repeated console error dedupe for cleaner, token-efficient summaries.
+- Route-scoped reasoning mode with `since_navigation=true`.
+- Temporal and change-window diagnostics with `time_window_ms` + Mangle timestamps.
+- Flight recorder export hardening for raw evidence capture.
+- Investigation steps tuned to error class (`compiler_error` -> `console_event` queries, toast classes -> toast queries).
 
-## Features
+## Core Capabilities
 
-- **MCP Transport**: stdio (Claude Code) or SSE (multi-client) via `mark3labs/mcp-go`
-- **Session Management**: Multiple concurrent tabs, session forking with auth state cloning
-- **React Reification**: Extract component tree, props, and state as Mangle facts
-- **CDP Event Stream**: Network requests, console logs, navigation, DOM mutations
-- **Docker Integration**: Correlate browser errors with backend container logs
-- **Mangle Reasoning**: Causal rules for root cause analysis (API failures, cascading errors)
-- **DatalogMTL Engine**: Advanced temporal reasoning across time-windowed memory intervals
-- **Geometric Computing**: Custom external predicate math operations mapped via Mangle (`my_distance`)
+- Rod-backed browser control and session lifecycle management.
+- Mangle fact engine with derived predicates and causal diagnostics.
+- Temporal reasoning over request/navigation/error timelines.
+- Token-optimized observation and reasoning (`summary`, `compact`, `full`).
+- Docker correlation for browser-to-backend issue tracing.
+- React and DOM extraction for UI-state-aware debugging.
 
-## Quickstart
+## Progressive Disclosure (Default)
+
+With `mcp.progressive_only: true`, BrowserNERD exposes 6 high-signal tools by default:
+
+- `launch-browser`
+- `shutdown-browser`
+- `browser-observe`
+- `browser-act`
+- `browser-reason`
+- `browser-mangle`
+
+This keeps agent context focused while preserving deep capability through parameters.
+
+### browser-observe
+
+Use for state and affordance discovery:
+
+- Modes: `state`, `nav`, `interactive`, `hidden`, `grids`, `composite`, `sessions`, `screenshot`, `react`, `dom_snapshot`
+- Views: `summary`, `compact`, `full`
+- Intents: `quick_status`, `find_actions`, `map_navigation`, `hidden_content`, `deep_audit`, `check_sessions`, `visual_check`, `grid_hunt`
+
+### browser-act
+
+Use for deterministic execution:
+
+- Operations include: session create/attach/fork, navigate/history, interact/type/fill/select/toggle, waits, key, js, and plan execution
+
+### browser-reason
+
+Use for triage and root cause analysis:
+
+- Topics: `health`, `next_best_action`, `blocking_issue`, `why_failed`, `what_changed_since`
+- Intents: `triage`, `act_now`, `debug_failure`, `unblock`
+- Route-scoped mode: `since_navigation=true` to focus on new errors after the latest navigation event
+
+### browser-mangle
+
+Use for raw fact access and forensic workflows:
+
+- Operations: `query`, `read`, `temporal`, `evaluate`, `push`, `submit_rule`, `subscribe`, `await_fact`, `await_conditions`, `export_flight`
+
+## Debugging Workflow (Recommended)
+
+1. Launch and create a session.
+2. `browser-observe` with `intent=quick_status` for instant status.
+3. `browser-reason` with `topic=why_failed` and `since_navigation=true`.
+4. Drill into evidence handles with `browser-mangle`.
+5. Export raw evidence with `export_flight`.
+
+Example sequence:
+
+```json
+{"tool":"launch-browser","arguments":{}}
+{"tool":"browser-act","arguments":{"operations":[{"type":"session_create","url":"https://symbiogen.ai"},{"type":"await_stable","timeout_ms":12000}]}}
+{"tool":"browser-reason","arguments":{"session_id":"<session>","topic":"why_failed","view":"compact","since_navigation":true}}
+{"tool":"browser-mangle","arguments":{"operation":"export_flight","session_id":"<session>","include_server_logs":true}}
+```
+
+## Flight Recorder
+
+BrowserNERD supports raw JSONL flight export for exact replay and offline debugging.
+
+- Use `browser-mangle` with `operation=export_flight`.
+- Exports include fact rows and optional Docker log rows.
+- Capture includes timestamps, predicates, args, and session scoping for reliable incident reconstruction.
+
+## Temporal Reasoning
+
+BrowserNERD stores timestamped facts and supports time-aware triage.
+
+- `time_window_ms` in `browser-reason` narrows evidence by recency.
+- `since_navigation=true` scopes findings to the active route transition.
+- `browser-mangle temporal` supports predicate queries across explicit time windows.
+
+This dramatically reduces stale-noise investigations in long-lived sessions.
+
+## Build And Run
 
 ```bash
 # Build
 go build -o bin/browsernerd.exe ./cmd/server
 
-# Run (stdio for Claude Code)
+# Stdio mode (Claude Code / MCP host)
 ./bin/browsernerd.exe --config config.yaml
 
-# Run (SSE for multi-client)
+# SSE mode
 ./bin/browsernerd.exe --config config.yaml --sse-port 8080
 ```
 
-## Local Smoke Harness (No MCP Host Needed)
-
-BrowserNERD is a stdio MCP server (newline-delimited JSON-RPC over stdin/stdout). The easiest way to validate a freshly-built binary without restarting/reloading your MCP host is to use the smoke harness:
+## Local Smoke Harness
 
 ```bash
 python scripts/mcp_smoke.py list
@@ -58,214 +132,35 @@ python scripts/mcp_smoke.py smoke --go-test --build --url https://example.com/
 python scripts/mcp_smoke.py repl
 ```
 
-## Configuration Reference
+## Configuration
 
-All settings go in `config.yaml`. See `config.example.yaml` for a minimal template.
+Use `config.yaml` (see `config.example.yaml`).
 
-### server
+Highlights:
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `name` | string | `"browsernerd-mcp"` | MCP server name |
-| `version` | string | `"0.0.7"` | Server version |
-| `log_file` | string | `"browsernerd-mcp.log"` | Log file path (required for stdio mode to avoid stderr pollution) |
+- `mcp.progressive_only`: keep default focused tool surface.
+- `recorder.enabled` + `recorder.trace_dir`: keep flight evidence available.
+- `mangle.fact_buffer_limit`: tune history depth for temporal diagnostics.
+- `docker.enabled`: correlate browser failures with backend logs.
 
-### browser
+## Tooling Positioning
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `auto_start` | bool | `true` | Launch browser on server start vs on-demand via `launch-browser` tool |
-| `headless` | bool | `true` | Run Chromium without visible window |
-| `debugger_url` | string | `""` | WebSocket URL to attach to existing Chrome (e.g., `ws://localhost:9222`) |
-| `launch` | []string | `[]` | Chrome launch command and flags (first element is binary path) |
-| `default_navigation_timeout` | string | `"15s"` | Timeout for page navigation |
-| `default_attach_timeout` | string | `"10s"` | Timeout when attaching to existing targets |
-| `session_store` | string | `"sessions.json"` | Path to persist session metadata across restarts |
-| `enable_dom_ingestion` | bool | `true` | Capture DOM structure as Mangle facts |
-| `enable_header_ingestion` | bool | `true` | Capture HTTP headers as Mangle facts |
-| `event_logging_level` | string | `"normal"` | `minimal` (errors only), `normal` (all events), `verbose` (+ DOM mutations) |
-| `event_throttle_ms` | int | `0` | Throttle high-frequency events (0=none, 100-200 recommended) |
-| `viewport_width` | int | `1920` | Browser viewport width |
-| `viewport_height` | int | `1080` | Browser viewport height |
+BrowserNERD is built for teams that need evidence-rich browser debugging, not just scripted automation.
 
-**Launch command example (Windows):**
+- Faster diagnosis through ranked `top_errors` and `investigation_items`.
+- Better token economics with progressive disclosure and compact views.
+- Stronger trust through raw flight export and Mangle-grounded reasoning.
 
-```yaml
-launch:
-  - "C:\\Users\\you\\AppData\\Roaming\\rod\\browser\\chromium-1321438\\chrome.exe"
-  - "--remote-debugging-port=9222"
-  - "--user-data-dir=C:\\temp\\chrome-debug"
-  - "--no-first-run"
-  - "--disable-sync"
-```
+## License And Attribution
 
-**Launch command example (Linux/Mac):**
+BrowserNERD is licensed under Apache License 2.0 with an explicit `NOTICE` file.
 
-```yaml
-launch:
-  - "/home/you/.rod/browser/chromium-1321438/chrome"
-  - "--remote-debugging-port=9222"
-  - "--user-data-dir=/tmp/chrome-debug"
-  - "--no-first-run"
-```
+- You may use, modify, and distribute.
+- You must preserve license text and required attribution notices.
+- If you redistribute derivatives, retain the BrowserNERD attribution in NOTICE and documentation.
 
-### mcp
+See `LICENSE` and `NOTICE`.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `sse_port` | int | `0` | Port for SSE HTTP transport (0 = stdio mode for Claude Code) |
-| `progressive_only` | bool | `true` | When true, agents see only 6 tools (2 lifecycle + 4 progressive). Set to false to expose all individual tools. |
+## Repository
 
-### docker
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable Docker log integration for full-stack error correlation |
-| `containers` | []string | `["backend", "frontend"]` | Container names to monitor |
-| `log_window` | string | `"30s"` | How far back to query logs when correlating errors |
-| `host` | string | `""` | Docker host (empty = local socket, or `tcp://host:2375`) |
-
-**Docker integration** correlates browser API failures with backend exceptions using shared correlation keys:
-
-- `api_backend_correlation(ReqId, Url, Status, BackendMsg, TimeDelta)` - links failed requests to backend errors
-- `full_stack_error(ConsoleMsg, ReqId, Url, BackendMsg)` - complete chain from browser to backend
-- `net_correlation_key(ReqId, KeyType, KeyValue)` - normalized request/trace identifiers from headers
-- `docker_log_correlation(Container, KeyType, KeyValue, Message, Timestamp)` - parsed identifiers from backend logs
-
-### mangle
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `enable` | bool | `true` | Enable Mangle causal reasoning engine |
-| `schema_path` | string | `"schemas/browser.mg"` | Path to Mangle schema with predicates and rules |
-| `fact_buffer_limit` | int | `2048` | Circular buffer size for facts (higher = more history, more memory) |
-| `disable_builtin_rules` | bool | `false` | Disable built-in causal reasoning rules |
-
-## Tools (Progressive Disclosure - Default 6 Tools)
-
-By default (`progressive_only: true`), agents see only **6 tools** instead of 37, reducing context window usage by ~80%. All individual tools remain available internally via delegation.
-
-**Lifecycle (2 tools):**
-
-- `launch-browser` - Start Chrome (idempotent)
-- `shutdown-browser` - Stop Chrome and clear sessions
-
-**Progressive Disclosure (4 tools):**
-
-- `browser-observe` - All observation: page state, navigation, interactive elements, hidden content, sessions, screenshots, React Fiber, DOM snapshots. Modes: `state|nav|interactive|hidden|composite|sessions|screenshot|react|dom_snapshot`. Views: `summary|compact|full`. Intents: `quick_status|find_actions|map_navigation|hidden_content|deep_audit|check_sessions|visual_check`.
-- `browser-act` - All actions: navigate, interact, forms, keyboard, session management, waits, JS evaluation, batch plans. Operation types: `navigate|click|type|select|toggle|scroll|fill_form|press_key|history|session_create|session_attach|session_fork|wait|await_stable|await_fact|await_conditions|js|plan`.
-- `browser-reason` - Diagnostics and analysis: health assessment, root cause analysis, blocking issues, recommendations. Topics: `health|next_best_action|blocking_issue|why_failed|what_changed_since`.
-- `browser-mangle` - Raw Mangle access: queries, rules, facts, temporal reasoning, subscriptions. Operations: `query|temporal|evaluate|read|submit_rule|subscribe|push|await_fact|await_conditions`.
-
-### All Tools Mode (`progressive_only: false`)
-
-Set `progressive_only: false` in config to expose all individual tools alongside progressive tools. This is useful for debugging, power users, or backwards compatibility.
-
-<details>
-<summary>Individual tools (31 tools, hidden by default)</summary>
-
-**Session Management:**
-
-- `list-sessions` - List active browser tabs
-- `create-session` - Open new tab (incognito)
-- `attach-session` - Attach to existing tab by TargetID
-- `fork-session` - Clone session with auth state (cookies, storage)
-
-**Navigation & Interaction:**
-
-- `navigate-url` - Navigate to URL
-- `get-interactive-elements` - Discover clickable elements
-- `get-navigation-links` - Extract page links by area (nav, side, main, footer)
-- `interact` - Click, type, select, toggle elements
-- `fill-form` - Batch fill form fields
-- `press-key` - Send keyboard input
-- `browser-history` - Navigate back/forward
-- `get-page-state` - Current URL, title, cookies, storage
-- `discover-hidden-content` - Find elements outside viewport
-
-**Diagnostics & Advanced:**
-
-- `get-console-errors` - Browser console + Docker container errors
-- `get-toast-notifications` - UI toast/snackbar notifications
-- `screenshot` - Capture page screenshot
-- `diagnose-page` - Run all diagnostic Mangle queries
-- `evaluate-js` - Execute JavaScript (gated by progressive disclosure)
-- `reify-react` - React Fiber extraction (gated by progressive disclosure)
-- `snapshot-dom` - DOM snapshot extraction (gated by progressive disclosure)
-
-**Mangle Facts & Rules:**
-
-- `push-facts` - Add custom facts
-- `read-facts` - Read all facts (optionally filtered)
-- `query-facts` - Query facts by predicate
-- `query-temporal` - Query facts with time range
-- `submit-rule` - Add custom Mangle rule
-- `evaluate-rule` - Evaluate rule and return results
-- `subscribe-rule` - Watch mode subscription
-
-**Automation & Waiting:**
-
-- `await-fact` - Wait for predicate to become true
-- `await-conditions` - Wait for multiple conditions
-- `await-stable-state` - Wait for page to stabilize
-- `wait-for-condition` - Wait for Mangle rule to match
-- `execute-plan` - Execute batch of actions from Mangle facts
-
-</details>
-
-## Schema
-
-`schemas/browser.mg` defines the Mangle predicates and causal reasoning rules:
-
-**Core Predicates:**
-
-- `dom_node`, `dom_attr`, `dom_text`, `dom_layout` - DOM structure
-- `react_component`, `react_prop`, `react_state` - React Fiber tree
-- `net_request`, `net_response`, `net_header`, `net_correlation_key` - Network events + request correlation keys
-- `console_event`, `toast_notification` - Console and UI errors
-- `navigation_event`, `current_url` - Page navigation
-- `docker_log`, `docker_log_correlation`, `backend_error`, `frontend_ssr_error` - Container logs + parsed correlation keys
-- `screen_blocked`, `is_main_content`, `primary_action` - Semantic UI macros
-- `action_candidate`, `global_action` - Mangle-native action planning candidates for browser-act
-
-**Causal Rules:**
-
-- `caused_by(ConsoleErr, ReqId)` - Console error caused by failed request
-- `slow_api(ReqId, Url, Duration)` - API calls exceeding 1 second
-- `cascading_failure(ChildReqId, ParentReqId)` - Request chain failures
-- `api_backend_correlation(...)` - Browser failure linked to backend exception
-- `full_stack_error(...)` - Complete error chain from browser to backend
-- `login_succeeded(SessionId)` - Universal login detection
-- `interaction_blocked(SessionId, Reason)` - Page interaction blocked by modal/overlay
-- `action_candidate(...)` - Ranked click candidates derived from semantic UI + nav + interactive facts
-
-**DatalogMTL Temporal Reasoning:**
-
-- `recently_failed_api(Url)` - Network failure detection across continuous temporal frames (`:time:ge`)
-- `modal_expected(...)` - Predictive `<+[0s, 2s]` contract asserting a UI consequence following clicks
-- `stable_expected(...)` - Box-Plus `[+[0s, 1s]` assertion for predicting page stability locks
-- `elements_far_apart(...)` - DOM bounding box logic using Go-injected geometric metrics (`my_distance(A,B,C,D,Dist)`)
-
-## Claude Code Integration
-
-Add to `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "browsernerd": {
-      "command": "C:\\path\\to\\bin\\browsernerd.exe",
-      "args": ["--config", "C:\\path\\to\\config.yaml"],
-      "type": "stdio"
-    }
-  }
-}
-```
-
-## Notes
-
-- **Multi-session**: One browser instance, multiple tabs. Each session has isolated element registry.
-- **Session persistence**: Metadata survives server restarts via `session_store`.
-- **DOM sampling**: Limited to 200 nodes to control fact volume.
-- **Event throttling**: Recommended 100-200ms for production to prevent fact explosion.
-- **Headless CI**: Set `headless: true` and `auto_start: true` for CI pipelines.
+- Source: `https://github.com/theRebelliousNerd/browserNerd`

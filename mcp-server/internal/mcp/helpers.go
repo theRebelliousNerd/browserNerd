@@ -24,6 +24,9 @@ func matchFact(facts []mangle.Fact, wantArgs []interface{}) bool {
 		}
 		ok := true
 		for i := range wantArgs {
+			if fmt.Sprintf("%v", wantArgs[i]) == "_" {
+				continue
+			}
 			if fmt.Sprintf("%v", f.Args[i]) != fmt.Sprintf("%v", wantArgs[i]) {
 				ok = false
 				break

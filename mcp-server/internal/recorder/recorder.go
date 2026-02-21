@@ -25,23 +25,34 @@ type Event struct {
 
 // Recorder manages rotating logs for session debugging.
 type Recorder struct {
-	mu       sync.Mutex
-	file     *os.File
-	encoder  *json.Encoder
-	basePath string
+	mu              sync.Mutex
+	file            *os.File
+	encoder         *json.Encoder
+	basePath        string
+	maxRotatedFiles int
+	currentPath     string
 }
 
 // NewRecorder creates a recorder instance.
 // It ensures the directory exists.
 func NewRecorder(basePath string) (*Recorder, error) {
+	return NewRecorderWithOptions(basePath, MaxRotatedFiles)
+}
+
+// NewRecorderWithOptions creates a recorder with explicit rotation settings.
+func NewRecorderWithOptions(basePath string, maxRotatedFiles int) (*Recorder, error) {
 	if basePath == "" {
 		basePath = TraceDir
+	}
+	if maxRotatedFiles <= 0 {
+		maxRotatedFiles = MaxRotatedFiles
 	}
 	if err := os.MkdirAll(basePath, 0o755); err != nil {
 		return nil, err
 	}
 	return &Recorder{
-		basePath: basePath,
+		basePath:        basePath,
+		maxRotatedFiles: maxRotatedFiles,
 	}, nil
 }
 
@@ -72,6 +83,7 @@ func (r *Recorder) Start(sessionID string) error {
 
 	r.file = f
 	r.encoder = json.NewEncoder(f)
+	r.currentPath = path
 	return nil
 }
 
@@ -94,7 +106,7 @@ func (r *Recorder) Log(eventType, sessionID string, data interface{}) {
 	_ = r.encoder.Encode(evt)
 }
 
-// rotate keeps only the newest MaxRotatedFiles.
+// rotate keeps only the newest configured number of trace files.
 func (r *Recorder) rotate() error {
 	entries, err := os.ReadDir(r.basePath)
 	if err != nil {
@@ -125,10 +137,15 @@ func (r *Recorder) rotate() error {
 		return traces[i].Time.After(traces[j].Time)
 	})
 
+	maxFiles := r.maxRotatedFiles
+	if maxFiles <= 0 {
+		maxFiles = MaxRotatedFiles
+	}
+
 	// Delete excess
-	if len(traces) >= MaxRotatedFiles {
+	if len(traces) >= maxFiles {
 		// Keep N-1 to make room for the new one
-		keep := MaxRotatedFiles - 1
+		keep := maxFiles - 1
 		if keep < 0 {
 			keep = 0
 		}
@@ -138,6 +155,13 @@ func (r *Recorder) rotate() error {
 		}
 	}
 	return nil
+}
+
+// CurrentPath returns the active or last-written trace file path.
+func (r *Recorder) CurrentPath() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.currentPath
 }
 
 // Close finishes the current recording.

@@ -2,9 +2,13 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
+	"os"
+	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +17,7 @@ import (
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/docker"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/recorder"
 )
 
 const (
@@ -214,11 +219,11 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		}
 		switch view {
 		case "summary":
-			sessions, _ := resMap["sessions"].([]interface{})
+			sessions := toAnySlice(resMap["sessions"])
 			response["summary"] = fmt.Sprintf("%d active session(s)", len(sessions))
 			response["data"] = map[string]interface{}{"session_count": len(sessions)}
 		case "compact":
-			sessions, _ := resMap["sessions"].([]interface{})
+			sessions := toAnySlice(resMap["sessions"])
 			response["summary"] = fmt.Sprintf("%d active session(s)", len(sessions))
 			response["data"] = map[string]interface{}{"sessions": limitAnySlice(sessions, maxItems)}
 		default:
@@ -525,8 +530,10 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 
 	if fetchDiagnostics {
 		diagTool := &DiagnosePageTool{engine: t.engine}
-		diagView := "summary"
-		if view == "full" {
+		diagView := "compact"
+		if view == "summary" {
+			diagView = "summary"
+		} else if view == "full" {
 			diagView = "full"
 		}
 		res, err := diagTool.Execute(ctx, map[string]interface{}{
@@ -611,6 +618,15 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		handles = append(handles, "observe:"+sessionID+":recommendations")
 	}
 
+	topErrors := buildObserveTopErrors(sessionID, diagnosticsData, toastData, maxInt(6, minInt(maxItems, 20)))
+	investigationItems := buildInvestigationItems(sessionID, topErrors, minInt(maxItems, 8))
+	if len(topErrors) > 0 {
+		handles = append(handles, "observe:"+sessionID+":top_errors")
+	}
+	if len(investigationItems) > 0 {
+		handles = append(handles, "observe:"+sessionID+":investigation_items")
+	}
+
 	switch view {
 	case "summary":
 		if fetchState {
@@ -652,6 +668,12 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			data["action_candidate_count"] = len(actionCandidates)
 			data["recommendation_count"] = len(recommendations)
 		}
+		if len(topErrors) > 0 {
+			data["top_errors"] = limitMapSlice(topErrors, minInt(3, maxItems))
+		}
+		if len(investigationItems) > 0 {
+			data["investigation_items"] = limitMapSlice(investigationItems, minInt(3, maxItems))
+		}
 	case "compact":
 		if fetchState {
 			data["state"] = stateData
@@ -677,6 +699,12 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			data["action_candidates"] = limitMapSlice(actionCandidates, maxItems)
 			data["recommendations"] = recommendations
 		}
+		if len(topErrors) > 0 {
+			data["top_errors"] = limitMapSlice(topErrors, minInt(maxItems, 10))
+		}
+		if len(investigationItems) > 0 {
+			data["investigation_items"] = limitMapSlice(investigationItems, minInt(maxItems, 8))
+		}
 	default: // full
 		if fetchState {
 			data["state"] = stateData
@@ -697,6 +725,12 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		if includeActionPlan {
 			data["action_candidates"] = actionCandidates
 			data["recommendations"] = recommendations
+		}
+		if len(topErrors) > 0 {
+			data["top_errors"] = topErrors
+		}
+		if len(investigationItems) > 0 {
+			data["investigation_items"] = investigationItems
 		}
 	}
 
@@ -1061,14 +1095,17 @@ Topics:
   next_best_action:   Ranked recommendations for what to do next
   blocking_issue:     What prevents progress (modals, auth walls, errors)
   why_failed:         Root cause analysis with causal chains
-  what_changed_since: Diff facts since a timestamp (pass time_window_ms or since_ms)
+  what_changed_since: Diff facts since a timestamp (pass time_window_ms)
 
 Intents (presets that apply topic + view defaults): triage, act_now, debug_failure, unblock
 
 Views: summary (verdict + counts), compact (default, verdict + key evidence), full (all evidence).
 
 Results include evidence handles for drill-down -- pass them back via expand_handles to dig deeper.
-Use browser-mangle instead for raw Mangle queries; use browser-observe to re-check page state.`
+Use browser-mangle instead for raw Mangle queries; use browser-observe to re-check page state.
+
+Use since_navigation=true to scope results to new errors after the latest navigation event
+for the current route.`
 }
 
 func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
@@ -1114,6 +1151,10 @@ func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
 			"time_window_ms": map[string]interface{}{
 				"type":        "integer",
 				"description": "Only include evidence newer than now-window (default 300000; set 0 for all history)",
+			},
+			"since_navigation": map[string]interface{}{
+				"type":        "boolean",
+				"description": "When true, scope errors to events after latest navigation_event(SessionId, Url, Timestamp)",
 			},
 		},
 		"required": []string{"session_id"},
@@ -1161,9 +1202,18 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	if timeWindowMs > 86400000 {
 		timeWindowMs = 86400000
 	}
+	sinceNavigation := getBoolArg(args, "since_navigation", false)
 	sinceMs := int64(0)
 	if timeWindowMs > 0 {
 		sinceMs = time.Now().UnixMilli() - int64(timeWindowMs)
+	}
+	navigationSinceMs := int64(0)
+	if sinceNavigation {
+		navigationSinceMs = latestNavigationTimestamp(ctx, t.engine, sessionID)
+	}
+	effectiveSinceMs := sinceMs
+	if navigationSinceMs > effectiveSinceMs {
+		effectiveSinceMs = navigationSinceMs
 	}
 
 	rootCauses := queryToRows(ctx, t.engine, fmt.Sprintf("root_cause_at(%q, ConsoleMsg, Source, Cause, Ts).", sessionID))
@@ -1182,12 +1232,13 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	userVisibleErrors := queryToRows(ctx, t.engine, fmt.Sprintf("user_visible_error(%q, Source, Message, Timestamp).", sessionID))
 	actionCandidates := queryActionCandidates(ctx, t.engine, sessionID, maxItems)
 
-	if sinceMs > 0 {
-		rootCauses = filterRowsSince(rootCauses, []string{"Ts", "Timestamp"}, sinceMs)
-		failedReqs = filterRowsSince(failedReqs, []string{"ReqTs", "Timestamp"}, sinceMs)
-		slowApis = filterRowsSince(slowApis, []string{"ReqTs", "Timestamp"}, sinceMs)
-		userVisibleErrors = filterRowsSince(userVisibleErrors, []string{"Timestamp", "Ts"}, sinceMs)
+	if effectiveSinceMs > 0 {
+		rootCauses = filterRowsSince(rootCauses, []string{"Ts", "Timestamp"}, effectiveSinceMs)
+		failedReqs = filterRowsSince(failedReqs, []string{"ReqTs", "Timestamp"}, effectiveSinceMs)
+		slowApis = filterRowsSince(slowApis, []string{"ReqTs", "Timestamp"}, effectiveSinceMs)
+		userVisibleErrors = filterRowsSince(userVisibleErrors, []string{"Timestamp", "Ts"}, effectiveSinceMs)
 	}
+	userVisibleErrors = dedupeUserVisibleErrors(userVisibleErrors)
 
 	contradictions := detectContradictions(ctx, t.engine, sessionID)
 
@@ -1205,8 +1256,12 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		recommendations = append(buildActionPlanRecommendations(actionCandidates, maxRecommendations, sessionID, baseOrigin), recommendations...)
 	}
 	recommendations = limitMapSlice(recommendations, maxRecommendations)
+	topErrors := buildReasonTopErrors(sessionID, failedReqs, rootCauses, userVisibleErrors, blockingIssues, slowApis, maxInt(6, minInt(maxItems, 20)))
+	investigationItems := buildInvestigationItems(sessionID, topErrors, minInt(maxItems, 10))
 
 	data := map[string]interface{}{
+		"top_errors":          topErrors,
+		"investigation_items": investigationItems,
 		"failed_requests":     failedReqs,
 		"root_causes":         rootCauses,
 		"slow_apis":           slowApis,
@@ -1221,10 +1276,13 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	}
 
 	handles := []string{
+		"reason:" + sessionID + ":top_errors",
+		"reason:" + sessionID + ":investigation_items",
 		"reason:" + sessionID + ":failed_requests",
 		"reason:" + sessionID + ":root_causes",
 		"reason:" + sessionID + ":slow_apis",
 		"reason:" + sessionID + ":blocking_issues",
+		"reason:" + sessionID + ":user_visible_errors",
 		"reason:" + sessionID + ":contradictions",
 		"reason:" + sessionID + ":action_candidates",
 		"reason:" + sessionID + ":recommendations",
@@ -1274,10 +1332,15 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		"status":              status,
 		"confidence":          confidence,
 		"summary":             buildReasonSummary(status, confidence, len(rootCauses), len(failedReqs), len(slowApis), len(contradictions)),
+		"top_errors":          limitMapSlice(topErrors, minInt(5, maxItems)),
+		"investigation_items": limitMapSlice(investigationItems, minInt(5, maxItems)),
 		"evidence_handles":    handles,
 		"expansion_suggested": confidence < 0.70 || len(contradictions) > 0,
 		"view":                view,
 		"time_window_ms":      timeWindowMs,
+		"since_navigation":    sinceNavigation,
+		"navigation_since_ms": navigationSinceMs,
+		"effective_since_ms":  effectiveSinceMs,
 	}
 
 	switch view {
@@ -1367,7 +1430,12 @@ func compactToastData(data map[string]interface{}, maxItems int) map[string]inte
 	}
 
 	// Include a small sample of toasts only if present.
-	if toasts, ok := data["toasts"].([]interface{}); ok && len(toasts) > 0 {
+	if toasts, ok := data["toasts"].([]map[string]interface{}); ok && len(toasts) > 0 {
+		limit := minInt(maxItems, 5)
+		out["toasts"] = limitMapSlice(toasts, limit)
+		out["toast_count"] = len(toasts)
+		out["truncated"] = len(toasts) > limit
+	} else if toasts, ok := data["toasts"].([]interface{}); ok && len(toasts) > 0 {
 		limit := minInt(maxItems, 5)
 		out["toasts"] = limitAnySlice(toasts, limit)
 		out["toast_count"] = len(toasts)
@@ -1430,6 +1498,690 @@ func buildObserveSummary(data map[string]interface{}) string {
 	return "observation: " + strings.Join(parts, ", ")
 }
 
+type rankedErrorItem struct {
+	payload   map[string]interface{}
+	severity  int
+	timestamp int64
+	dedupeKey string
+}
+
+func buildObserveTopErrors(sessionID string, diagnosticsData, toastData map[string]interface{}, maxItems int) []map[string]interface{} {
+	items := make([]rankedErrorItem, 0, 16)
+
+	toasts := toMapSlice(toastData["toasts"])
+	for _, toast := range toasts {
+		level := strings.ToLower(strings.TrimSpace(getStringFromMap(toast, "level")))
+		if level != "error" && level != "warning" {
+			continue
+		}
+		score := 70
+		if level == "error" {
+			score = 90
+		}
+		message := strings.TrimSpace(getStringFromMap(toast, "text"))
+		if message == "" {
+			message = strings.TrimSpace(getStringFromMap(toast, "summary"))
+		}
+		if message == "" {
+			message = "toast notification"
+		}
+		source := strings.TrimSpace(getStringFromMap(toast, "source"))
+		ts := asInt64(toast["timestamp"])
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: ts,
+			dedupeKey: "toast|" + level + "|" + message,
+			payload: map[string]interface{}{
+				"kind":            "toast_" + level,
+				"message":         message,
+				"source":          ternaryStatus(source != "", source, "toast"),
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       ts,
+				"evidence_handle": "observe:" + sessionID + ":toasts",
+			},
+		})
+	}
+
+	repeated := toStringSlice(toastData["repeated_errors"])
+	for _, msg := range repeated {
+		if strings.TrimSpace(msg) == "" {
+			continue
+		}
+		score := 85
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: 0,
+			dedupeKey: "toast_repeated|" + msg,
+			payload: map[string]interface{}{
+				"kind":            "toast_repeated_error",
+				"message":         msg,
+				"source":          "toast",
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"evidence_handle": "observe:" + sessionID + ":toasts",
+			},
+		})
+	}
+
+	for _, row := range toMapSlice(diagnosticsData["failed_requests"]) {
+		status := asInt(row["status"])
+		score := 75
+		if status >= 500 {
+			score = 95
+		}
+		url := strings.TrimSpace(fmt.Sprintf("%v", row["url"]))
+		reqID := strings.TrimSpace(fmt.Sprintf("%v", row["id"]))
+		ts := asInt64(row["timestamp"])
+		msg := fmt.Sprintf("HTTP %d %s", status, url)
+		if url == "" {
+			msg = fmt.Sprintf("HTTP %d failed request", status)
+		}
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: ts,
+			dedupeKey: "failed_request|" + reqID + "|" + url + "|" + strconv.Itoa(status),
+			payload: map[string]interface{}{
+				"kind":            "failed_request",
+				"message":         msg,
+				"url":             url,
+				"request_id":      reqID,
+				"status":          status,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       ts,
+				"evidence_handle": "observe:" + sessionID + ":diagnostics",
+			},
+		})
+	}
+
+	for _, row := range toMapSlice(diagnosticsData["root_causes"]) {
+		cause := strings.TrimSpace(fmt.Sprintf("%v", row["Cause"]))
+		msg := strings.TrimSpace(fmt.Sprintf("%v", row["Msg"]))
+		if msg == "" {
+			msg = cause
+		}
+		if msg == "" {
+			msg = "root cause detected"
+		}
+		source := strings.TrimSpace(fmt.Sprintf("%v", row["Source"]))
+		score := 88
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: extractTimestamp(row, "Ts", "Timestamp"),
+			dedupeKey: "root_cause|" + source + "|" + msg + "|" + cause,
+			payload: map[string]interface{}{
+				"kind":            "root_cause",
+				"message":         msg,
+				"cause":           cause,
+				"source":          source,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       extractTimestamp(row, "Ts", "Timestamp"),
+				"evidence_handle": "observe:" + sessionID + ":diagnostics",
+			},
+		})
+	}
+
+	for _, row := range toMapSlice(diagnosticsData["slow_apis"]) {
+		duration := asInt(row["duration"])
+		score := 55
+		if duration >= 3000 {
+			score = 65
+		}
+		url := strings.TrimSpace(fmt.Sprintf("%v", row["url"]))
+		reqID := strings.TrimSpace(fmt.Sprintf("%v", row["id"]))
+		msg := fmt.Sprintf("Slow API %dms %s", duration, url)
+		if url == "" {
+			msg = fmt.Sprintf("Slow API %dms", duration)
+		}
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: extractTimestamp(row, "ReqTs", "Timestamp"),
+			dedupeKey: "slow_api|" + reqID + "|" + url + "|" + strconv.Itoa(duration),
+			payload: map[string]interface{}{
+				"kind":            "slow_api",
+				"message":         msg,
+				"url":             url,
+				"request_id":      reqID,
+				"duration_ms":     duration,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       extractTimestamp(row, "ReqTs", "Timestamp"),
+				"evidence_handle": "observe:" + sessionID + ":diagnostics",
+			},
+		})
+	}
+
+	return finalizeRankedErrors(items, maxItems)
+}
+
+func buildReasonTopErrors(
+	sessionID string,
+	failedReqs []map[string]interface{},
+	rootCauses []map[string]interface{},
+	userVisibleErrors []map[string]interface{},
+	blockingIssues []map[string]interface{},
+	slowApis []map[string]interface{},
+	maxItems int,
+) []map[string]interface{} {
+	items := make([]rankedErrorItem, 0, 24)
+
+	for _, row := range failedReqs {
+		status := asInt(row["Status"])
+		score := 78
+		if status >= 500 {
+			score = 96
+		}
+		url := strings.TrimSpace(fmt.Sprintf("%v", row["Url"]))
+		reqID := strings.TrimSpace(fmt.Sprintf("%v", row["ReqId"]))
+		msg := fmt.Sprintf("HTTP %d %s", status, url)
+		if url == "" {
+			msg = fmt.Sprintf("HTTP %d failed request", status)
+		}
+		ts := extractTimestamp(row, "ReqTs", "Timestamp")
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: ts,
+			dedupeKey: "failed_request|" + reqID + "|" + url + "|" + strconv.Itoa(status),
+			payload: map[string]interface{}{
+				"kind":            "failed_request",
+				"message":         msg,
+				"url":             url,
+				"request_id":      reqID,
+				"status":          status,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       ts,
+				"evidence_handle": "reason:" + sessionID + ":failed_requests",
+			},
+		})
+	}
+
+	for _, row := range rootCauses {
+		cause := strings.TrimSpace(fmt.Sprintf("%v", row["Cause"]))
+		msg := strings.TrimSpace(fmt.Sprintf("%v", row["ConsoleMsg"]))
+		if msg == "" {
+			msg = cause
+		}
+		if msg == "" {
+			msg = "root cause detected"
+		}
+		source := strings.TrimSpace(fmt.Sprintf("%v", row["Source"]))
+		ts := extractTimestamp(row, "Ts", "Timestamp")
+		score := 90
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: ts,
+			dedupeKey: "root_cause|" + source + "|" + msg + "|" + cause,
+			payload: map[string]interface{}{
+				"kind":            "root_cause",
+				"message":         msg,
+				"cause":           cause,
+				"source":          source,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       ts,
+				"evidence_handle": "reason:" + sessionID + ":root_causes",
+			},
+		})
+	}
+
+	for _, row := range userVisibleErrors {
+		source := strings.TrimSpace(fmt.Sprintf("%v", row["Source"]))
+		msg := strings.TrimSpace(fmt.Sprintf("%v", row["Message"]))
+		if msg == "" {
+			msg = "user-visible error"
+		}
+		ts := extractTimestamp(row, "Timestamp", "Ts")
+		kind, score := classifyUserVisibleError(source, msg)
+		fingerprint := normalizeErrorFingerprint(msg)
+		if fingerprint == "" {
+			fingerprint = strings.ToLower(strings.TrimSpace(msg))
+		}
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: ts,
+			dedupeKey: "user_visible|" + strings.ToLower(strings.TrimSpace(source)) + "|" + fingerprint,
+			payload: map[string]interface{}{
+				"kind":            kind,
+				"message":         msg,
+				"source":          source,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       ts,
+				"evidence_handle": "reason:" + sessionID + ":user_visible_errors",
+			},
+		})
+	}
+
+	for _, row := range blockingIssues {
+		reason := strings.TrimSpace(fmt.Sprintf("%v", row["Reason"]))
+		if reason == "" {
+			reason = "interaction blocked"
+		}
+		score := 82
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: extractTimestamp(row, "Timestamp", "Ts"),
+			dedupeKey: "blocking|" + reason,
+			payload: map[string]interface{}{
+				"kind":            "blocking_issue",
+				"message":         reason,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       extractTimestamp(row, "Timestamp", "Ts"),
+				"evidence_handle": "reason:" + sessionID + ":blocking_issues",
+			},
+		})
+	}
+
+	for _, row := range slowApis {
+		duration := asInt(row["Duration"])
+		score := 50
+		if duration >= 3000 {
+			score = 64
+		}
+		url := strings.TrimSpace(fmt.Sprintf("%v", row["Url"]))
+		reqID := strings.TrimSpace(fmt.Sprintf("%v", row["ReqId"]))
+		msg := fmt.Sprintf("Slow API %dms %s", duration, url)
+		if url == "" {
+			msg = fmt.Sprintf("Slow API %dms", duration)
+		}
+		ts := extractTimestamp(row, "ReqTs", "Timestamp")
+		items = appendRankedError(items, rankedErrorItem{
+			severity:  score,
+			timestamp: ts,
+			dedupeKey: "slow_api|" + reqID + "|" + url + "|" + strconv.Itoa(duration),
+			payload: map[string]interface{}{
+				"kind":            "slow_api",
+				"message":         msg,
+				"url":             url,
+				"request_id":      reqID,
+				"duration_ms":     duration,
+				"severity":        severityLabel(score),
+				"severity_score":  score,
+				"timestamp":       ts,
+				"evidence_handle": "reason:" + sessionID + ":slow_apis",
+			},
+		})
+	}
+
+	return finalizeRankedErrors(items, maxItems)
+}
+
+func buildInvestigationItems(sessionID string, topErrors []map[string]interface{}, maxItems int) []map[string]interface{} {
+	if maxItems <= 0 {
+		maxItems = 5
+	}
+	items := make([]map[string]interface{}, 0, minInt(len(topErrors), maxItems))
+	for idx, errRow := range topErrors {
+		if idx >= maxItems {
+			break
+		}
+		message := strings.TrimSpace(fmt.Sprintf("%v", errRow["message"]))
+		if message == "" {
+			message = "investigate issue"
+		}
+		evidenceHandle := strings.TrimSpace(fmt.Sprintf("%v", errRow["evidence_handle"]))
+		items = append(items, map[string]interface{}{
+			"priority":        idx + 1,
+			"severity":        errRow["severity"],
+			"kind":            errRow["kind"],
+			"issue":           message,
+			"evidence_handle": evidenceHandle,
+			"next_step":       buildInvestigationStep(sessionID, errRow),
+		})
+	}
+	return items
+}
+
+func buildInvestigationStep(sessionID string, errRow map[string]interface{}) map[string]interface{} {
+	kind := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", errRow["kind"])))
+	switch kind {
+	case "failed_request":
+		return map[string]interface{}{
+			"tool": "browser-mangle",
+			"args": map[string]interface{}{
+				"operation": "query",
+				"query":     fmt.Sprintf("failed_request(%q, ReqId, Url, Status).", sessionID),
+				"view":      "compact",
+				"max_items": 20,
+			},
+		}
+	case "root_cause":
+		return map[string]interface{}{
+			"tool": "browser-mangle",
+			"args": map[string]interface{}{
+				"operation": "query",
+				"query":     fmt.Sprintf("root_cause_at(%q, ConsoleMsg, Source, Cause, Ts).", sessionID),
+				"view":      "compact",
+				"max_items": 20,
+			},
+		}
+	case "compiler_error", "console_error":
+		return map[string]interface{}{
+			"tool": "browser-mangle",
+			"args": map[string]interface{}{
+				"operation": "query",
+				"query":     fmt.Sprintf("console_event(%q, \"error\", Msg, Ts).", sessionID),
+				"view":      "compact",
+				"max_items": 20,
+			},
+		}
+	case "user_visible_error":
+		source := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", errRow["source"])))
+		if source == "console" {
+			return map[string]interface{}{
+				"tool": "browser-mangle",
+				"args": map[string]interface{}{
+					"operation": "query",
+					"query":     fmt.Sprintf("console_event(%q, \"error\", Msg, Ts).", sessionID),
+					"view":      "compact",
+					"max_items": 20,
+				},
+			}
+		}
+		fallthrough
+	case "toast_error", "toast_warning", "toast_repeated_error":
+		return map[string]interface{}{
+			"tool": "browser-mangle",
+			"args": map[string]interface{}{
+				"operation": "query",
+				"query":     fmt.Sprintf("toast_notification(%q, Text, Level, Source, Timestamp).", sessionID),
+				"view":      "compact",
+				"max_items": 20,
+			},
+		}
+	case "blocking_issue":
+		return map[string]interface{}{
+			"tool": "browser-observe",
+			"args": map[string]interface{}{
+				"session_id":          sessionID,
+				"mode":                "interactive",
+				"view":                "compact",
+				"include_diagnostics": true,
+				"include_action_plan": true,
+				"max_recommendations": 3,
+				"max_items":           20,
+			},
+		}
+	case "slow_api":
+		return map[string]interface{}{
+			"tool": "browser-mangle",
+			"args": map[string]interface{}{
+				"operation": "query",
+				"query":     fmt.Sprintf("slow_api_at(%q, ReqId, Url, Duration, ReqTs).", sessionID),
+				"view":      "compact",
+				"max_items": 20,
+			},
+		}
+	default:
+		return map[string]interface{}{
+			"tool": "browser-reason",
+			"args": map[string]interface{}{
+				"session_id":     sessionID,
+				"topic":          "why_failed",
+				"view":           "compact",
+				"max_items":      20,
+				"time_window_ms": defaultReasonTimeWindowMs,
+			},
+		}
+	}
+}
+
+func appendRankedError(items []rankedErrorItem, item rankedErrorItem) []rankedErrorItem {
+	if item.payload == nil {
+		item.payload = map[string]interface{}{}
+	}
+	if item.payload["severity"] == nil {
+		item.payload["severity"] = severityLabel(item.severity)
+	}
+	item.payload["severity_score"] = item.severity
+	if item.payload["timestamp"] == nil && item.timestamp > 0 {
+		item.payload["timestamp"] = item.timestamp
+	}
+	return append(items, item)
+}
+
+func finalizeRankedErrors(items []rankedErrorItem, maxItems int) []map[string]interface{} {
+	if len(items) == 0 {
+		return []map[string]interface{}{}
+	}
+	if maxItems <= 0 {
+		maxItems = 10
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].severity != items[j].severity {
+			return items[i].severity > items[j].severity
+		}
+		if items[i].timestamp != items[j].timestamp {
+			return items[i].timestamp > items[j].timestamp
+		}
+		msgI := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", items[i].payload["message"])))
+		msgJ := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", items[j].payload["message"])))
+		return msgI < msgJ
+	})
+
+	seen := make(map[string]bool, len(items))
+	out := make([]map[string]interface{}, 0, minInt(maxItems, len(items)))
+	for _, item := range items {
+		key := strings.TrimSpace(item.dedupeKey)
+		if key != "" {
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+		}
+		out = append(out, item.payload)
+		if len(out) >= maxItems {
+			break
+		}
+	}
+	return out
+}
+
+func severityLabel(score int) string {
+	switch {
+	case score >= 90:
+		return "critical"
+	case score >= 75:
+		return "high"
+	case score >= 55:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+func normalizeErrorFingerprint(message string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(message)), " "))
+}
+
+func classifyUserVisibleError(source, message string) (string, int) {
+	src := strings.ToLower(strings.TrimSpace(source))
+	fp := normalizeErrorFingerprint(message)
+	if fp == "" {
+		fp = strings.ToLower(strings.TrimSpace(message))
+	}
+
+	compilerSignals := []string{
+		"module not found",
+		"can't resolve",
+		"cannot resolve",
+		"cannot find module",
+		"failed to compile",
+		"compilation failed",
+		"import trace",
+		"./src/",
+		"webpack",
+		"nextjs.org/docs/messages/module-not-found",
+	}
+	for _, signal := range compilerSignals {
+		if strings.Contains(fp, signal) {
+			return "compiler_error", 99
+		}
+	}
+
+	switch src {
+	case "console":
+		return "console_error", 92
+	case "toast":
+		return "toast_error", 84
+	default:
+		return "user_visible_error", 88
+	}
+}
+
+func dedupeUserVisibleErrors(rows []map[string]interface{}) []map[string]interface{} {
+	if len(rows) == 0 {
+		return []map[string]interface{}{}
+	}
+
+	type agg struct {
+		source  string
+		message string
+		count   int
+		firstTs int64
+		lastTs  int64
+	}
+
+	byKey := make(map[string]*agg, len(rows))
+	for _, row := range rows {
+		source := strings.TrimSpace(fmt.Sprintf("%v", row["Source"]))
+		if source == "" {
+			source = strings.TrimSpace(fmt.Sprintf("%v", row["source"]))
+		}
+		message := strings.TrimSpace(fmt.Sprintf("%v", row["Message"]))
+		if message == "" {
+			message = strings.TrimSpace(fmt.Sprintf("%v", row["message"]))
+		}
+		if message == "" {
+			continue
+		}
+
+		fp := normalizeErrorFingerprint(message)
+		if fp == "" {
+			continue
+		}
+		sourceKey := strings.ToLower(strings.TrimSpace(source))
+		dedupeKey := sourceKey + "|" + fp
+		ts := extractTimestamp(row, "Timestamp", "Ts")
+
+		existing, ok := byKey[dedupeKey]
+		if !ok {
+			byKey[dedupeKey] = &agg{
+				source:  source,
+				message: message,
+				count:   1,
+				firstTs: ts,
+				lastTs:  ts,
+			}
+			continue
+		}
+
+		existing.count++
+		if ts > 0 && (existing.firstTs == 0 || ts < existing.firstTs) {
+			existing.firstTs = ts
+		}
+		if ts > existing.lastTs {
+			existing.lastTs = ts
+		}
+	}
+
+	out := make([]map[string]interface{}, 0, len(byKey))
+	for _, item := range byKey {
+		row := map[string]interface{}{
+			"Source":    item.source,
+			"Message":   item.message,
+			"Timestamp": item.lastTs,
+			"Count":     item.count,
+		}
+		if item.firstTs > 0 {
+			row["FirstTimestamp"] = item.firstTs
+		}
+		if item.lastTs > 0 {
+			row["LastTimestamp"] = item.lastTs
+		}
+		out = append(out, row)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		tsI := extractTimestamp(out[i], "Timestamp", "LastTimestamp")
+		tsJ := extractTimestamp(out[j], "Timestamp", "LastTimestamp")
+		if tsI != tsJ {
+			return tsI > tsJ
+		}
+		countI := asInt(out[i]["Count"])
+		countJ := asInt(out[j]["Count"])
+		if countI != countJ {
+			return countI > countJ
+		}
+		msgI := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", out[i]["Message"])))
+		msgJ := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", out[j]["Message"])))
+		return msgI < msgJ
+	})
+
+	return out
+}
+
+func toMapSlice(value interface{}) []map[string]interface{} {
+	if value == nil {
+		return []map[string]interface{}{}
+	}
+	if rows, ok := value.([]map[string]interface{}); ok {
+		return rows
+	}
+	rawRows, ok := value.([]interface{})
+	if !ok {
+		return []map[string]interface{}{}
+	}
+	rows := make([]map[string]interface{}, 0, len(rawRows))
+	for _, raw := range rawRows {
+		if row, ok := raw.(map[string]interface{}); ok {
+			rows = append(rows, row)
+		}
+	}
+	return rows
+}
+
+func toStringSlice(value interface{}) []string {
+	if value == nil {
+		return []string{}
+	}
+	if rows, ok := value.([]string); ok {
+		return rows
+	}
+	rawRows, ok := value.([]interface{})
+	if !ok {
+		return []string{}
+	}
+	rows := make([]string, 0, len(rawRows))
+	for _, raw := range rawRows {
+		msg := strings.TrimSpace(fmt.Sprintf("%v", raw))
+		if msg != "" {
+			rows = append(rows, msg)
+		}
+	}
+	return rows
+}
+
+func extractTimestamp(row map[string]interface{}, keys ...string) int64 {
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if val, ok := row[key]; ok {
+			ts := asInt64(val)
+			if ts > 0 {
+				return ts
+			}
+		}
+	}
+	return 0
+}
+
 func queryToRows(ctx context.Context, engine *mangle.Engine, query string) []map[string]interface{} {
 	results, err := engine.Query(ctx, query)
 	if err != nil {
@@ -1444,6 +2196,21 @@ func queryToRows(ctx context.Context, engine *mangle.Engine, query string) []map
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+func latestNavigationTimestamp(ctx context.Context, engine *mangle.Engine, sessionID string) int64 {
+	if engine == nil || strings.TrimSpace(sessionID) == "" {
+		return 0
+	}
+	rows := queryToRows(ctx, engine, fmt.Sprintf("navigation_event(%q, Url, Timestamp).", sessionID))
+	latest := int64(0)
+	for _, row := range rows {
+		ts := extractTimestamp(row, "Timestamp", "Ts", "TNav")
+		if ts > latest {
+			latest = ts
+		}
+	}
+	return latest
 }
 
 func detectContradictions(ctx context.Context, engine *mangle.Engine, sessionID string) []map[string]interface{} {
@@ -1594,6 +2361,10 @@ func applyHandleFilter(data map[string]interface{}, rawHandles interface{}) map[
 	for _, h := range raw {
 		handle := strings.ToLower(fmt.Sprintf("%v", h))
 		switch {
+		case strings.Contains(handle, "top_errors"):
+			selected["top_errors"] = true
+		case strings.Contains(handle, "investigation_items"):
+			selected["investigation_items"] = true
 		case strings.Contains(handle, "failed_requests"):
 			selected["failed_requests"] = true
 		case strings.Contains(handle, "root_causes"):
@@ -2690,6 +3461,24 @@ func limitAnySlice(items []interface{}, max int) []interface{} {
 	return items[:max]
 }
 
+func toAnySlice(value interface{}) []interface{} {
+	if value == nil {
+		return []interface{}{}
+	}
+	if items, ok := value.([]interface{}); ok {
+		return items
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Slice {
+		return []interface{}{}
+	}
+	items := make([]interface{}, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		items[i] = rv.Index(i).Interface()
+	}
+	return items
+}
+
 func limitMapSlice(items []map[string]interface{}, max int) []map[string]interface{} {
 	if max <= 0 || len(items) <= max {
 		return items
@@ -2699,7 +3488,11 @@ func limitMapSlice(items []map[string]interface{}, max int) []map[string]interfa
 
 // BrowserMangleTool consolidates all Mangle fact operations into one progressive-disclosure tool.
 type BrowserMangleTool struct {
-	engine *mangle.Engine
+	engine           *mangle.Engine
+	dockerClient     *docker.Client
+	recorder         *recorder.Recorder
+	defaultTraceDir  string
+	defaultLogWindow time.Duration
 }
 
 func (t *BrowserMangleTool) Name() string { return "browser-mangle" }
@@ -2719,6 +3512,7 @@ Operations:
   subscribe:        Watch for a predicate match with timeout
   await_fact:       Wait for a specific fact (predicate + args)
   await_conditions: Wait for multiple facts simultaneously (AND logic)
+  export_flight:    Export raw JSONL evidence bundle (facts + optional Docker logs)
 
 Common built-in predicates: current_url, net_request, net_response, console_event,
 navigation_event, slow_api (derived), caused_by (derived), login_succeeded (derived).
@@ -2733,7 +3527,11 @@ func (t *BrowserMangleTool) InputSchema() map[string]interface{} {
 			"operation": map[string]interface{}{
 				"type":        "string",
 				"description": "Mangle operation to perform",
-				"enum":        []string{"query", "temporal", "evaluate", "read", "submit_rule", "subscribe", "push", "await_fact", "await_conditions"},
+				"enum":        []string{"query", "temporal", "evaluate", "read", "submit_rule", "subscribe", "push", "await_fact", "await_conditions", "export_flight"},
+			},
+			"session_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Target session (recommended for export_flight and scoped reads)",
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
@@ -2791,19 +3589,41 @@ func (t *BrowserMangleTool) InputSchema() map[string]interface{} {
 				"type":        "integer",
 				"description": "Max items in response (default 20)",
 			},
+			"path": map[string]interface{}{
+				"type":        "string",
+				"description": "Output path for export_flight (defaults to recorder trace_dir/flight-<ts>.jsonl)",
+			},
+			"include_server_logs": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Include Docker server logs in export_flight (default false)",
+			},
+			"since_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "Filter export_flight rows at/after this epoch ms (default now-log_window or now-5m)",
+			},
+			"until_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "Filter export_flight rows at/before this epoch ms (default now)",
+			},
+			"max_rows": map[string]interface{}{
+				"type":        "integer",
+				"description": "Max rows written by export_flight (default 2000, newest rows kept when truncated)",
+			},
 		},
 		"required": []string{"operation"},
 	}
 }
 
 func (t *BrowserMangleTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	if t.engine == nil {
-		return map[string]interface{}{"success": false, "error": "mangle engine is not available"}, nil
-	}
-
 	operation := strings.ToLower(getStringArg(args, "operation"))
 	if operation == "" {
 		return map[string]interface{}{"success": false, "error": "operation is required"}, nil
+	}
+	if operation == "export_flight" {
+		return t.handleExportFlight(ctx, args), nil
+	}
+	if t.engine == nil {
+		return map[string]interface{}{"success": false, "error": "mangle engine is not available"}, nil
 	}
 
 	view := normalizeProgressiveView(getStringArg(args, "view"))
@@ -2938,6 +3758,276 @@ func (t *BrowserMangleTool) Execute(ctx context.Context, args map[string]interfa
 	}
 
 	return response, nil
+}
+
+func (t *BrowserMangleTool) handleExportFlight(ctx context.Context, args map[string]interface{}) map[string]interface{} {
+	view := normalizeProgressiveView(getStringArg(args, "view"))
+	sessionID := strings.TrimSpace(getStringArg(args, "session_id"))
+	includeServerLogs := getBoolArg(args, "include_server_logs", false)
+
+	untilMs := asInt64(args["until_ms"])
+	if untilMs <= 0 {
+		untilMs = time.Now().UnixMilli()
+	}
+
+	sinceMs := asInt64(args["since_ms"])
+	if sinceMs <= 0 {
+		window := t.defaultLogWindow
+		if window <= 0 {
+			window = 5 * time.Minute
+		}
+		sinceMs = untilMs - int64(window/time.Millisecond)
+	}
+	if sinceMs > untilMs {
+		sinceMs = untilMs
+	}
+
+	maxRows := getIntArg(args, "max_rows", 2000)
+	if maxRows <= 0 {
+		maxRows = 2000
+	}
+	if maxRows > 100000 {
+		maxRows = 100000
+	}
+
+	outPath, err := resolveFlightExportPath(getStringArg(args, "path"), t.defaultTraceDir, sessionID, untilMs)
+	if err != nil {
+		return map[string]interface{}{
+			"success":   false,
+			"operation": "export_flight",
+			"error":     err.Error(),
+		}
+	}
+
+	rows := make([]map[string]interface{}, 0, maxRows)
+	factRows := collectFlightFactRows(t.engine, sessionID, sinceMs, untilMs)
+	rows = append(rows, factRows...)
+
+	logRows := []map[string]interface{}{}
+	warnings := make([]string, 0, 1)
+	if includeServerLogs {
+		if t.dockerClient == nil {
+			warnings = append(warnings, "docker log export requested but docker integration is disabled")
+		} else {
+			logs, logErr := t.dockerClient.QueryLogs(ctx, time.UnixMilli(sinceMs))
+			if logErr != nil {
+				warnings = append(warnings, "docker log export failed: "+logErr.Error())
+			} else {
+				logRows = collectFlightDockerRows(logs, sinceMs, untilMs)
+				rows = append(rows, logRows...)
+			}
+		}
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		ti := asInt64(rows[i]["ts"])
+		tj := asInt64(rows[j]["ts"])
+		if ti != tj {
+			return ti < tj
+		}
+		si := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", rows[i]["source"])))
+		sj := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", rows[j]["source"])))
+		return si < sj
+	})
+
+	truncated := false
+	if len(rows) > maxRows {
+		rows = rows[len(rows)-maxRows:]
+		truncated = true
+	}
+
+	if err := writeJSONLFile(outPath, rows); err != nil {
+		return map[string]interface{}{
+			"success":   false,
+			"operation": "export_flight",
+			"error":     fmt.Sprintf("write export file: %v", err),
+		}
+	}
+
+	if t.recorder != nil {
+		t.recorder.Log("export_flight", sessionID, map[string]interface{}{
+			"path":                outPath,
+			"rows_written":        len(rows),
+			"fact_rows":           len(factRows),
+			"docker_rows":         len(logRows),
+			"include_server_logs": includeServerLogs,
+			"since_ms":            sinceMs,
+			"until_ms":            untilMs,
+			"truncated":           truncated,
+		})
+	}
+
+	summary := fmt.Sprintf("exported %d row(s) to %s", len(rows), outPath)
+	if truncated {
+		summary += " (truncated to newest rows)"
+	}
+	if sessionID != "" {
+		summary += fmt.Sprintf(" [session=%s]", sessionID)
+	}
+
+	exportData := map[string]interface{}{
+		"path":                outPath,
+		"rows_written":        len(rows),
+		"fact_rows":           len(factRows),
+		"docker_rows":         len(logRows),
+		"session_id":          sessionID,
+		"include_server_logs": includeServerLogs,
+		"since_ms":            sinceMs,
+		"until_ms":            untilMs,
+		"truncated":           truncated,
+	}
+
+	response := map[string]interface{}{
+		"success":   true,
+		"operation": "export_flight",
+		"view":      view,
+		"summary":   summary,
+		"export":    exportData,
+	}
+	if len(warnings) > 0 {
+		response["warnings"] = warnings
+	}
+
+	switch view {
+	case "summary":
+		// Keep summary token-light: no sample rows.
+	case "compact":
+		response["sample_rows"] = limitAnySlice(mapSliceToAny(rows), minInt(5, len(rows)))
+	default:
+		response["rows"] = rows
+	}
+
+	return response
+}
+
+func resolveFlightExportPath(rawPath, defaultTraceDir, sessionID string, untilMs int64) (string, error) {
+	baseDir := strings.TrimSpace(defaultTraceDir)
+	if baseDir == "" {
+		baseDir = recorder.TraceDir
+	}
+
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		path = filepath.Join(baseDir, fmt.Sprintf("flight_%s_%d.jsonl", safeTraceFragment(sessionID, "global"), untilMs))
+	} else if !filepath.IsAbs(path) {
+		path = filepath.Join(baseDir, path)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create export directory: %w", err)
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve export path: %w", err)
+	}
+	return absPath, nil
+}
+
+func collectFlightFactRows(engine *mangle.Engine, sessionID string, sinceMs, untilMs int64) []map[string]interface{} {
+	if engine == nil {
+		return []map[string]interface{}{}
+	}
+
+	facts := engine.Facts()
+	rows := make([]map[string]interface{}, 0, len(facts))
+	for _, f := range facts {
+		if sessionID != "" {
+			if len(f.Args) == 0 || fmt.Sprintf("%v", f.Args[0]) != sessionID {
+				continue
+			}
+		}
+
+		ts := f.Timestamp.UnixMilli()
+		if ts > 0 {
+			if sinceMs > 0 && ts < sinceMs {
+				continue
+			}
+			if untilMs > 0 && ts > untilMs {
+				continue
+			}
+		}
+
+		row := map[string]interface{}{
+			"ts":        ts,
+			"source":    "mangle_fact",
+			"predicate": f.Predicate,
+			"args":      f.Args,
+		}
+		if len(f.Args) > 0 {
+			row["session_id"] = fmt.Sprintf("%v", f.Args[0])
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func collectFlightDockerRows(logs []docker.LogEntry, sinceMs, untilMs int64) []map[string]interface{} {
+	rows := make([]map[string]interface{}, 0, len(logs))
+	for _, entry := range logs {
+		ts := entry.Timestamp.UnixMilli()
+		if sinceMs > 0 && ts < sinceMs {
+			continue
+		}
+		if untilMs > 0 && ts > untilMs {
+			continue
+		}
+		rows = append(rows, map[string]interface{}{
+			"ts":        ts,
+			"source":    "docker_log",
+			"container": entry.Container,
+			"level":     entry.Level,
+			"tag":       entry.Tag,
+			"message":   entry.Message,
+			"raw":       entry.Raw,
+		})
+	}
+	return rows
+}
+
+func writeJSONLFile(path string, rows []map[string]interface{}) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	for _, row := range rows {
+		if err := encoder.Encode(row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func safeTraceFragment(input, fallback string) string {
+	raw := strings.TrimSpace(input)
+	if raw == "" {
+		raw = fallback
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteRune('_')
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return fallback
+	}
+	return out
+}
+
+func mapSliceToAny(rows []map[string]interface{}) []interface{} {
+	out := make([]interface{}, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row)
+	}
+	return out
 }
 
 func buildMangleSummary(operation string, data map[string]interface{}) string {

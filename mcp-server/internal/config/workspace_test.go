@@ -282,9 +282,10 @@ func TestResolveWorkspacePaths_Relative(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := Config{
-		Server:  ServerConfig{LogFile: "browsernerd-mcp.log"},
-		Browser: BrowserConfig{SessionStore: "sessions.json"},
-		Mangle:  MangleConfig{SchemaPath: filepath.Join("schemas", "browser.mg")},
+		Server:   ServerConfig{LogFile: "browsernerd-mcp.log"},
+		Browser:  BrowserConfig{SessionStore: "sessions.json"},
+		Mangle:   MangleConfig{SchemaPath: filepath.Join("schemas", "browser.mg")},
+		Recorder: RecorderConfig{TraceDir: filepath.Join("data", "traces")},
 	}
 
 	resolved := resolveWorkspacePaths(cfg, tmpDir)
@@ -300,6 +301,10 @@ func TestResolveWorkspacePaths_Relative(t *testing.T) {
 	expected = filepath.Join(tmpDir, "schemas", "browser.mg")
 	if resolved.Mangle.SchemaPath != expected {
 		t.Errorf("expected schema path %q, got %q", expected, resolved.Mangle.SchemaPath)
+	}
+	expected = filepath.Join(tmpDir, "data", "traces")
+	if resolved.Recorder.TraceDir != expected {
+		t.Errorf("expected recorder trace dir %q, got %q", expected, resolved.Recorder.TraceDir)
 	}
 }
 
@@ -319,9 +324,10 @@ func TestResolveWorkspacePaths_AbsoluteUntouched(t *testing.T) {
 	}
 
 	cfg := Config{
-		Server:  ServerConfig{LogFile: absLog},
-		Browser: BrowserConfig{SessionStore: absSession},
-		Mangle:  MangleConfig{SchemaPath: absSchema},
+		Server:   ServerConfig{LogFile: absLog},
+		Browser:  BrowserConfig{SessionStore: absSession},
+		Mangle:   MangleConfig{SchemaPath: absSchema},
+		Recorder: RecorderConfig{TraceDir: absSchema},
 	}
 
 	resolved := resolveWorkspacePaths(cfg, wsDir)
@@ -334,6 +340,9 @@ func TestResolveWorkspacePaths_AbsoluteUntouched(t *testing.T) {
 	}
 	if resolved.Mangle.SchemaPath != absSchema {
 		t.Errorf("expected absolute schema path untouched %q, got %q", absSchema, resolved.Mangle.SchemaPath)
+	}
+	if resolved.Recorder.TraceDir != absSchema {
+		t.Errorf("expected absolute recorder trace dir untouched %q, got %q", absSchema, resolved.Recorder.TraceDir)
 	}
 }
 

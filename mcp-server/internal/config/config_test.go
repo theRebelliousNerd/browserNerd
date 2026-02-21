@@ -14,8 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Name != "browsernerd-mcp" {
 		t.Errorf("expected server name 'browsernerd-mcp', got %q", cfg.Server.Name)
 	}
-	if cfg.Server.Version != "0.0.7" {
-		t.Errorf("expected server version '0.0.7', got %q", cfg.Server.Version)
+	if cfg.Server.Version != "0.0.8" {
+		t.Errorf("expected server version '0.0.8', got %q", cfg.Server.Version)
 	}
 	if cfg.Server.LogFile != "browsernerd-mcp.log" {
 		t.Errorf("expected log file 'browsernerd-mcp.log', got %q", cfg.Server.LogFile)
@@ -67,6 +67,17 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Docker.LogWindow != "30s" {
 		t.Errorf("expected log window '30s', got %q", cfg.Docker.LogWindow)
+	}
+
+	// Recorder defaults
+	if !cfg.Recorder.Enabled {
+		t.Error("expected Recorder.Enabled to be true")
+	}
+	if cfg.Recorder.TraceDir != "data/traces" {
+		t.Errorf("expected recorder trace dir 'data/traces', got %q", cfg.Recorder.TraceDir)
+	}
+	if cfg.Recorder.MaxRotatedFiles != 3 {
+		t.Errorf("expected recorder max rotated files 3, got %d", cfg.Recorder.MaxRotatedFiles)
 	}
 }
 
@@ -212,6 +223,16 @@ func TestValidate(t *testing.T) {
 				Browser: BrowserConfig{AutoStart: false},
 			},
 			wantErr: false,
+		},
+		{
+			name: "recorder enabled with invalid max files",
+			cfg: Config{
+				Server:   ServerConfig{Name: "test"},
+				Browser:  BrowserConfig{AutoStart: false},
+				Recorder: RecorderConfig{Enabled: true, MaxRotatedFiles: 0},
+			},
+			wantErr: true,
+			errMsg:  "recorder.max_rotated_files must be > 0 when recorder.enabled is true",
 		},
 	}
 

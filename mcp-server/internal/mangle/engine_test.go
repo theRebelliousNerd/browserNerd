@@ -963,8 +963,18 @@ func TestEngineEvaluateWithSubscription(t *testing.T) {
 		t.Logf("Evaluate returned %d results", len(results))
 	}
 
-	// Give some time for notification to be processed
-	time.Sleep(50 * time.Millisecond)
+	// Watch mode should notify subscribers when derived facts are present.
+	select {
+	case event := <-ch:
+		if event.Predicate != "failed_request" {
+			t.Fatalf("expected failed_request event, got %q", event.Predicate)
+		}
+		if len(event.Facts) == 0 {
+			t.Fatal("expected at least one derived fact in event payload")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected subscription event for failed_request")
+	}
 }
 
 func TestEngineNotifySubscribersEdgeCases(t *testing.T) {
@@ -1171,9 +1181,9 @@ func TestEngineMatchesAllWithWildcards(t *testing.T) {
 		conditions := []Fact{
 			{Predicate: "match_test", Args: []interface{}{"_"}},
 		}
-		// Underscore is treated as a literal string, not wildcard in MatchesAll
-		result := engine.MatchesAll(conditions)
-		t.Logf("MatchesAll with _ returned: %v", result)
+		if !engine.MatchesAll(conditions) {
+			t.Fatal("expected underscore to behave as wildcard in MatchesAll")
+		}
 	})
 
 	t.Run("match with empty args condition", func(t *testing.T) {

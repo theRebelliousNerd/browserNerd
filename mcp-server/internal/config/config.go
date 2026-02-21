@@ -29,11 +29,12 @@ type WorkspaceOptions struct {
 
 // Config captures all tunable settings for the BrowserNERD MCP server.
 type Config struct {
-	Server  ServerConfig  `yaml:"server"`
-	Browser BrowserConfig `yaml:"browser"`
-	MCP     MCPConfig     `yaml:"mcp"`
-	Mangle  MangleConfig  `yaml:"mangle"`
-	Docker  DockerConfig  `yaml:"docker"`
+	Server   ServerConfig   `yaml:"server"`
+	Browser  BrowserConfig  `yaml:"browser"`
+	MCP      MCPConfig      `yaml:"mcp"`
+	Mangle   MangleConfig   `yaml:"mangle"`
+	Docker   DockerConfig   `yaml:"docker"`
+	Recorder RecorderConfig `yaml:"recorder"`
 }
 
 type ServerConfig struct {
@@ -102,12 +103,22 @@ type MangleConfig struct {
 	FactBufferLimit int    `yaml:"fact_buffer_limit"`
 }
 
+// RecorderConfig controls optional flight-recorder output for raw MCP diagnostics.
+type RecorderConfig struct {
+	// Enable recorder logging and export support.
+	Enabled bool `yaml:"enabled"`
+	// Directory for JSONL trace files.
+	TraceDir string `yaml:"trace_dir"`
+	// Number of rotated trace files to keep.
+	MaxRotatedFiles int `yaml:"max_rotated_files"`
+}
+
 // DefaultConfig provides reasonable defaults for local development.
 func DefaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
 			Name:    "browsernerd-mcp",
-			Version: "0.0.7",
+			Version: "0.0.8",
 			LogFile: "browsernerd-mcp.log",
 		},
 		Browser: BrowserConfig{
@@ -135,6 +146,11 @@ func DefaultConfig() Config {
 			Containers: []string{"backend", "frontend"},
 			LogWindow:  "30s",
 			Host:       "",
+		},
+		Recorder: RecorderConfig{
+			Enabled:         true,
+			TraceDir:        "data/traces",
+			MaxRotatedFiles: 3,
 		},
 	}
 }
@@ -280,6 +296,11 @@ func InitWorkspace(root string) error {
 #   headless: false
 #   viewport_width: 1280
 #   viewport_height: 720
+
+# recorder:
+#   enabled: true
+#   trace_dir: ".browsernerd/data/traces"
+#   max_rotated_files: 5
 `
 	configPath := filepath.Join(wsDir, WorkspaceConfigFile)
 	if err := os.WriteFile(configPath, []byte(templateConfig), 0644); err != nil {
@@ -308,6 +329,7 @@ func resolveWorkspacePaths(cfg Config, wsDir string) Config {
 	cfg.Server.LogFile = resolve(cfg.Server.LogFile)
 	cfg.Browser.SessionStore = resolve(cfg.Browser.SessionStore)
 	cfg.Mangle.SchemaPath = resolve(cfg.Mangle.SchemaPath)
+	cfg.Recorder.TraceDir = resolve(cfg.Recorder.TraceDir)
 	return cfg
 }
 
@@ -320,6 +342,9 @@ func (c *Config) Validate() error {
 		if c.Browser.DebuggerURL == "" && len(c.Browser.Launch) == 0 {
 			return errors.New("browser.debugger_url or browser.launch must be provided")
 		}
+	}
+	if c.Recorder.Enabled && c.Recorder.MaxRotatedFiles <= 0 {
+		return errors.New("recorder.max_rotated_files must be > 0 when recorder.enabled is true")
 	}
 	return nil
 }
