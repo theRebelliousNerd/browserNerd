@@ -1,0 +1,10 @@
+prompt = """Initialize a new BrowserNERD workspace.
+
+I am executing a shell command to initialize the `.browsernerd` configuration.
+!{mkdir -p .browsernerd && echo "browser:\n  headless: false\n  viewport_width: 1280\n  viewport_height: 720\n\ndocker:\n  enabled: false\n  log_window: 60s\n" > .browsernerd/config.yaml}
+
+The workspace configuration has been successfully created at `.browsernerd/config.yaml`. 
+Please read the contents of this new file and briefly ask me if I want to:
+1. Enable Docker backend error correlation
+2. Change the browser to run in headless mode
+"""
