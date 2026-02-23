@@ -397,6 +397,9 @@ func (t *SubscribeRuleTool) Execute(ctx context.Context, args map[string]interfa
 	defer t.engine.Unsubscribe(predicate, ch)
 
 	// Wait for event or timeout
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case event := <-ch:
 		return map[string]interface{}{
@@ -406,7 +409,7 @@ func (t *SubscribeRuleTool) Execute(ctx context.Context, args map[string]interfa
 			"count":     len(event.Facts),
 			"timestamp": event.Timestamp.UnixMilli(),
 		}, nil
-	case <-time.After(timeout):
+	case <-timer.C:
 		return map[string]interface{}{
 			"status":    "timeout",
 			"predicate": predicate,
