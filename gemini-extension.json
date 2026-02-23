@@ -5,10 +5,9 @@
   "contextFileName": "GEMINI.md",
   "mcpServers": {
     "browsernerd": {
-      "command": "go",
+      "command": "node",
       "args": [
-        "run",
-        "./cmd/server/main.go",
+        "${extensionPath}${/}bin${/}cli.js",
         "--config",
         "${extensionPath}${/}mcp-server${/}gemini-config.yaml"
       ],

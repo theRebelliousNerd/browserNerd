@@ -14,6 +14,13 @@
     "puppeteer",
     "playwright"
   ],
+  "bin": {
+    "browsernerd": "./bin/cli.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "build": "node scripts/install.js"
+  },
   "author": "theRebelliousNerd",
   "license": "Apache-2.0"
 }
