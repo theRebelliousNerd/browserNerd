@@ -1111,15 +1111,15 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 
 	switch action {
 	case "click":
-		if err := element.Click("left", 1); err != nil {
+		if err := element.Timeout(5 * time.Second).Click("left", 1); err != nil {
 			return map[string]interface{}{"success": false, "error": fmt.Sprintf("Click failed: %v", err)}, nil
 		}
 
 	case "type":
-		if err := element.SelectAllText(); err == nil {
-			_ = element.Input("")
+		if err := element.Timeout(5 * time.Second).SelectAllText(); err == nil {
+			_ = element.Timeout(5 * time.Second).Input("")
 		}
-		if err := element.Input(value); err != nil {
+		if err := element.Timeout(5 * time.Second).Input(value); err != nil {
 			return map[string]interface{}{"success": false, "error": fmt.Sprintf("Type failed: %v", err)}, nil
 		}
 		if submit {
@@ -1135,13 +1135,13 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 		tagNameProp, _ := element.Property("tagName")
 		tagName := tagNameProp.Str()
 		if tagName == "SELECT" {
-			if err := element.Select([]string{value}, true, "value"); err != nil {
-				if err := element.Select([]string{value}, true, "text"); err != nil {
+			if err := element.Timeout(5 * time.Second).Select([]string{value}, true, "value"); err != nil {
+				if err := element.Timeout(5 * time.Second).Select([]string{value}, true, "text"); err != nil {
 					return map[string]interface{}{"success": false, "error": fmt.Sprintf("Option not found: %s", value)}, nil
 				}
 			}
 		} else {
-			if err := element.Click("left", 1); err != nil {
+			if err := element.Timeout(5 * time.Second).Click("left", 1); err != nil {
 				return map[string]interface{}{"success": false, "error": fmt.Sprintf("Select click failed: %v", err)}, nil
 			}
 		}
@@ -1150,7 +1150,7 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 		}
 
 	case "toggle":
-		if err := element.Click("left", 1); err != nil {
+		if err := element.Timeout(5 * time.Second).Click("left", 1); err != nil {
 			return map[string]interface{}{"success": false, "error": fmt.Sprintf("Toggle failed: %v", err)}, nil
 		}
 		if checkedProp, err := element.Property("checked"); err == nil {
@@ -1158,8 +1158,8 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 		}
 
 	case "clear":
-		if err := element.SelectAllText(); err == nil {
-			_ = element.Input("")
+		if err := element.Timeout(5 * time.Second).SelectAllText(); err == nil {
+			_ = element.Timeout(5 * time.Second).Input("")
 		}
 		resultValue = ""
 	}
