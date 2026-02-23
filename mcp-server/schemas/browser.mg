@@ -1047,9 +1047,15 @@ Decl global_action(SessionId, Action, Priority, Reason).
 global_action(SessionId, "press_escape", 110, Reason) :-
     interaction_blocked(SessionId, Reason).
 
-// --- GEMINI CLI INTEGRATION ---
+# =============================================================================
+# GEMINI CLI INTEGRATION
+# =============================================================================
+
+Decl agent_client(ClientName).
 agent_client("gemini_cli").
-triage_hint(Action) :-
-  agent_client("gemini_cli"),
-  caused_by(_, ReqId),
-  Action = "Use browser-reason with topic=why_failed to investigate the API crash.".
+
+Decl triage_hint(SessionId, Action).
+triage_hint(SessionId, Action) :-
+    agent_client("gemini_cli"),
+    caused_by(SessionId, _, _),
+    Action = "Use browser-reason with topic=why_failed to investigate the API crash.".
