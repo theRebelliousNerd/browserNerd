@@ -1,0 +1,10 @@
+prompt = """Please analyze the visual state of the browser.
+I am using BrowserNERD to capture a screenshot of the current page.
+
+!{gemini mcp call browsernerd browser-observe '{"mode": "screenshot", "view": "summary"}'}
+
+Based on this screenshot and the current context, please tell me:
+1. Are there any obvious CSS/layout issues?
+2. What are the primary calls to action (CTAs)?
+3. {{args}}
+"""

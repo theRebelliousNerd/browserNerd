@@ -1,0 +1,40 @@
+{
+  "name": "browsernerd-gemini-extension",
+  "version": "0.0.8",
+  "description": "The token-efficient browser automation MCP server built for AI agents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theRebelliousNerd/browserNerd.git"
+  },
+  "keywords": [
+    "gemini",
+    "gemini-extension",
+    "gemini-cli-extension",
+    "mcp",
+    "browser automation",
+    "puppeteer",
+    "playwright"
+  ],
+  "bin": {
+    "browsernerd": "bin/cli.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "build": "node scripts/install.js",
+    "package": "bash scripts/package.sh",
+    "test": "jest --verbose",
+    "test:go": "cd mcp-server && go test ./...",
+    "test:all": "npm test && npm run test:go"
+  },
+  "author": "theRebelliousNerd",
+  "license": "Apache-2.0",
+  "main": "index.js",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/theRebelliousNerd/browserNerd/issues"
+  },
+  "homepage": "https://github.com/theRebelliousNerd/browserNerd#readme",
+  "devDependencies": {
+    "jest": "^30.2.0"
+  }
+}

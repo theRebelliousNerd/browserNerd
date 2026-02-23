@@ -928,7 +928,7 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 		case "session_fork":
 			forkTool := &ForkSessionTool{sessions: t.sessions}
 			forkArgs := map[string]interface{}{
-				"source_session_id": getStringFromMap(op, "source_session_id"),
+				"session_id": getStringFromMap(op, "source_session_id"),
 			}
 			if u := getStringFromMap(op, "url"); u != "" {
 				forkArgs["url"] = u

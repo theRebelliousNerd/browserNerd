@@ -1,0 +1,17 @@
+{
+  "name": "browsernerd",
+  "version": "0.0.8",
+  "description": "The token-efficient browser automation MCP server built for AI agents.",
+  "contextFileName": "GEMINI.md",
+  "mcpServers": {
+    "browsernerd": {
+      "command": "node",
+      "args": [
+        "${extensionPath}${/}bin${/}cli.js",
+        "--config",
+        "${extensionPath}${/}mcp-server${/}gemini-config.yaml"
+      ],
+      "cwd": "${extensionPath}${/}mcp-server"
+    }
+  }
+}
