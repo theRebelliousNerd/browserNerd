@@ -28,7 +28,7 @@ jobs:
 
       - name: Build and Package binaries
         run: |
-          mkdir -p release
+          mkdir -p bin release
           cd mcp-server
           
           # Build cross-platform binaries
@@ -38,12 +38,17 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -o ../bin/browsernerd-windows-amd64.exe ./cmd/server
           cd ..
 
+      - name: Create release assets
+        run: |
+          npm run package -- darwin arm64
+          npm run package -- darwin x64
+          npm run package -- linux x64
+          npm run package -- win32 x64
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            bin/browsernerd-darwin-arm64
-            bin/browsernerd-darwin-amd64
-            bin/browsernerd-linux-amd64
-            bin/browsernerd-windows-amd64.exe
+            release/*.tar.gz
+            release/*.zip
           generate_release_notes: true

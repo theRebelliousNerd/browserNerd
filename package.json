@@ -20,7 +20,8 @@
   },
   "scripts": {
     "postinstall": "node scripts/install.js",
-    "build": "node scripts/install.js"
+    "build": "node scripts/install.js",
+    "package": "bash scripts/package.sh"
   },
   "author": "theRebelliousNerd",
   "license": "Apache-2.0"
