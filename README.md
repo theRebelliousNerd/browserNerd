@@ -1,5 +1,10 @@
 # BrowserNERD
 
+<p align="center">
+  <!-- Tip: Generate a custom banner using the Nano Banana Gemini CLI extension! See the "Graphics by Nano Banana" section below. -->
+  <img src="https://placehold.co/1000x300/0d1117/00ADD8/png?text=BrowserNERD&font=roboto" alt="BrowserNERD Banner" width="100%">
+</p>
+
 **The token-efficient browser automation MCP server built for AI agents.**
 
 Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent structured, actionable browser state in **50-100x fewer tokens** than traditional approaches - plus built-in causal reasoning, React extraction, and full-stack error correlation.
@@ -597,6 +602,28 @@ GOOS=linux GOARCH=amd64 go build -o bin/browsernerd-linux-amd64 ./cmd/server
 | Toast detection | Native | Manual | Manual | No |
 | Batch automation | execute-plan | Individual calls | Individual calls | Limited |
 | Fork with auth | Yes | No | No | No |
+
+---
+
+## 🍌 Graphics & Assets by Nano Banana
+
+Want to generate cool retro-hacker or nerdy neon graphics for your BrowserNERD forks? We leverage the **Nano Banana** (`gemini-2.5-flash-image`) model to come up with cool related graphics!
+
+If you use the [Gemini CLI](https://geminicli.com/), you can install the Nano Banana extension to generate your own assets right from your terminal:
+
+```bash
+# 1. Install the extension
+gemini extensions install https://github.com/gemini-cli-extensions/nanobanana
+
+# 2. Provide your Gemini API key
+export GEMINI_API_KEY="your-api-key"
+
+# 3. Generate a cool cyberpunk pixel-art banner and save it to your repo!
+gemini -p "/generate a cool horizontal graphic banner for 'BrowserNerd', an AI-driven Chrome automation tool with a retro-hacker aesthetic, showing a robot navigating a web browser. --styles=cyberpunk,pixel-art"
+
+# 4. Want an icon? Let Nano Banana do the heavy lifting!
+gemini -p "/icon a simple flat nerdy glasses logo for an automation app --sizes=128,512"
+```
 
 ---
 
