@@ -1,0 +1,19 @@
+{
+  "name": "browsernerd-gemini-extension",
+  "version": "0.0.8",
+  "description": "The token-efficient browser automation MCP server built for AI agents.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theRebelliousNerd/browserNerd.git"
+  },
+  "keywords": [
+    "gemini",
+    "gemini-extension",
+    "mcp",
+    "browser automation",
+    "puppeteer",
+    "playwright"
+  ],
+  "author": "theRebelliousNerd",
+  "license": "Apache-2.0"
+}

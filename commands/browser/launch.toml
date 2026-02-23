@@ -1,0 +1,1 @@
+prompt = """Launch BrowserNERD and navigate to {{args}}. Return a summary of the page state after it loads."""

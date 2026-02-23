@@ -1,0 +1,28 @@
+server:
+  name: browsernerd-mcp
+  version: 0.0.8
+  log_file: data/browsernerd-mcp.log
+
+browser:
+  auto_start: false
+  launch: [""]
+  default_navigation_timeout: 15s
+  default_attach_timeout: 10s
+  session_store: data/sessions.json
+  enable_dom_ingestion: true
+  enable_header_ingestion: true
+
+mcp:
+  sse_port: 0
+  progressive_only: true
+
+mangle:
+  enable: true
+  schema_path: schemas/browser.mg
+  disable_builtin_rules: false
+  fact_buffer_limit: 2048
+
+recorder:
+  enabled: true
+  trace_dir: data/traces
+  max_rotated_files: 3
