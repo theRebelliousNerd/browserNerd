@@ -225,6 +225,9 @@ func (s *Server) registerIndividualTools() {
 	s.registerTool(&WaitForConditionTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&DiagnosePageTool{engine: s.engine})
 	s.registerTool(&AwaitStableStateTool{engine: s.engine})
+
+	// Declarative testing
+	s.registerTool(&RunTestTool{sessions: s.sessions, engine: s.engine})
 }
 
 func (s *Server) registerTool(tool Tool) {
