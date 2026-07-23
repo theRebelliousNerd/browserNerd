@@ -197,7 +197,21 @@ func (t *RunTestTool) evaluateAssertion(ctx context.Context, index int, a TestAs
 	if name == "" {
 		name = fmt.Sprintf("assertion_%d", index)
 	}
-	expect := strings.ToLower(strings.TrimSpace(a.Expect))
+	return evaluateQueryExpect(ctx, t.engine, name, a.Query, a.Expect)
+}
+
+// diagnose evaluates the derived causal predicates and returns those with
+// matching facts, capped for compactness.
+func (t *RunTestTool) diagnose(ctx context.Context) map[string]interface{} {
+	return causalDiagnosis(ctx, t.engine)
+}
+
+// evaluateQueryExpect runs a Mangle query and scores its result cardinality
+// against an expectation: "absent" passes on zero matches, "present" (default)
+// passes on one or more. It returns a compact result map and the pass flag.
+// Shared by run-test assertions and spec-conformance invariants.
+func evaluateQueryExpect(ctx context.Context, engine *mangle.Engine, name, query, expect string) (map[string]interface{}, bool) {
+	expect = strings.ToLower(strings.TrimSpace(expect))
 	if expect == "" {
 		expect = "present"
 	}
@@ -207,17 +221,17 @@ func (t *RunTestTool) evaluateAssertion(ctx context.Context, index int, a TestAs
 		"expect": expect,
 	}
 
-	query := strings.TrimSpace(a.Query)
+	query = strings.TrimSpace(query)
 	if query == "" {
 		out["passed"] = false
-		out["error"] = "assertion has no query"
+		out["error"] = "no query"
 		return out, false
 	}
 	if !strings.HasSuffix(query, ".") {
 		query += "."
 	}
 
-	rows, err := t.engine.Query(ctx, query)
+	rows, err := engine.Query(ctx, query)
 	if err != nil {
 		out["passed"] = false
 		out["error"] = err.Error()
@@ -248,12 +262,13 @@ func (t *RunTestTool) evaluateAssertion(ctx context.Context, index int, a TestAs
 	return out, passed
 }
 
-// diagnose evaluates the derived causal predicates and returns those that have
-// matching facts, capped for compactness.
-func (t *RunTestTool) diagnose(ctx context.Context) map[string]interface{} {
+// causalDiagnosis evaluates the derived causal predicates and returns those
+// with matching facts, capped for compactness. Shared drill-down for failing
+// tests and spec violations.
+func causalDiagnosis(ctx context.Context, engine *mangle.Engine) map[string]interface{} {
 	diag := make(map[string]interface{})
 	for _, pred := range diagnosticPredicates {
-		facts, err := t.engine.Evaluate(ctx, pred)
+		facts, err := engine.Evaluate(ctx, pred)
 		if err != nil || len(facts) == 0 {
 			continue
 		}
