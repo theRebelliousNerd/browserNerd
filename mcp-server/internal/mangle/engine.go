@@ -142,7 +142,15 @@ func (e *Engine) LoadSchema(path string) error {
 }
 
 // getEvalOptions constructs the unified configuration for Mangle evaluation
+// against the engine's live temporal store.
 func (e *Engine) getEvalOptions() []engine.EvalOption {
+	return e.evalOptions(e.tempStore)
+}
+
+// evalOptions builds the Mangle evaluation configuration, wiring ts as the
+// temporal store when non-nil. Passing an isolated store keeps a read-only
+// evaluation (e.g. a conditional query) from touching engine state.
+func (e *Engine) evalOptions(ts *factstore.TeeingTemporalStore) []engine.EvalOption {
 	extPreds := map[ast.PredicateSym]engine.ExternalPredicateCallback{
 		{Symbol: "my_distance", Arity: 5}: DistanceCallback{},
 	}
@@ -152,37 +160,47 @@ func (e *Engine) getEvalOptions() []engine.EvalOption {
 		engine.WithExternalPredicates(extPreds),
 	}
 
-	if e.tempStore != nil {
-		opts = append(opts, engine.WithTemporalStore(e.tempStore))
+	if ts != nil {
+		opts = append(opts, engine.WithTemporalStore(ts))
 	}
 
 	return opts
 }
 
-func (e *Engine) evalProgramSafe(store factstore.FactStore, phase string) (err error) {
+func (e *Engine) evalProgramSafe(store factstore.FactStore, phase string) error {
+	return e.evalProgramWith(e.programInfo, store, e.tempStore, phase)
+}
+
+// evalProgramWith evaluates an explicit program into store, using ts as the
+// temporal backing. It recovers panics from the third-party engine so a
+// malformed program surfaces as an error instead of crashing the process.
+func (e *Engine) evalProgramWith(pi *analysis.ProgramInfo, store factstore.FactStore, ts *factstore.TeeingTemporalStore, phase string) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("mangle eval panic during %s: %v\n%s", phase, r, debug.Stack())
 		}
 	}()
-	return engine.EvalProgram(e.programInfo, store, e.getEvalOptions()...)
+	return engine.EvalProgram(pi, store, e.evalOptions(ts)...)
 }
 
-// rebuildTempStoreLocked recreates the active temporal store from the eternal store + buffer.
-func (e *Engine) rebuildTempStoreLocked() {
-	e.tempStore = factstore.NewTeeingTemporalStore(e.store)
-	var activePredicates = make(map[ast.PredicateSym]bool)
+// buildTeeingStoreLocked constructs a fresh temporal store seeded from the
+// eternal store and the in-memory fact buffer (including the mt_ mirrors and
+// interval coalescing) WITHOUT evaluating any rules or mutating engine state.
+// Callers own the subsequent evaluation. e.mu must be held.
+func (e *Engine) buildTeeingStoreLocked() *factstore.TeeingTemporalStore {
+	ts := factstore.NewTeeingTemporalStore(e.store)
+	activePredicates := make(map[ast.PredicateSym]bool)
 
 	for _, f := range e.facts {
 		atom, err := e.factToAtom(f)
 		if err == nil && !f.Timestamp.IsZero() {
-			_, _ = e.tempStore.Add(atom, ast.NewPointInterval(f.Timestamp))
+			_, _ = ts.Add(atom, ast.NewPointInterval(f.Timestamp))
 			activePredicates[atom.Predicate] = true
 
 			// Create a temporal specific copy with mt_ prefix for DatalogMTL reasoning rules
 			mtAtom := atom
 			mtAtom.Predicate.Symbol = "mt_" + atom.Predicate.Symbol
-			_, _ = e.tempStore.Add(mtAtom, ast.NewPointInterval(f.Timestamp))
+			_, _ = ts.Add(mtAtom, ast.NewPointInterval(f.Timestamp))
 			activePredicates[mtAtom.Predicate] = true
 		}
 	}
@@ -190,8 +208,15 @@ func (e *Engine) rebuildTempStoreLocked() {
 	// Native Interval Coalescing
 	// Merge overlapping consecutive facts (e.g. `loading`=true at T1, T2, T3 -> True [T1, T3])
 	for predSym := range activePredicates {
-		_ = e.tempStore.Coalesce(predSym)
+		_ = ts.Coalesce(predSym)
 	}
+
+	return ts
+}
+
+// rebuildTempStoreLocked recreates the active temporal store from the eternal store + buffer.
+func (e *Engine) rebuildTempStoreLocked() {
+	e.tempStore = e.buildTeeingStoreLocked()
 
 	if e.schemaLoaded && e.programInfo != nil {
 		evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
@@ -573,12 +598,21 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 	}
 
 	clause := sourceUnit.Clauses[0]
-	// In Mangle v0.4.0, queries are just Clauses with a Head atom
-	queryAtom := clause.Head
-	queryAtom = normalizeAnonymousVariables(queryAtom)
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+
+	// A query with a body (premises) is a conditional query: its head projects
+	// the variables that satisfy the body. Evaluate the body through Mangle
+	// rather than pattern-matching the head against stored facts, which would
+	// silently ignore the conditions (e.g. `T > 3000`).
+	if len(clause.Premises) > 0 {
+		return e.queryWithBodyLocked(clause)
+	}
+
+	// In Mangle v0.4.0, a body-less query is just a Clause with a Head atom.
+	queryAtom := clause.Head
+	queryAtom = normalizeAnonymousVariables(queryAtom)
 
 	// Get all facts matching the query predicate using callback pattern
 	results := make([]QueryResult, 0)
@@ -629,6 +663,77 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 		predName := queryAtom.Predicate.Symbol
 		bufferResults := e.queryBufferDirect(predName, queryAtom.Args)
 		results = append(results, bufferResults...)
+	}
+
+	return results, nil
+}
+
+// queryResultPredicate is the synthetic head predicate used to project the
+// results of a conditional query. It is namespaced to avoid colliding with
+// user or schema predicates.
+const queryResultPredicate = "__browsernerd_query_result"
+
+// queryWithBodyLocked evaluates a conditional query (a clause with premises) by
+// projecting its body onto a synthetic head predicate and running full Mangle
+// evaluation over an isolated store. This keeps the query read-only — it never
+// mutates the engine's live program or temporal store — while still enforcing
+// the body's conditions, negation, and comparisons. e.mu must be held.
+func (e *Engine) queryWithBodyLocked(clause ast.Clause) ([]QueryResult, error) {
+	if !e.schemaLoaded || e.programInfo == nil {
+		return nil, fmt.Errorf("engine not ready")
+	}
+
+	// Project the body onto a fresh predicate carrying the original head's args.
+	headArgs := clause.Head.Args
+	synthSym := ast.PredicateSym{Symbol: queryResultPredicate, Arity: len(headArgs)}
+	synthClause := ast.Clause{
+		Head:      ast.Atom{Predicate: synthSym, Args: headArgs},
+		Premises:  clause.Premises,
+		Transform: clause.Transform,
+	}
+
+	// Analyze schema + accumulated rules + the synthetic projection into a fresh
+	// program. This does not touch e.programInfo.
+	units := make([]parse.SourceUnit, 0, len(e.schemaUnits)+len(e.ruleUnits)+1)
+	units = append(units, e.schemaUnits...)
+	units = append(units, e.ruleUnits...)
+	units = append(units, parse.SourceUnit{Clauses: []ast.Clause{synthClause}})
+
+	programInfo, err := analysis.Analyze(units, make(map[ast.PredicateSym]ast.Decl))
+	if err != nil {
+		return nil, fmt.Errorf("analyze query: %w", err)
+	}
+
+	// Evaluate into an isolated copy of the current facts.
+	isolated := e.buildTeeingStoreLocked()
+	evalStore := factstore.NewTemporalFactStoreAdapter(isolated)
+	if err := e.evalProgramWith(programInfo, evalStore, isolated, "query_body"); err != nil {
+		return nil, fmt.Errorf("evaluate query: %w", err)
+	}
+
+	// Read out the derived projection, mapping each argument position back to the
+	// variable named in the original head.
+	wildcards := make([]ast.BaseTerm, len(headArgs))
+	for i := range wildcards {
+		wildcards[i] = ast.Variable{Symbol: fmt.Sprintf("Q%d", i)}
+	}
+
+	results := make([]QueryResult, 0)
+	err = evalStore.GetFacts(ast.Atom{Predicate: synthSym, Args: wildcards}, func(atom ast.Atom) error {
+		result := make(QueryResult)
+		for i, arg := range headArgs {
+			if i >= len(atom.Args) {
+				break
+			}
+			if varArg, ok := arg.(ast.Variable); ok && varArg.Symbol != "_" {
+				result[varArg.Symbol] = e.convertConstant(atom.Args[i])
+			}
+		}
+		results = append(results, result)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read query results: %w", err)
 	}
 
 	return results, nil
