@@ -1794,3 +1794,62 @@ func TestEngineSlowBackendCorrelationUsesKeyedJoin(t *testing.T) {
 		t.Fatalf("expected BackendMsg='db pool exhausted', got %v", got)
 	}
 }
+
+// TestEngineConditionalQuery verifies that a query with a body (premises) is
+// actually evaluated against its conditions, rather than the body being
+// silently dropped and only the head predicate matched. This is the
+// foundation for assertion-style tools built on query-facts.
+func TestEngineConditionalQuery(t *testing.T) {
+	cfg := config.MangleConfig{
+		Enable:          true,
+		SchemaPath:      "../../schemas/browser.mg",
+		FactBufferLimit: 1000,
+	}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now()
+	// net_response(SessionId, Id, Status, Latency, Duration)
+	facts := []Fact{
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "fast", int64(200), int64(10), int64(100)}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{testSessionID, "slow", int64(200), int64(10), int64(1500)}, Timestamp: now},
+	}
+	if err := engine.AddFacts(ctx, facts); err != nil {
+		t.Fatalf("AddFacts failed: %v", err)
+	}
+
+	// The condition must filter: only the response whose Duration exceeds 1000ms.
+	slow, err := engine.Query(ctx, `slow_resp(Id) :- net_response(_, Id, _, _, D), D > 1000.`)
+	if err != nil {
+		t.Fatalf("conditional query failed: %v", err)
+	}
+	if len(slow) != 1 {
+		t.Fatalf("expected exactly 1 slow response, got %d: %+v", len(slow), slow)
+	}
+	if got := slow[0]["Id"]; got != "slow" {
+		t.Fatalf("expected Id=slow, got %v", got)
+	}
+
+	// A looser threshold must return both, proving the numeric comparison is
+	// genuinely evaluated (not a constant single-row result).
+	both, err := engine.Query(ctx, `any_resp(Id) :- net_response(_, Id, _, _, D), D > 50.`)
+	if err != nil {
+		t.Fatalf("conditional query (loose) failed: %v", err)
+	}
+	if len(both) != 2 {
+		t.Fatalf("expected 2 responses over 50ms, got %d: %+v", len(both), both)
+	}
+
+	// A threshold nothing satisfies must return no rows.
+	none, err := engine.Query(ctx, `huge_resp(Id) :- net_response(_, Id, _, _, D), D > 100000.`)
+	if err != nil {
+		t.Fatalf("conditional query (empty) failed: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected 0 responses over 100000ms, got %d: %+v", len(none), none)
+	}
+}
