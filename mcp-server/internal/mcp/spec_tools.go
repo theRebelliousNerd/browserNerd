@@ -182,14 +182,15 @@ func (t *GetSpecsTool) InputSchema() map[string]interface{} {
 			"from":      map[string]interface{}{"type": "integer", "description": "Start line of the region you're working on."},
 			"to":        map[string]interface{}{"type": "integer", "description": "End line of the region you're working on."},
 			"line":      map[string]interface{}{"type": "integer", "description": "A single line, shorthand for from==to."},
-			"component": map[string]interface{}{"type": "string", "description": "React component name to match a spec binding."},
-			"route":     map[string]interface{}{"type": "string", "description": "Route/path to match a spec binding."},
-			"selector":  map[string]interface{}{"type": "string", "description": "Selector to match a spec binding."},
+			"component":  map[string]interface{}{"type": "string", "description": "React component name to match a spec binding."},
+			"route":      map[string]interface{}{"type": "string", "description": "Route/path to match a spec binding."},
+			"selector":   map[string]interface{}{"type": "string", "description": "Selector to match a spec binding."},
+			"session_id": map[string]interface{}{"type": "string", "description": "Resolve bindings against this live session (component->fiber->DOM, route, selector)."},
 		},
 	}
 }
 
-func (t *GetSpecsTool) Execute(_ context.Context, args map[string]interface{}) (interface{}, error) {
+func (t *GetSpecsTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	dir, specs, err := loadSpecsDir(args)
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error(), "dir": dir}, nil
@@ -217,12 +218,40 @@ func (t *GetSpecsTool) Execute(_ context.Context, args map[string]interface{}) (
 	for _, si := range selected {
 		views = append(views, invariantView(si))
 	}
-	return map[string]interface{}{
+
+	out := map[string]interface{}{
 		"dir":          dir,
 		"specs_loaded": len(specs),
 		"invariants":   views,
 		"count":        len(views),
-	}, nil
+	}
+
+	// When a session is given, resolve each matched spec's bindings against the
+	// live page so the agent learns whether the bound component/route/selector
+	// is actually present and which node refs it maps to.
+	if sessionID := getStringArg(args, "session_id"); sessionID != "" {
+		seen := make(map[string]bool)
+		resolved := make([]map[string]interface{}, 0)
+		for _, si := range selected {
+			if seen[si.spec.Name] {
+				continue
+			}
+			seen[si.spec.Name] = true
+			resolutions := resolveSpecBindings(ctx, t.engine, sessionID, si.spec)
+			if len(resolutions) == 0 {
+				continue
+			}
+			resolved = append(resolved, map[string]interface{}{
+				"spec":     si.spec.Name,
+				"bindings": resolutions,
+			})
+		}
+		if len(resolved) > 0 {
+			out["resolved_bindings"] = resolved
+		}
+	}
+
+	return out, nil
 }
 
 // CheckSpecsTool evaluates spec invariants against the current fact state and
@@ -259,6 +288,7 @@ func (t *CheckSpecsTool) InputSchema() map[string]interface{} {
 			"component":           map[string]interface{}{"type": "string", "description": "Scope to specs bound to this component."},
 			"route":               map[string]interface{}{"type": "string", "description": "Scope to specs bound to this route."},
 			"selector":            map[string]interface{}{"type": "string", "description": "Scope to specs bound to this selector."},
+			"session_id":          map[string]interface{}{"type": "string", "description": "Resolve each violated spec's bindings against this live session."},
 			"diagnose_on_failure": map[string]interface{}{"type": "boolean", "description": "Attach causal facts on violation (default true)."},
 		},
 	}
@@ -272,8 +302,11 @@ func (t *CheckSpecsTool) Execute(ctx context.Context, args map[string]interface{
 
 	selected := selectInvariants(specs, specFilterFromArgs(args))
 
+	sessionID := getStringArg(args, "session_id")
+
 	checked := 0
 	violations := make([]map[string]interface{}, 0)
+	violatedSpecs := make(map[string]spec.Spec)
 	for _, si := range selected {
 		if si.inv.Query == "" {
 			continue // delivery-only prose invariant, nothing to evaluate
@@ -290,6 +323,7 @@ func (t *CheckSpecsTool) Execute(ctx context.Context, args map[string]interface{
 				res["to"] = si.inv.To
 			}
 			violations = append(violations, res)
+			violatedSpecs[si.spec.Name] = si.spec
 		}
 	}
 
@@ -303,6 +337,25 @@ func (t *CheckSpecsTool) Execute(ctx context.Context, args map[string]interface{
 	if len(violations) > 0 && getBoolArg(args, "diagnose_on_failure", true) {
 		if diag := causalDiagnosis(ctx, t.engine); len(diag) > 0 {
 			result["diagnosis"] = diag
+		}
+	}
+
+	// Resolve bindings for violated specs so the agent knows whether the bound
+	// component/route/selector is actually on the page.
+	if sessionID != "" && len(violatedSpecs) > 0 {
+		resolved := make([]map[string]interface{}, 0, len(violatedSpecs))
+		for name, s := range violatedSpecs {
+			resolutions := resolveSpecBindings(ctx, t.engine, sessionID, s)
+			if len(resolutions) == 0 {
+				continue
+			}
+			resolved = append(resolved, map[string]interface{}{
+				"spec":     name,
+				"bindings": resolutions,
+			})
+		}
+		if len(resolved) > 0 {
+			result["resolved_bindings"] = resolved
 		}
 	}
 

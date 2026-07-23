@@ -142,3 +142,40 @@ func TestCheckSpecsTool_ScopedByLineRange(t *testing.T) {
 		t.Fatalf("expected exactly 1 invariant checked in range, got %d", checked)
 	}
 }
+
+func TestGetSpecsTool_ResolvesBindings(t *testing.T) {
+	dir := writeSpecDir(t)
+	engine := setupTestEngine(t)
+	now := time.Now()
+	if err := engine.AddFacts(context.Background(), []mangle.Fact{
+		{Predicate: "react_component", Args: []interface{}{testSessionID, "f1", "LoginForm", "root"}, Timestamp: now},
+		{Predicate: "dom_mapping", Args: []interface{}{testSessionID, "f1", "node-42"}, Timestamp: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &GetSpecsTool{engine: engine}
+	res, err := tool.Execute(context.Background(), map[string]interface{}{
+		"dir":        dir,
+		"component":  "LoginForm",
+		"session_id": testSessionID,
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	m := res.(map[string]interface{})
+	rb, ok := m["resolved_bindings"].([]map[string]interface{})
+	if !ok || len(rb) == 0 {
+		t.Fatalf("expected resolved_bindings, got %+v", m["resolved_bindings"])
+	}
+	bindings := rb[0]["bindings"].([]bindingResolution)
+	var componentPresent bool
+	for _, b := range bindings {
+		if b.Kind == "component" && b.Present && len(b.Nodes) == 1 && b.Nodes[0] == "node-42" {
+			componentPresent = true
+		}
+	}
+	if !componentPresent {
+		t.Fatalf("expected LoginForm resolved to node-42, got %+v", bindings)
+	}
+}

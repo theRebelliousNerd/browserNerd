@@ -228,6 +228,7 @@ func (s *Server) registerIndividualTools() {
 
 	// Declarative testing
 	s.registerTool(&RunTestTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&GenerateTestTool{engine: s.engine})
 
 	// Frontend spec delivery & conformance
 	s.registerTool(&GetSpecsTool{engine: s.engine})

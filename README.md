@@ -7,7 +7,7 @@ Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent s
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/MCP_Tools-37-blue)](https://modelcontextprotocol.io)
+[![Tools](https://img.shields.io/badge/MCP_Tools-43-blue)](https://modelcontextprotocol.io)
 
 ---
 
@@ -150,7 +150,7 @@ browser:
 
 ---
 
-## Complete Tool Reference (37 Tools)
+## Complete Tool Reference (43 Tools)
 
 ### Session Management (8 tools)
 
@@ -223,6 +223,15 @@ browser:
 |------|-------------|
 | `get-console-errors` | Console errors with root cause analysis + Docker correlation |
 | `get-toast-notifications` | Detect toast/snackbar overlays with API correlation |
+
+### Testing & Spec Delivery (4 tools)
+
+| Tool | Description |
+|------|-------------|
+| `run-test` | Run a declarative test: replay actions, evaluate Mangle assertions, return a causal chain on failure |
+| `generate-test` | Turn a recorded interaction (action facts) into a draft `run-test` spec |
+| `get-specs` | Deliver spec invariants governing a component, route, selector, or the file line-range you're editing |
+| `check-specs` | Evaluate spec invariants against current state, report violations with causal diagnosis |
 
 ---
 
@@ -608,7 +617,7 @@ browserNerd/
 |   +-- cmd/server/             # Entry point
 |   +-- internal/
 |   |   +-- browser/            # Rod session management, CDP events
-|   |   +-- mcp/                # MCP server, 37 tool implementations
+|   |   +-- mcp/                # MCP server, 43 tool implementations
 |   |   +-- mangle/             # Fact engine, rule evaluation
 |   |   +-- config/             # YAML configuration
 |   |   +-- docker/             # Container log integration
