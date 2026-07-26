@@ -39,6 +39,9 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 				SchemaPath:      "../../schemas/browser.mg",
 				FactBufferLimit: 1000,
 			},
+			MCP: config.MCPConfig{
+				ProgressiveOnly: mainBoolPtr(false),
+			},
 			Docker: config.DockerConfig{
 				Enabled: false,
 			},
@@ -134,6 +137,9 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 				SchemaPath:      "../../schemas/browser.mg",
 				FactBufferLimit: 1000,
 			},
+			MCP: config.MCPConfig{
+				ProgressiveOnly: mainBoolPtr(false),
+			},
 			Docker: config.DockerConfig{
 				Enabled: false,
 			},
@@ -189,7 +195,14 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 			t.Fatalf("create-session failed: %v", err)
 		}
 
-		session := createResult.(*browser.Session)
+		createMap, ok := createResult.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected create-session result map, got %T", createResult)
+		}
+		session, ok := createMap["session"].(*browser.Session)
+		if !ok {
+			t.Fatalf("expected created session, got %T", createMap["session"])
+		}
 		if session.ID == "" {
 			t.Error("expected session to be created")
 		}
@@ -230,8 +243,8 @@ func TestIntegrationServerLifecycle(t *testing.T) {
 		}
 
 		shutdownMap := shutdownResult.(map[string]interface{})
-		if !shutdownMap["success"].(bool) {
-			t.Error("expected successful shutdown")
+		if shutdownMap["status"] != "stopped" {
+			t.Errorf("expected stopped shutdown status, got %v", shutdownMap["status"])
 		}
 
 		// Verify browser is disconnected

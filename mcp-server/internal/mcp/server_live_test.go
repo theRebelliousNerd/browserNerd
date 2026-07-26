@@ -638,7 +638,14 @@ func TestLiveAttachSession(t *testing.T) {
 	result, _ := server.ExecuteTool("create-session", map[string]interface{}{
 		"url": "about:blank",
 	})
-	session := result.(*browser.Session)
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected create-session result map, got %T", result)
+	}
+	session, ok := resultMap["session"].(*browser.Session)
+	if !ok {
+		t.Fatalf("expected created session, got %T", resultMap["session"])
+	}
 
 	// Attach to the same target
 	_ = ctx // Use context
@@ -649,7 +656,14 @@ func TestLiveAttachSession(t *testing.T) {
 		t.Fatalf("attach-session failed: %v", err)
 	}
 
-	attached := attachResult.(*browser.Session)
+	attachMap, ok := attachResult.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected attach-session result map, got %T", attachResult)
+	}
+	attached, ok := attachMap["session"].(*browser.Session)
+	if !ok {
+		t.Fatalf("expected attached session, got %T", attachMap["session"])
+	}
 	if attached.Status != "attached" {
 		t.Errorf("Expected status 'attached', got %q", attached.Status)
 	}

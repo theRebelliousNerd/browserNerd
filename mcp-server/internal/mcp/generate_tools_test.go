@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 )
 
 func TestGenerateTestFromActions(t *testing.T) {
@@ -36,8 +37,10 @@ func TestGenerateTestFromActions(t *testing.T) {
 	if len(spec.Actions) != 3 {
 		t.Fatalf("expected 3 actions in spec, got %d", len(spec.Actions))
 	}
-	// Order must be navigate -> type -> click by timestamp.
-	if spec.Actions[0]["type"] != "navigate" || spec.Actions[1]["type"] != "type" || spec.Actions[2]["type"] != "click" {
+	// Order must be navigate -> interact/type -> interact/click by timestamp.
+	if spec.Actions[0]["type"] != "navigate" ||
+		spec.Actions[1]["type"] != "interact" || spec.Actions[1]["action"] != "type" ||
+		spec.Actions[2]["type"] != "interact" || spec.Actions[2]["action"] != "click" {
 		t.Fatalf("actions out of order: %+v", spec.Actions)
 	}
 	if spec.Actions[1]["value"] != "user@example.com" {
@@ -68,5 +71,34 @@ func TestGenerateTestSessionFilter(t *testing.T) {
 	}
 	if res.(map[string]interface{})["actions_count"] != 0 {
 		t.Fatalf("expected 0 actions for filtered session, got %v", res.(map[string]interface{})["actions_count"])
+	}
+}
+
+func TestGenerateTestUsesEnvironmentReferenceForRedactedInput(t *testing.T) {
+	engine := setupTestEngine(t)
+	now := time.Now()
+	if err := engine.AddFacts(context.Background(), []mangle.Fact{{
+		Predicate: "input_event",
+		Args:      []interface{}{testSessionID, "login-password", security.Redacted, now.UnixMilli()},
+		Timestamp: now,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := (&GenerateTestTool{engine: engine}).Execute(context.Background(), map[string]interface{}{
+		"session_id": testSessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := result.(map[string]interface{})["test"].(TestSpec)
+	if len(spec.Actions) != 1 {
+		t.Fatalf("expected one action, got %+v", spec.Actions)
+	}
+	action := spec.Actions[0]
+	if action["value"] != nil {
+		t.Fatalf("generated fixture persisted a redacted literal as a value: %+v", action)
+	}
+	if action["value_env"] != "BROWSERNERD_TEST_LOGIN_PASSWORD" {
+		t.Fatalf("expected environment-backed secret, got %+v", action)
 	}
 }

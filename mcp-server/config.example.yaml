@@ -1,22 +1,27 @@
 server:
   name: browsernerd-mcp
-  version: 0.0.8
-  log_file: browsernerd-mcp.log
+  version: 1.1.0
+  log_file: data/browsernerd-mcp.log
 
 browser:
-  # Either point to an existing Chrome with --remote-debugging-port or provide a launch command.
-  debugger_url: ws://localhost:9222
+  # Leave both fields empty to let Rod discover/download Chrome and choose a
+  # private debugging endpoint. Set debugger_url only to attach externally.
+  debugger_url: ""
   launch: []
   default_navigation_timeout: 15s
   default_attach_timeout: 10s
   session_store: sessions.json
   enable_dom_ingestion: true
   enable_header_ingestion: true
+  multi_tab_default: true
+  max_tabs: 32
+  max_browsers: 4
+  idle_tab_timeout: 0s
 
 mcp:
   # When zero, stdio mode is used. Set to 2024 for SSE/HTTP testing.
   sse_port: 0
-  # Keep the focused 6-tool interface by default.
+  # Keep the focused 11-tool interface by default.
   progressive_only: true
 
 mangle:
@@ -24,6 +29,31 @@ mangle:
   schema_path: schemas/browser.mg
   disable_builtin_rules: false
   fact_buffer_limit: 2048
+  max_rule_bytes: 65536
+  max_query_bytes: 32768
+  max_rule_clauses: 16
+  max_premises: 64
+  max_rules: 128
+  max_created_facts: 10000
+  max_query_results: 1000
+  evaluation_timeout: 2s
+
+specs:
+  enabled: true
+  # Each source is an independent corpus. Indexes are optional ordering hints;
+  # bounded root scans remain the source of truth.
+  sources:
+    - name: browsernerd
+      roots: ["../docs/specs"]
+      indexes: []
+  # A target project can add any Markdown spec/index layout:
+  # - name: product
+  #   roots: ["C:/CodeProjects/example/docs/specs"]
+  #   indexes: ["C:/CodeProjects/example/docs/indexes/spec-catalog.md"]
+  max_files: 2000
+  max_file_bytes: 2097152
+  max_results: 12
+  max_excerpt_bytes: 1200
 
 recorder:
   # Enables MCP call/result flight logs and export_flight output support.
@@ -32,3 +62,10 @@ recorder:
   trace_dir: data/traces
   # Keep newest N trace files when rotating startup captures.
   max_rotated_files: 3
+
+security:
+  redact_sensitive_data: true
+  # Arbitrary page scripts can read passwords, cookies, and application state.
+  # Keep disabled unless an explicitly trusted workflow needs the escape hatch.
+  allow_unsafe_javascript: false
+  writable_roots: ["data/screenshots", "data/traces"]

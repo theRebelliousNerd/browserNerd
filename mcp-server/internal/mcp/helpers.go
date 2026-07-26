@@ -46,6 +46,24 @@ func findElementByRef(page *rod.Page, ref string) (*rod.Element, error) {
 	return findElementByRefWithRegistry(page, ref, nil)
 }
 
+func selectOption(element *rod.Element, value string) error {
+	result, err := element.Timeout(5*time.Second).Eval(`value => {
+		const option = Array.from(this.options || []).find(item => item.value === value);
+		if (!option) return false;
+		this.value = value;
+		this.dispatchEvent(new Event("input", { bubbles: true }));
+		this.dispatchEvent(new Event("change", { bubbles: true }));
+		return true;
+	}`, value)
+	if err != nil {
+		return err
+	}
+	if result.Value.Bool() {
+		return nil
+	}
+	return element.Timeout(5*time.Second).Select([]string{value}, true, "text")
+}
+
 // findElementByRefWithRegistry finds an element using multi-strategy search with fingerprint support.
 // Search order prioritizes stable identifiers:
 // 1. Prefixed refs (testid:X, aria:X, row:X, rowkey:X) - parsed and used directly
@@ -91,6 +109,13 @@ func findElementByRefWithRegistry(page *rod.Page, ref string, registry *browser.
 					}
 				}
 			}
+		}
+	}
+
+	if strings.HasPrefix(baseRef, "name:") {
+		name := strings.TrimPrefix(baseRef, "name:")
+		if el, ok := findBySelectorWithFingerprint(page, timeout, `[name="`+escapeAttributeValue(name)+`"]`, nil, duplicateIndex, hasDuplicateSuffix); ok {
+			return el, nil
 		}
 	}
 
@@ -390,7 +415,8 @@ func validateFingerprint(element *rod.Element, fp *browser.ElementFingerprint) F
 	tagName, err := element.Property("tagName")
 	if err == nil {
 		actualTag := strings.ToLower(tagName.Str())
-		if fp.TagName != "" && actualTag != fp.TagName {
+		expectedTag := strings.ToLower(fp.TagName)
+		if expectedTag != "" && actualTag != expectedTag {
 			result.Valid = false
 			result.Changes = append(result.Changes, fmt.Sprintf("tag_name: expected %s, got %s", fp.TagName, actualTag))
 			result.Score -= 0.3

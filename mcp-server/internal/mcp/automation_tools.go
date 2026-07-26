@@ -49,9 +49,11 @@ PREFER THIS OVER: Multiple interact() calls for multi-step workflows.
 SUPPORTED ACTIONS:
 - action("click", Ref)
 - action("type", Ref, Value)
+- action("select", Ref, Value)
 - action("navigate", URL)
 - action("press", Key)
 - action("wait", Milliseconds)
+- action("screenshot", Name)
 
 EXAMPLE (login form - 1 call instead of 3):
 execute-plan(actions: [
@@ -77,7 +79,7 @@ func (t *ExecutePlanTool) InputSchema() map[string]interface{} {
 			},
 			"actions": map[string]interface{}{
 				"type":        "array",
-				"description": "Optional: Direct action list instead of Mangle-derived. Each action: {type: 'click'|'type'|'navigate'|'press'|'wait', ref: '...', value: '...'}",
+				"description": "Optional: Direct action list instead of Mangle-derived. Each action: {type: 'click'|'type'|'select'|'navigate'|'press'|'wait'|'screenshot', ref: '...', value: '...'}",
 				"items": map[string]interface{}{
 					"type": "object",
 				},
@@ -163,7 +165,11 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 		return map[string]interface{}{
 			"success":       true,
 			"message":       "no actions to execute",
-			"actions_count": 0,
+			"total_actions": 0,
+			"executed":      0,
+			"succeeded":     0,
+			"failed":        0,
+			"results":       []map[string]interface{}{},
 		}, nil
 	}
 
@@ -206,6 +212,16 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 					_ = element.Input("")
 				}
 				actionErr = element.Input(value)
+			}
+			result["ref"] = ref
+			result["value"] = value
+
+		case "select":
+			element, err := findElementByRefWithRegistry(page, ref, registry)
+			if err != nil {
+				actionErr = fmt.Errorf("element not found: %s", ref)
+			} else {
+				actionErr = selectOption(element, value)
 			}
 			result["ref"] = ref
 			result["value"] = value
@@ -309,6 +325,7 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 	return map[string]interface{}{
 		"success":       errorCount == 0,
 		"total_actions": len(actions),
+		"executed":      len(results),
 		"succeeded":     successCount,
 		"failed":        errorCount,
 		"results":       results,

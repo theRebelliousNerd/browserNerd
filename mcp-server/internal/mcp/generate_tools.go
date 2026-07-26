@@ -4,16 +4,17 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 
 	"gopkg.in/yaml.v3"
 )
 
-// GenerateTestTool synthesizes a draft TestSpec from the action facts recorded
-// for a session (navigations, inputs, clicks), so authoring a test is a capture
-// rather than hand-writing queries.
+// GenerateTestTool synthesizes a draft TestSpec from privacy-safe action facts.
+// The emitted operations use browser-act's native command vocabulary.
 type GenerateTestTool struct {
 	engine *mangle.Engine
 }
@@ -65,21 +66,26 @@ func (t *GenerateTestTool) Execute(_ context.Context, args map[string]interface{
 
 	for _, f := range t.engine.FactsByPredicate("navigation_event") {
 		if url, ok := stringArgAt(f, 1, sessionID); ok {
-			timed = append(timed, timedAction{f.Timestamp, map[string]interface{}{"type": "navigate", "value": url}})
+			timed = append(timed, timedAction{f.Timestamp, map[string]interface{}{"type": "navigate", "url": url}})
 		}
 	}
 	for _, f := range t.engine.FactsByPredicate("input_event") {
 		if node, ok := stringArgAt(f, 1, sessionID); ok {
-			action := map[string]interface{}{"type": "type", "ref": node}
+			action := map[string]interface{}{"type": "interact", "action": "type", "ref": node}
 			if len(f.Args) >= 3 {
-				action["value"] = fmt.Sprintf("%v", f.Args[2])
+				value := fmt.Sprintf("%v", f.Args[2])
+				if value == security.Redacted {
+					action["value_env"] = fixtureEnvironmentName(node)
+				} else {
+					action["value"] = value
+				}
 			}
 			timed = append(timed, timedAction{f.Timestamp, action})
 		}
 	}
 	for _, f := range t.engine.FactsByPredicate("click_event") {
 		if node, ok := stringArgAt(f, 1, sessionID); ok {
-			timed = append(timed, timedAction{f.Timestamp, map[string]interface{}{"type": "click", "ref": node}})
+			timed = append(timed, timedAction{f.Timestamp, map[string]interface{}{"type": "interact", "action": "click", "ref": node}})
 		}
 	}
 
@@ -112,7 +118,7 @@ func (t *GenerateTestTool) Execute(_ context.Context, args map[string]interface{
 		"actions_count": len(actions),
 		"test":          spec,
 		"test_yaml":     string(yamlBytes),
-		"note":          "draft — edit the assertions to describe success before running",
+		"note":          "draft - edit the assertions to describe success before running",
 	}, nil
 }
 
@@ -129,4 +135,20 @@ func stringArgAt(f mangle.Fact, i int, sessionID string) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("%v", f.Args[i]), true
+}
+
+func fixtureEnvironmentName(ref string) string {
+	var normalized strings.Builder
+	for _, r := range strings.ToUpper(ref) {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			normalized.WriteRune(r)
+		} else if normalized.Len() > 0 {
+			normalized.WriteByte('_')
+		}
+	}
+	name := strings.Trim(normalized.String(), "_")
+	if name == "" {
+		name = "SECRET"
+	}
+	return "BROWSERNERD_TEST_" + name
 }

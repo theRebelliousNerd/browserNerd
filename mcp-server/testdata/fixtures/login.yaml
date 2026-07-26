@@ -1,0 +1,27 @@
+name: login reaches dashboard without new failures
+session_id: replace-at-runtime
+actions:
+  - type: interact
+    action: type
+    ref: email
+    value_env: BROWSERNERD_TEST_EMAIL
+  - type: interact
+    action: type
+    ref: password
+    value_env: BROWSERNERD_TEST_PASSWORD
+    submit: true
+  - type: await_stable
+    timeout_ms: 15000
+assertions:
+  - name: dashboard is current
+    query: 'dashboard_url(S) :- current_url(S, U), :string:contains(U, "/dashboard")'
+    expect: present
+    scope: fresh
+  - name: no new visible errors
+    query: user_visible_error(S, E, K, T)
+    expect: absent
+    scope: fresh
+  - name: no new failed requests
+    query: failed_request(S, R, U, St)
+    expect: absent
+    scope: fresh

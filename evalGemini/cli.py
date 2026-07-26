@@ -14,7 +14,7 @@ from config import Condition, HarnessSettings
 from harness import run_harness
 from report import write_results
 
-# Load .env from project root (3 levels up from this file: evalGemini -> BrowserNERD -> dev_tools -> symbiogenBackEndV3)
+# Load .env from project root (3 levels up from this file: evalGemini -> BrowserNERD -> dev_tools -> cross-threadBackEndV3)
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_PROJECT_ROOT / ".env")
 

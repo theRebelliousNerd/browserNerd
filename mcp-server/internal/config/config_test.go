@@ -14,11 +14,11 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Name != "browsernerd-mcp" {
 		t.Errorf("expected server name 'browsernerd-mcp', got %q", cfg.Server.Name)
 	}
-	if cfg.Server.Version != "0.0.8" {
-		t.Errorf("expected server version '0.0.8', got %q", cfg.Server.Version)
+	if cfg.Server.Version != "1.1.0" {
+		t.Errorf("expected server version '1.1.0', got %q", cfg.Server.Version)
 	}
-	if cfg.Server.LogFile != "browsernerd-mcp.log" {
-		t.Errorf("expected log file 'browsernerd-mcp.log', got %q", cfg.Server.LogFile)
+	if cfg.Server.LogFile != filepath.Join(defaultDataRoot(), "browsernerd-mcp.log") {
+		t.Errorf("unexpected default log file %q", cfg.Server.LogFile)
 	}
 
 	// Browser defaults
@@ -31,8 +31,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Browser.DefaultAttachTimeout != "10s" {
 		t.Errorf("expected attach timeout '10s', got %q", cfg.Browser.DefaultAttachTimeout)
 	}
-	if cfg.Browser.SessionStore != "sessions.json" {
-		t.Errorf("expected session store 'sessions.json', got %q", cfg.Browser.SessionStore)
+	if cfg.Browser.SessionStore != filepath.Join(defaultDataRoot(), "sessions.json") {
+		t.Errorf("unexpected default session store %q", cfg.Browser.SessionStore)
 	}
 	if !cfg.Browser.EnableDOMIngestion {
 		t.Error("expected EnableDOMIngestion to be true")
@@ -49,6 +49,39 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Browser.ViewportHeight != 1080 {
 		t.Errorf("expected viewport height 1080, got %d", cfg.Browser.ViewportHeight)
 	}
+	if !cfg.Browser.IsMultiTabDefault() {
+		t.Error("expected multi-tab shared-context sessions by default")
+	}
+	if cfg.Browser.GetMaxTabs() != 32 || cfg.Browser.GetMaxBrowsers() != 4 {
+		t.Errorf("unexpected browser lifecycle limits: tabs=%d browsers=%d", cfg.Browser.GetMaxTabs(), cfg.Browser.GetMaxBrowsers())
+	}
+	if !cfg.Specs.IsEnabled() || cfg.Specs.GetMaxFiles() != 2000 || cfg.Specs.GetMaxResults() != 12 {
+		t.Errorf("unexpected spec ingestion defaults: %+v", cfg.Specs)
+	}
+	if !cfg.Browser.RepoTrace.Enabled {
+		t.Error("expected Browser.RepoTrace.Enabled to be true")
+	}
+	if cfg.Browser.RepoTrace.MaxFiles != 4000 {
+		t.Errorf("expected Browser.RepoTrace.MaxFiles 4000, got %d", cfg.Browser.RepoTrace.MaxFiles)
+	}
+	if cfg.Browser.RepoTrace.MaxNavigationHints != 16 {
+		t.Errorf("expected Browser.RepoTrace.MaxNavigationHints 16, got %d", cfg.Browser.RepoTrace.MaxNavigationHints)
+	}
+	if cfg.Browser.RepoTrace.MaxControlHints != 24 {
+		t.Errorf("expected Browser.RepoTrace.MaxControlHints 24, got %d", cfg.Browser.RepoTrace.MaxControlHints)
+	}
+	if cfg.Browser.RepoTrace.MaxPlanSteps != 16 {
+		t.Errorf("expected Browser.RepoTrace.MaxPlanSteps 16, got %d", cfg.Browser.RepoTrace.MaxPlanSteps)
+	}
+	if cfg.Browser.RepoTrace.MaxFrontendMatches != 12 {
+		t.Errorf("expected Browser.RepoTrace.MaxFrontendMatches 12, got %d", cfg.Browser.RepoTrace.MaxFrontendMatches)
+	}
+	if cfg.Browser.RepoTrace.MaxBackendMatches != 12 {
+		t.Errorf("expected Browser.RepoTrace.MaxBackendMatches 12, got %d", cfg.Browser.RepoTrace.MaxBackendMatches)
+	}
+	if len(cfg.Browser.RepoTrace.SearchRoots) != 1 || cfg.Browser.RepoTrace.SearchRoots[0] != "." {
+		t.Errorf("expected Browser.RepoTrace.SearchRoots ['.'], got %v", cfg.Browser.RepoTrace.SearchRoots)
+	}
 
 	// Mangle defaults
 	if !cfg.Mangle.Enable {
@@ -59,6 +92,12 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Mangle.FactBufferLimit != 2048 {
 		t.Errorf("expected fact buffer limit 2048, got %d", cfg.Mangle.FactBufferLimit)
+	}
+	if cfg.Mangle.GetMaxCreatedFacts() != 10000 || cfg.Mangle.GetMaxQueryResults() != 1000 {
+		t.Errorf("unexpected Mangle safety defaults: %+v", cfg.Mangle)
+	}
+	if cfg.Mangle.GetEvaluationTimeout() != 2*time.Second {
+		t.Errorf("expected 2s Mangle evaluation timeout, got %s", cfg.Mangle.GetEvaluationTimeout())
 	}
 
 	// Docker defaults
@@ -73,11 +112,20 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.Recorder.Enabled {
 		t.Error("expected Recorder.Enabled to be true")
 	}
-	if cfg.Recorder.TraceDir != "data/traces" {
-		t.Errorf("expected recorder trace dir 'data/traces', got %q", cfg.Recorder.TraceDir)
+	if cfg.Recorder.TraceDir != filepath.Join(defaultDataRoot(), "traces") {
+		t.Errorf("unexpected recorder trace dir %q", cfg.Recorder.TraceDir)
 	}
 	if cfg.Recorder.MaxRotatedFiles != 3 {
 		t.Errorf("expected recorder max rotated files 3, got %d", cfg.Recorder.MaxRotatedFiles)
+	}
+	if !cfg.Security.IsRedactionEnabled() {
+		t.Error("expected sensitive-data redaction to be enabled")
+	}
+	if cfg.Security.AllowsUnsafeJavaScript() {
+		t.Error("expected arbitrary JavaScript to be disabled by default")
+	}
+	if len(cfg.Security.WritableRoots) != 2 {
+		t.Fatalf("expected 2 writable roots, got %v", cfg.Security.WritableRoots)
 	}
 }
 
@@ -233,6 +281,50 @@ func TestValidate(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "recorder.max_rotated_files must be > 0 when recorder.enabled is true",
+		},
+		{
+			name: "repo trace enabled with invalid max files",
+			cfg: Config{
+				Server: ServerConfig{Name: "test"},
+				Browser: BrowserConfig{
+					AutoStart: false,
+					RepoTrace: RepoTraceConfig{
+						Enabled:            true,
+						MaxFiles:           0,
+						MaxFileBytes:       1024,
+						MaxSeedHints:       4,
+						MaxNavigationHints: 4,
+						MaxControlHints:    4,
+						MaxPlanSteps:       4,
+						MaxFrontendMatches: 2,
+						MaxBackendMatches:  2,
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "browser.repo_trace.max_files must be > 0 when browser.repo_trace.enabled is true",
+		},
+		{
+			name: "repo trace enabled with invalid max navigation hints",
+			cfg: Config{
+				Server: ServerConfig{Name: "test"},
+				Browser: BrowserConfig{
+					AutoStart: false,
+					RepoTrace: RepoTraceConfig{
+						Enabled:            true,
+						MaxFiles:           1,
+						MaxFileBytes:       1024,
+						MaxSeedHints:       4,
+						MaxNavigationHints: 0,
+						MaxControlHints:    4,
+						MaxPlanSteps:       4,
+						MaxFrontendMatches: 2,
+						MaxBackendMatches:  2,
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "browser.repo_trace.max_navigation_hints must be > 0 when browser.repo_trace.enabled is true",
 		},
 	}
 

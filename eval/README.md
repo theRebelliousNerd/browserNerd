@@ -1,3 +1,13 @@
+---
+title: BrowserNERD Evaluation Harness
+created: 2026-02-03
+last_updated: 2026-04-07
+doc_type: readme
+subsystem: infra
+read_when: Orienting in this directory
+indexes: []
+---
+
 # BrowserNERD Evaluation Harness
 
 Compares information extraction using BrowserNERD MCP against three baselines,

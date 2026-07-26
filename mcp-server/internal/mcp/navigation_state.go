@@ -204,6 +204,7 @@ func (t *NavigateURLTool) Execute(ctx context.Context, args map[string]interface
 	// WaitLoad() to wait indefinitely for an event that never fires.
 	currentInfo, _ := page.Info()
 	if currentInfo != nil && currentInfo.URL == url {
+		t.emitNavigationFacts(ctx, sessionID, url, false)
 		return map[string]interface{}{
 			"success":     true,
 			"url":         url,
@@ -248,19 +249,33 @@ func (t *NavigateURLTool) Execute(ctx context.Context, args map[string]interface
 		finalURL = info.URL
 	}
 
-	// Emit Mangle fact for navigation
-	now := time.Now()
-	_ = t.engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "navigation_event",
-		Args:      []interface{}{sessionID, finalURL, now.UnixMilli()},
-		Timestamp: now,
-	}})
+	t.emitNavigationFacts(ctx, sessionID, finalURL, true)
 
 	return map[string]interface{}{
 		"success":     true,
 		"url":         finalURL,
 		"duration_ms": duration.Milliseconds(),
 	}, nil
+}
+
+func (t *NavigateURLTool) emitNavigationFacts(ctx context.Context, sessionID, url string, navigated bool) {
+	if t.engine == nil {
+		return
+	}
+	now := time.Now()
+	facts := []mangle.Fact{{
+		Predicate: "current_url",
+		Args:      []interface{}{sessionID, url},
+		Timestamp: now,
+	}}
+	if navigated {
+		facts = append([]mangle.Fact{{
+			Predicate: "navigation_event",
+			Args:      []interface{}{sessionID, url, now.UnixMilli()},
+			Timestamp: now,
+		}}, facts...)
+	}
+	_ = t.engine.AddFacts(ctx, facts)
 }
 
 // PressKeyTool presses a keyboard key in a session.
@@ -380,11 +395,13 @@ func (t *PressKeyTool) Execute(ctx context.Context, args map[string]interface{})
 
 	// Emit Mangle fact
 	now := time.Now()
-	_ = t.engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "user_keypress",
-		Args:      []interface{}{sessionID, key, now.UnixMilli()},
-		Timestamp: now,
-	}})
+	if t.engine != nil {
+		_ = t.engine.AddFacts(ctx, []mangle.Fact{{
+			Predicate: "user_keypress",
+			Args:      []interface{}{sessionID, key, now.UnixMilli()},
+			Timestamp: now,
+		}})
+	}
 
 	return map[string]interface{}{
 		"success": true,
@@ -475,11 +492,13 @@ func (t *BrowserHistoryTool) Execute(ctx context.Context, args map[string]interf
 
 	// Emit Mangle fact
 	now := time.Now()
-	_ = t.engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "history_navigation",
-		Args:      []interface{}{sessionID, action, newURL, now.UnixMilli()},
-		Timestamp: now,
-	}})
+	if t.engine != nil {
+		_ = t.engine.AddFacts(ctx, []mangle.Fact{{
+			Predicate: "history_navigation",
+			Args:      []interface{}{sessionID, action, newURL, now.UnixMilli()},
+			Timestamp: now,
+		}})
+	}
 
 	return map[string]interface{}{
 		"success": true,

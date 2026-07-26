@@ -21,13 +21,13 @@ invariants:
 # Login form
 
 The login form takes an email and password and, on success, navigates to the
-dashboard. Prose here is for the agent to read as intent — it is delivered
+dashboard. Prose here is for the agent to read as intent - it is delivered
 alongside the invariants.
 
 ## Submit gating
 
 The submit button must stay disabled until both fields validate. The invariant
-below governs lines 42–80 of the source file, so an agent editing that region
+below governs lines 42-80 of the source file, so an agent editing that region
 receives it from `get-specs`.
 
 <!-- browsernerd:invariant name=submit-gated from:42 to:80 expect:present -->

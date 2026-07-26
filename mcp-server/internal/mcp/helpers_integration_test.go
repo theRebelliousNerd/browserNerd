@@ -44,7 +44,7 @@ func TestIntegrationFindElementByRef(t *testing.T) {
 	}
 
 	page, _ := sessions.Page(session.ID)
-	dataURL := "data:text/html;charset=utf-8," + testHTML
+	dataURL := htmlDataURL(testHTML)
 	err = page.Navigate(dataURL)
 	if err != nil {
 		t.Fatalf("Navigate failed: %v", err)
@@ -187,7 +187,7 @@ func TestIntegrationFindElementWithRegistry(t *testing.T) {
 		t.Fatal("expected non-nil registry")
 	}
 
-	dataURL := "data:text/html;charset=utf-8," + testHTML
+	dataURL := htmlDataURL(testHTML)
 	err = page.Navigate(dataURL)
 	if err != nil {
 		t.Fatalf("Navigate failed: %v", err)
@@ -200,11 +200,11 @@ func TestIntegrationFindElementWithRegistry(t *testing.T) {
 	t.Run("findElementByRefWithRegistry using data-testid from fingerprint", func(t *testing.T) {
 		// Create fingerprint
 		fp := &browser.ElementFingerprint{
-			Ref:        "btn-ref-1",
-			TagName:    "button",
-			ID:         "stable-btn",
-			DataTestID: "my-button",
-			AriaLabel:  "Submit Form",
+			Ref:         "btn-ref-1",
+			TagName:     "button",
+			ID:          "stable-btn",
+			DataTestID:  "my-button",
+			AriaLabel:   "Submit Form",
 			GeneratedAt: time.Now(),
 		}
 		registry.Register(fp)
@@ -226,9 +226,9 @@ func TestIntegrationFindElementWithRegistry(t *testing.T) {
 
 	t.Run("findElementByRefWithRegistry using aria-label from fingerprint", func(t *testing.T) {
 		fp := &browser.ElementFingerprint{
-			Ref:        "btn-ref-2",
-			TagName:    "button",
-			AriaLabel:  "Submit Form",
+			Ref:         "btn-ref-2",
+			TagName:     "button",
+			AriaLabel:   "Submit Form",
 			GeneratedAt: time.Now(),
 		}
 		registry.Register(fp)
@@ -244,9 +244,9 @@ func TestIntegrationFindElementWithRegistry(t *testing.T) {
 
 	t.Run("findElementByRefWithRegistry using ID from fingerprint", func(t *testing.T) {
 		fp := &browser.ElementFingerprint{
-			Ref:        "btn-ref-3",
-			TagName:    "button",
-			ID:         "stable-btn",
+			Ref:         "btn-ref-3",
+			TagName:     "button",
+			ID:          "stable-btn",
 			GeneratedAt: time.Now(),
 		}
 		registry.Register(fp)
@@ -262,9 +262,9 @@ func TestIntegrationFindElementWithRegistry(t *testing.T) {
 
 	t.Run("findElementByRefWithRegistry using name from fingerprint", func(t *testing.T) {
 		fp := &browser.ElementFingerprint{
-			Ref:        "btn-ref-4",
-			TagName:    "button",
-			Name:       "cancel-btn",
+			Ref:         "btn-ref-4",
+			TagName:     "button",
+			Name:        "cancel-btn",
 			GeneratedAt: time.Now(),
 		}
 		registry.Register(fp)
@@ -286,8 +286,8 @@ func TestIntegrationFindElementWithRegistry(t *testing.T) {
 	t.Run("findElementByRefWithRegistry fallback to ref as selector", func(t *testing.T) {
 		// Register fingerprint without specific attributes
 		fp := &browser.ElementFingerprint{
-			Ref:        "name:cancel-btn",
-			TagName:    "button",
+			Ref:         "name:cancel-btn",
+			TagName:     "button",
 			GeneratedAt: time.Now(),
 		}
 		registry.Register(fp)
@@ -347,7 +347,7 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 	}
 
 	page, _ := sessions.Page(session.ID)
-	dataURL := "data:text/html;charset=utf-8," + testHTML
+	dataURL := htmlDataURL(testHTML)
 	err = page.Navigate(dataURL)
 	if err != nil {
 		t.Fatalf("Navigate failed: %v", err)
@@ -380,12 +380,12 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 
 	t.Run("validateFingerprint with matching fingerprint", func(t *testing.T) {
 		fp := &browser.ElementFingerprint{
-			Ref:        "test-ref",
-			TagName:    "BUTTON",
-			ID:         "validate-btn",
-			DataTestID: "test-button",
-			AriaLabel:  "Test Button",
-			Classes:    []string{"btn", "primary"},
+			Ref:         "test-ref",
+			TagName:     "BUTTON",
+			ID:          "validate-btn",
+			DataTestID:  "test-button",
+			AriaLabel:   "Test Button",
+			Classes:     []string{"btn", "primary"},
 			TextContent: "Test Button",
 			BoundingBox: map[string]float64{
 				"x":      100.0,
@@ -426,9 +426,9 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 
 	t.Run("validateFingerprint with changed ID", func(t *testing.T) {
 		fp := &browser.ElementFingerprint{
-			Ref:        "test-ref",
-			TagName:    "BUTTON",
-			ID:         "different-id",
+			Ref:         "test-ref",
+			TagName:     "BUTTON",
+			ID:          "different-id",
 			GeneratedAt: time.Now(),
 		}
 
@@ -450,9 +450,9 @@ func TestIntegrationValidateFingerprint(t *testing.T) {
 
 	t.Run("validateFingerprint with changed classes", func(t *testing.T) {
 		fp := &browser.ElementFingerprint{
-			Ref:        "test-ref",
-			TagName:    "BUTTON",
-			Classes:    []string{"different", "classes"},
+			Ref:         "test-ref",
+			TagName:     "BUTTON",
+			Classes:     []string{"different", "classes"},
 			GeneratedAt: time.Now(),
 		}
 

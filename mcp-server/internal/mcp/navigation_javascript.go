@@ -8,6 +8,7 @@ import (
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
@@ -19,13 +20,19 @@ import (
 
 // EvaluateJSTool executes arbitrary JavaScript in the page context.
 type EvaluateJSTool struct {
-	sessions *browser.SessionManager
-	engine   *mangle.Engine
+	sessions                *browser.SessionManager
+	engine                  *mangle.Engine
+	redactor                *security.Redactor
+	disableUnsafeJavaScript bool
 }
 
 func (t *EvaluateJSTool) Name() string { return "evaluate-js" }
 func (t *EvaluateJSTool) Description() string {
 	return `Execute JavaScript in the browser context for advanced operations.
+
+SECURITY DEFAULT:
+Disabled unless a trusted operator sets security.allow_unsafe_javascript=true.
+The progressive disclosure gate below still applies after it is enabled.
 
 PROGRESSIVE DISCLOSURE GATE:
 This tool is intentionally gated so agents prefer structured tools first.
@@ -145,6 +152,15 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 	if sessionID == "" || script == "" {
 		return map[string]interface{}{"success": false, "error": "session_id and script are required", "error_type": "validation"}, nil
 	}
+	if t.disableUnsafeJavaScript {
+		return map[string]interface{}{
+			"success":     false,
+			"disabled":    true,
+			"error":       "evaluate-js is disabled by default because arbitrary page scripts can read credentials",
+			"error_type":  "security",
+			"remediation": "use structured tools or explicitly enable security.allow_unsafe_javascript in a trusted config",
+		}, nil
+	}
 
 	if ok, reason := t.evaluateJSGateOpen(sessionID, gateReason, approvedHandle, t.Name()); !ok {
 		return map[string]interface{}{
@@ -204,7 +220,11 @@ func (t *EvaluateJSTool) Execute(ctx context.Context, args map[string]interface{
 		}, nil
 	}
 
-	finalResult, truncated, resultBytes := shapeEvaluateJSResult(result, resultMode, maxResultBytes)
+	redactor := t.redactor
+	if redactor == nil {
+		redactor = security.NewRedactor(nil)
+	}
+	finalResult, truncated, resultBytes := shapeEvaluateJSResult(redactor.Sanitize(result), resultMode, maxResultBytes)
 
 	// Emit Mangle fact
 	now := time.Now()

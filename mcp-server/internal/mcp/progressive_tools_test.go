@@ -13,6 +13,7 @@ import (
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 )
 
 func testMangleEngineForProgressive(t *testing.T) *mangle.Engine {
@@ -112,6 +113,21 @@ func TestProgressiveToolContracts(t *testing.T) {
 		required, ok := schema["required"].([]string)
 		if !ok || len(required) == 0 || required[0] != "operation" {
 			t.Fatalf("browser-mangle should require operation")
+		}
+	})
+
+	t.Run("browser-audit contract", func(t *testing.T) {
+		tool := &BrowserAuditTool{}
+		if tool.Name() != "browser-audit" {
+			t.Fatalf("unexpected name: %s", tool.Name())
+		}
+		schema := tool.InputSchema()
+		required, ok := schema["required"].([]string)
+		if !ok || len(required) != 2 {
+			t.Fatalf("browser-audit should require session_id and repo_root")
+		}
+		if required[0] != "session_id" || required[1] != "repo_root" {
+			t.Fatalf("unexpected required fields: %v", required)
 		}
 	})
 }
@@ -464,7 +480,7 @@ func TestBrowserReasonSinceNavigationFiltersOlderErrors(t *testing.T) {
 		},
 		{
 			Predicate: "net_request",
-			Args:      []interface{}{"s-since-nav", "req-old", "GET", "https://api.symbiogen.ai/api/v1/organizations/org-406ventures/full", "", int64(1000)},
+			Args:      []interface{}{"s-since-nav", "req-old", "GET", "https://api.cross-thread.ai/api/v1/organizations/org-406ventures/full", "", int64(1000)},
 			Timestamp: now,
 		},
 		{
@@ -474,7 +490,7 @@ func TestBrowserReasonSinceNavigationFiltersOlderErrors(t *testing.T) {
 		},
 		{
 			Predicate: "net_request",
-			Args:      []interface{}{"s-since-nav", "req-new", "GET", "https://api.symbiogen.ai/api/v1/organizations/org-406ventures/full", "", int64(5000)},
+			Args:      []interface{}{"s-since-nav", "req-new", "GET", "https://api.cross-thread.ai/api/v1/organizations/org-406ventures/full", "", int64(5000)},
 			Timestamp: now,
 		},
 		{
@@ -730,8 +746,8 @@ func TestFilterRowsSince(t *testing.T) {
 	}
 
 	filtered := filterRowsSince(rows, []string{"ReqTs"}, 3000)
-	if len(filtered) != 2 {
-		t.Fatalf("expected 2 rows after filtering, got %d", len(filtered))
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 timestamped row after filtering, got %d", len(filtered))
 	}
 
 	ids := map[string]bool{}
@@ -741,8 +757,8 @@ func TestFilterRowsSince(t *testing.T) {
 	if !ids["new"] {
 		t.Fatal("expected row with ReqId=new")
 	}
-	if !ids["unknown"] {
-		t.Fatal("expected row without timestamp to be retained")
+	if ids["unknown"] {
+		t.Fatal("row without timestamp must not leak into a since-based delta")
 	}
 }
 
@@ -797,12 +813,23 @@ func TestBrowserMangleExportFlight(t *testing.T) {
 			Args:      []interface{}{"s-export", "req-1", "/api/calendar", 500},
 			Timestamp: now,
 		},
+		{
+			Predicate: "request_debug",
+			Args:      []interface{}{"s-export", "Authorization: Bearer cleartext-token"},
+			Timestamp: now,
+		},
 	})
 
 	traceDir := filepath.Join(t.TempDir(), "traces")
+	pathPolicy, err := security.NewPathPolicy(traceDir, []string{traceDir})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tool := &BrowserMangleTool{
 		engine:          engine,
 		defaultTraceDir: traceDir,
+		pathPolicy:      pathPolicy,
+		redactor:        security.NewRedactor(nil),
 	}
 
 	result, err := tool.Execute(ctx, map[string]interface{}{
@@ -850,6 +877,13 @@ func TestBrowserMangleExportFlight(t *testing.T) {
 	}
 	if lineCount == 0 {
 		t.Fatalf("expected exported JSONL rows, got none")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "cleartext-token") {
+		t.Fatalf("export retained credential: %s", content)
 	}
 }
 

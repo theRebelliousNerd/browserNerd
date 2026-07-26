@@ -64,7 +64,7 @@ func TestIntegrationExecutePlan(t *testing.T) {
 	}})
 
 	page, _ := sessions.Page(sessionID)
-	dataURL := "data:text/html;charset=utf-8," + testHTML
+	dataURL := htmlDataURL(testHTML)
 	err = page.Navigate(dataURL)
 	if err != nil {
 		t.Fatalf("Navigate failed: %v", err)
@@ -254,7 +254,7 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 	sessionID := session.ID
 
 	page, _ := sessions.Page(sessionID)
-	dataURL := "data:text/html;charset=utf-8," + testHTML
+	dataURL := htmlDataURL(testHTML)
 	err = page.Navigate(dataURL)
 	if err != nil {
 		t.Fatalf("Navigate failed: %v", err)
@@ -264,15 +264,21 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		t.Fatalf("WaitLoad failed: %v", err)
 	}
 
-	t.Run("WaitForConditionTool element exists", func(t *testing.T) {
+	t.Run("WaitForConditionTool matches existing fact", func(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
+		if err := engine.AddFacts(ctx, []mangle.Fact{{
+			Predicate: "integration_page_ready",
+			Args:      []interface{}{sessionID, "status"},
+			Timestamp: time.Now(),
+		}}); err != nil {
+			t.Fatalf("AddFacts failed: %v", err)
+		}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"condition":  "element_exists",
-			"selector":   "#status",
-			"timeout_ms": 2000,
-			"poll_ms":    100,
+			"predicate":        "integration_page_ready",
+			"match_args":       []interface{}{sessionID, "status"},
+			"timeout_ms":       2000,
+			"poll_interval_ms": 100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -282,20 +288,27 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		if !resultMap["success"].(bool) {
 			t.Errorf("expected success, got error: %v", resultMap["error"])
 		}
-		if resultMap["condition_met"].(bool) != true {
-			t.Error("expected condition_met to be true")
+		if !resultMap["matched"].(bool) {
+			t.Error("expected fact to match")
 		}
 	})
 
-	t.Run("WaitForConditionTool element visible", func(t *testing.T) {
+	t.Run("WaitForConditionTool waits for newly added fact", func(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			_ = engine.AddFacts(ctx, []mangle.Fact{{
+				Predicate: "integration_async_ready",
+				Args:      []interface{}{sessionID, "visible"},
+				Timestamp: time.Now(),
+			}})
+		}()
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"condition":  "element_visible",
-			"selector":   "#content",
-			"timeout_ms": 2000,
-			"poll_ms":    100,
+			"predicate":        "integration_async_ready",
+			"match_args":       []interface{}{sessionID, "visible"},
+			"timeout_ms":       2000,
+			"poll_interval_ms": 50,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -305,21 +318,19 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		if !resultMap["success"].(bool) {
 			t.Errorf("expected success, got error: %v", resultMap["error"])
 		}
-		if resultMap["condition_met"].(bool) != true {
-			t.Error("expected element to become visible")
+		if !resultMap["matched"].(bool) {
+			t.Error("expected newly added fact to match")
 		}
 	})
 
-	t.Run("WaitForConditionTool text contains", func(t *testing.T) {
+	t.Run("WaitForConditionTool supports wildcard arguments", func(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"condition":  "text_contains",
-			"selector":   "#status",
-			"value":      "Ready",
-			"timeout_ms": 2000,
-			"poll_ms":    100,
+			"predicate":        "integration_page_ready",
+			"match_args":       []interface{}{"_", "status"},
+			"timeout_ms":       2000,
+			"poll_interval_ms": 100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -329,12 +340,12 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		if !resultMap["success"].(bool) {
 			t.Errorf("expected success, got error: %v", resultMap["error"])
 		}
-		if resultMap["condition_met"].(bool) != true {
-			t.Error("expected text to contain 'Ready'")
+		if !resultMap["matched"].(bool) {
+			t.Error("expected wildcard match")
 		}
 	})
 
-	t.Run("WaitForConditionTool custom JavaScript", func(t *testing.T) {
+	t.Run("WaitForConditionTool rejects legacy JavaScript condition", func(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
@@ -342,18 +353,17 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 			"condition":  "custom",
 			"script":     "() => document.getElementById('status').textContent === 'Ready'",
 			"timeout_ms": 2000,
-			"poll_ms":    100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
 		resultMap := result.(map[string]interface{})
-		if !resultMap["success"].(bool) {
-			t.Errorf("expected success, got error: %v", resultMap["error"])
+		if resultMap["success"].(bool) {
+			t.Fatal("expected legacy JavaScript condition to be rejected")
 		}
-		if resultMap["condition_met"].(bool) != true {
-			t.Error("expected custom condition to be met")
+		if resultMap["error"] != "predicate is required" {
+			t.Errorf("unexpected rejection: %v", resultMap["error"])
 		}
 	})
 
@@ -361,23 +371,20 @@ func TestIntegrationWaitForCondition(t *testing.T) {
 		tool := &WaitForConditionTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-			"condition":  "text_contains",
-			"selector":   "#status",
-			"value":      "NonexistentText",
-			"timeout_ms": 500,
-			"poll_ms":    100,
+			"predicate":        "integration_never_arrives",
+			"timeout_ms":       500,
+			"poll_interval_ms": 100,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
 		resultMap := result.(map[string]interface{})
-		if resultMap["condition_met"].(bool) {
-			t.Error("expected condition_met to be false on timeout")
+		if resultMap["matched"].(bool) {
+			t.Error("expected matched to be false on timeout")
 		}
-		if resultMap["timed_out"].(bool) != true {
-			t.Error("expected timed_out to be true")
+		if resultMap["success"].(bool) {
+			t.Error("expected timeout to report failure")
 		}
 	})
 }
@@ -406,8 +413,8 @@ func TestIntegrationSessionTools(t *testing.T) {
 		}
 
 		resultMap := result.(map[string]interface{})
-		if !resultMap["success"].(bool) {
-			t.Errorf("expected success, got error: %v", resultMap["error"])
+		if status := resultMap["status"]; status != "already_connected" && status != "started" {
+			t.Errorf("expected connected browser status, got %v", status)
 		}
 	})
 
@@ -484,7 +491,14 @@ func TestIntegrationSessionTools(t *testing.T) {
 			t.Fatalf("Execute failed: %v", err)
 		}
 
-		forkedSession := result.(*browser.Session)
+		resultMap, ok := result.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected fork result map, got %T", result)
+		}
+		forkedSession, ok := resultMap["session"].(*browser.Session)
+		if !ok {
+			t.Fatalf("expected forked session, got %T", resultMap["session"])
+		}
 		if forkedSession.ID == "" {
 			t.Error("expected non-empty forked session ID")
 		}
@@ -494,10 +508,19 @@ func TestIntegrationSessionTools(t *testing.T) {
 	})
 
 	t.Run("SnapshotDOMTool", func(t *testing.T) {
-		tool := &SnapshotDOMTool{sessions: sessions}
+		approvedHandle := "reason:" + testSessionID + ":snapshot"
+		if err := engine.AddFacts(ctx, []mangle.Fact{{
+			Predicate: "disclosure_handle",
+			Args:      []interface{}{testSessionID, approvedHandle, "reason", time.Now().UnixMilli()},
+			Timestamp: time.Now(),
+		}}); err != nil {
+			t.Fatalf("AddFacts failed: %v", err)
+		}
+		tool := &SnapshotDOMTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
-			"session_id": testSessionID,
+			"session_id":         testSessionID,
+			"approved_by_handle": approvedHandle,
 		})
 		if err != nil {
 			t.Fatalf("Execute failed: %v", err)
@@ -539,8 +562,8 @@ func TestIntegrationSessionTools(t *testing.T) {
 		}
 
 		resultMap := result.(map[string]interface{})
-		if !resultMap["success"].(bool) {
-			t.Errorf("expected success, got error: %v", resultMap["error"])
+		if resultMap["status"] != "stopped" {
+			t.Errorf("expected stopped status, got %v", resultMap["status"])
 		}
 
 		// Browser should no longer be connected

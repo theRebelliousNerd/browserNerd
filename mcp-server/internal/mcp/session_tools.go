@@ -41,7 +41,10 @@ func (t *ListSessionsTool) InputSchema() map[string]interface{} {
 	}
 }
 func (t *ListSessionsTool) Execute(_ context.Context, _ map[string]interface{}) (interface{}, error) {
-	return map[string]interface{}{"sessions": t.sessions.List()}, nil
+	return map[string]interface{}{
+		"sessions": t.sessions.List(),
+		"browsers": t.sessions.ListBrowsers(),
+	}, nil
 }
 
 type CreateSessionTool struct {
@@ -83,6 +86,14 @@ func (t *CreateSessionTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "Optional URL to navigate after opening the session",
 			},
+			"browser_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Browser instance to use (default: current default browser)",
+			},
+			"isolated": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Use a fresh incognito context instead of the default shared multi-tab context",
+			},
 		},
 	}
 }
@@ -92,7 +103,9 @@ func (t *CreateSessionTool) Execute(ctx context.Context, args map[string]interfa
 		url = "about:blank"
 	}
 
-	sess, err := t.sessions.CreateSession(ctx, url)
+	browserID := getStringArg(args, "browser_id")
+	isolated := getBoolArg(args, "isolated", false)
+	sess, err := t.sessions.CreateTab(ctx, browserID, url, isolated)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +141,10 @@ func (t *AttachSessionTool) InputSchema() map[string]interface{} {
 				"type":        "string",
 				"description": "CDP TargetID to attach",
 			},
+			"browser_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Browser instance containing the target (default: current default browser)",
+			},
 		},
 		"required": []string{"target_id"},
 	}
@@ -138,11 +155,80 @@ func (t *AttachSessionTool) Execute(ctx context.Context, args map[string]interfa
 		return nil, fmt.Errorf("target_id is required")
 	}
 
-	sess, err := t.sessions.Attach(ctx, targetID)
+	sess, err := t.sessions.AttachToBrowser(ctx, getStringArg(args, "browser_id"), targetID)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]interface{}{"session": sess}, nil
+}
+
+type CloseSessionTool struct {
+	sessions *browser.SessionManager
+}
+
+func (t *CloseSessionTool) Name() string { return "close-session" }
+func (t *CloseSessionTool) Description() string {
+	return "Close one BrowserNERD tab/session and stop its event stream. The operation is idempotent."
+}
+func (t *CloseSessionTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{"type": "string", "description": "Session/tab to close"},
+		},
+		"required": []string{"session_id"},
+	}
+}
+func (t *CloseSessionTool) Execute(_ context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionID := getStringArg(args, "session_id")
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	closed, err := t.sessions.CloseSession(sessionID)
+	return map[string]interface{}{"success": err == nil, "session_id": sessionID, "closed": closed}, err
+}
+
+type FocusSessionTool struct {
+	sessions *browser.SessionManager
+}
+
+func (t *FocusSessionTool) Name() string { return "focus-session" }
+func (t *FocusSessionTool) Description() string {
+	return "Activate a tracked Chrome tab while preserving all other live tabs."
+}
+func (t *FocusSessionTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]interface{}{"type": "string", "description": "Session/tab to activate"},
+		},
+		"required": []string{"session_id"},
+	}
+}
+func (t *FocusSessionTool) Execute(_ context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionID := getStringArg(args, "session_id")
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id is required")
+	}
+	if err := t.sessions.FocusSession(sessionID); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{"success": true, "session_id": sessionID, "focused": true}, nil
+}
+
+type ListBrowsersTool struct {
+	sessions *browser.SessionManager
+}
+
+func (t *ListBrowsersTool) Name() string { return "list-browsers" }
+func (t *ListBrowsersTool) Description() string {
+	return "List connected Chrome instances and the number of live tabs in each."
+}
+func (t *ListBrowsersTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+}
+func (t *ListBrowsersTool) Execute(_ context.Context, _ map[string]interface{}) (interface{}, error) {
+	return map[string]interface{}{"browsers": t.sessions.ListBrowsers()}, nil
 }
 
 // ForkSessionTool clones an existing session's cookies + storage into a fresh incognito context.
@@ -389,11 +475,23 @@ then browser-observe to understand the page before interacting.`
 }
 func (t *LaunchBrowserTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
+		"type": "object",
+		"properties": map[string]interface{}{
+			"new_instance": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Launch an additional isolated Chrome process instead of reusing the default",
+			},
+		},
 	}
 }
-func (t *LaunchBrowserTool) Execute(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+func (t *LaunchBrowserTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if getBoolArg(args, "new_instance", false) {
+		instance, err := t.sessions.LaunchAdditional(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"status": "started", "browser": instance}, nil
+	}
 	if t.sessions.IsConnected() {
 		return map[string]interface{}{
 			"status":      "already_connected",
@@ -423,11 +521,23 @@ Clears session state but Mangle facts persist after shutdown.`
 }
 func (t *ShutdownBrowserTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
-		"type":       "object",
-		"properties": map[string]interface{}{},
+		"type": "object",
+		"properties": map[string]interface{}{
+			"browser_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Close one browser instance; omit to close all instances",
+			},
+		},
 	}
 }
-func (t *ShutdownBrowserTool) Execute(ctx context.Context, _ map[string]interface{}) (interface{}, error) {
+func (t *ShutdownBrowserTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if browserID := getStringArg(args, "browser_id"); browserID != "" {
+		closed, err := t.sessions.CloseBrowser(browserID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"status": "stopped", "browser_id": browserID, "closed": closed}, nil
+	}
 	if err := t.sessions.Shutdown(ctx); err != nil {
 		return nil, err
 	}

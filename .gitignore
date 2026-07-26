@@ -56,6 +56,25 @@ mcp-server/docs/
 # PRD and internal specs
 PRD.md
 
+# Public BrowserNERD product corpus and current package guidance
+!/docs/
+/docs/*
+!/docs/PRD.md
+!/docs/specs/
+!/docs/specs/**
+!/docs/research/
+/docs/research/*
+!/docs/research/mangle-mcp-architecture-validation.md
+mcp-server/docs/
+!/agents.md
+!mcp-server/agents.md
+!mcp-server/internal/browser/agents.md
+!mcp-server/internal/config/agents.md
+!mcp-server/internal/mangle/agents.md
+!mcp-server/internal/mcp/agents.md
+!mcp-server/internal/security/agents.md
+!mcp-server/internal/spec/agents.md
+
 # --------------------------------------------
 # IDE and editor
 # --------------------------------------------

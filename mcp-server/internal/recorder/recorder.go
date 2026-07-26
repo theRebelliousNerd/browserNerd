@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"browsernerd-mcp-server/internal/security"
 )
 
 const (
@@ -31,6 +33,7 @@ type Recorder struct {
 	basePath        string
 	maxRotatedFiles int
 	currentPath     string
+	redactor        *security.Redactor
 }
 
 // NewRecorder creates a recorder instance.
@@ -41,18 +44,24 @@ func NewRecorder(basePath string) (*Recorder, error) {
 
 // NewRecorderWithOptions creates a recorder with explicit rotation settings.
 func NewRecorderWithOptions(basePath string, maxRotatedFiles int) (*Recorder, error) {
+	return NewRecorderWithSecurity(basePath, maxRotatedFiles, security.NewRedactor(nil))
+}
+
+// NewRecorderWithSecurity creates a recorder with explicit rotation and redaction.
+func NewRecorderWithSecurity(basePath string, maxRotatedFiles int, redactor *security.Redactor) (*Recorder, error) {
 	if basePath == "" {
 		basePath = TraceDir
 	}
 	if maxRotatedFiles <= 0 {
 		maxRotatedFiles = MaxRotatedFiles
 	}
-	if err := os.MkdirAll(basePath, 0o755); err != nil {
+	if err := security.EnsurePrivateDir(basePath); err != nil {
 		return nil, err
 	}
 	return &Recorder{
 		basePath:        basePath,
 		maxRotatedFiles: maxRotatedFiles,
+		redactor:        redactor,
 	}, nil
 }
 
@@ -76,8 +85,12 @@ func (r *Recorder) Start(sessionID string) error {
 	// Create new file
 	filename := fmt.Sprintf("trace_%s_%d.jsonl", sessionID, time.Now().UnixMilli())
 	path := filepath.Join(r.basePath, filename)
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
 		return err
 	}
 
@@ -100,7 +113,7 @@ func (r *Recorder) Log(eventType, sessionID string, data interface{}) {
 		Timestamp: time.Now(),
 		Type:      eventType,
 		SessionID: sessionID,
-		Data:      data,
+		Data:      r.redactor.Sanitize(data),
 	}
 
 	_ = r.encoder.Encode(evt)

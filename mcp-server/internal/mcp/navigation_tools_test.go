@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 )
 
@@ -261,6 +262,17 @@ func TestScreenshotTool(t *testing.T) {
 	})
 }
 
+func TestNormalizeInteractiveFilterRejectsScriptInjection(t *testing.T) {
+	if _, err := normalizeInteractiveFilter(`all'; window.pwned = true; //`); err == nil {
+		t.Fatal("expected crafted filter to be rejected")
+	}
+	for _, filter := range []string{"", "all", "buttons", "inputs", "links", "selects"} {
+		if _, err := normalizeInteractiveFilter(filter); err != nil {
+			t.Fatalf("expected filter %q to be accepted: %v", filter, err)
+		}
+	}
+}
+
 func TestDiscoverHiddenContentTool(t *testing.T) {
 	tool := &DiscoverHiddenContentTool{}
 
@@ -476,6 +488,21 @@ func TestNavigationToolSchemaDetails(t *testing.T) {
 		}
 		if !foundScript {
 			t.Error("expected script in required fields")
+		}
+	})
+
+	t.Run("EvaluateJSTool can be disabled at the server security boundary", func(t *testing.T) {
+		tool := &EvaluateJSTool{disableUnsafeJavaScript: true}
+		result, err := tool.Execute(context.Background(), map[string]interface{}{
+			"session_id": "session",
+			"script":     "document.cookie",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		resultMap := result.(map[string]interface{})
+		if resultMap["success"] != false || resultMap["disabled"] != true || resultMap["error_type"] != "security" {
+			t.Fatalf("expected security-disabled result, got %+v", resultMap)
 		}
 	})
 

@@ -57,18 +57,33 @@ func (i Invariant) InFile(file string) bool {
 // Spec is one parsed specification document.
 type Spec struct {
 	Name       string      `json:"name"`
+	Title      string      `json:"title,omitempty"`
 	Path       string      `json:"path"`
+	Corpus     string      `json:"corpus,omitempty"`
 	Source     string      `json:"source,omitempty"`
+	Summary    string      `json:"summary,omitempty"`
+	ReadWhen   string      `json:"read_when,omitempty"`
+	DocType    string      `json:"doc_type,omitempty"`
+	Subsystem  string      `json:"subsystem,omitempty"`
+	Tags       []string    `json:"tags,omitempty"`
 	Bindings   []Binding   `json:"bindings,omitempty"`
 	Invariants []Invariant `json:"invariants"`
+	Body       string      `json:"-"`
 }
 
 // frontmatter is the YAML block at the top of a spec document.
 type frontmatter struct {
-	Name       string    `yaml:"name"`
-	Source     string    `yaml:"source"`
-	Binding    []Binding `yaml:"binding"`
-	Invariants []struct {
+	Name        string    `yaml:"name"`
+	Title       string    `yaml:"title"`
+	Summary     string    `yaml:"summary"`
+	Description string    `yaml:"description"`
+	ReadWhen    string    `yaml:"read_when"`
+	DocType     string    `yaml:"doc_type"`
+	Subsystem   string    `yaml:"subsystem"`
+	Tags        []string  `yaml:"tags"`
+	Source      string    `yaml:"source"`
+	Binding     []Binding `yaml:"binding"`
+	Invariants  []struct {
 		Name   string `yaml:"name"`
 		Query  string `yaml:"query"`
 		Expect string `yaml:"expect"`
@@ -89,13 +104,26 @@ func Parse(path string, content []byte) (Spec, error) {
 	}
 
 	spec := Spec{
-		Name:     fm.Name,
-		Path:     path,
-		Source:   fm.Source,
-		Bindings: fm.Binding,
+		Name:      fm.Name,
+		Title:     stripMarkdownTitle(fm.Title),
+		Path:      path,
+		Source:    fm.Source,
+		Summary:   firstNonEmpty(fm.Summary, fm.Description),
+		ReadWhen:  fm.ReadWhen,
+		DocType:   fm.DocType,
+		Subsystem: fm.Subsystem,
+		Tags:      append([]string(nil), fm.Tags...),
+		Bindings:  fm.Binding,
+		Body:      body,
 	}
 	if spec.Name == "" {
-		spec.Name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+		spec.Name = firstNonEmpty(spec.Title, firstMarkdownHeading(body), strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	}
+	if spec.Title == "" {
+		spec.Title = firstNonEmpty(firstMarkdownHeading(body), spec.Name)
+	}
+	if spec.Summary == "" {
+		spec.Summary = firstParagraph(body)
 	}
 
 	// Frontmatter-declared invariants apply spec-wide.
@@ -115,6 +143,50 @@ func Parse(path string, content []byte) (Spec, error) {
 	spec.Invariants = append(spec.Invariants, inline...)
 
 	return spec, nil
+}
+
+func stripMarkdownTitle(value string) string {
+	return strings.Trim(strings.TrimSpace(value), "*_")
+}
+
+func firstMarkdownHeading(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# ") {
+			return stripMarkdownTitle(strings.TrimSpace(strings.TrimPrefix(trimmed, "# ")))
+		}
+	}
+	return ""
+}
+
+func firstParagraph(body string) string {
+	var lines []string
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			if len(lines) > 0 {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "<!--") || strings.HasPrefix(trimmed, "```") {
+			continue
+		}
+		lines = append(lines, trimmed)
+		if len(strings.Join(lines, " ")) >= 320 {
+			break
+		}
+	}
+	return strings.Join(lines, " ")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 // splitFrontmatter separates a leading `---`-delimited YAML block from the body.

@@ -8,6 +8,7 @@ import (
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 )
 
 // =============================================================================
@@ -19,6 +20,7 @@ import (
 type GetInteractiveElementsTool struct {
 	sessions *browser.SessionManager
 	engine   *mangle.Engine
+	redactor *security.Redactor
 }
 
 func (t *GetInteractiveElementsTool) Name() string { return "get-interactive-elements" }
@@ -99,15 +101,21 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 		return nil, fmt.Errorf("session_id is required")
 	}
 
-	filter := getStringArg(args, "filter")
-	if filter == "" {
-		filter = "all"
+	filter, err := normalizeInteractiveFilter(getStringArg(args, "filter"))
+	if err != nil {
+		return nil, err
 	}
 	visibleOnly := true
 	if v, ok := args["visible_only"].(bool); ok {
 		visibleOnly = v
 	}
 	limit := getIntArg(args, "limit", 50)
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
 	requestedVerbose := getBoolArg(args, "verbose", false)
 	// Always extract richer metadata internally so Mangle can reason on it without
 	// bloating the tool output. We'll strip verbose fields before returning when
@@ -121,8 +129,7 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 
 	// JavaScript to extract interactive elements with sparse output
 	js := fmt.Sprintf(`
-	() => {
-		const filter = '%s';
+	(filter) => {
 		const visibleOnly = %v;
 		const limit = %d;
 		const verbose = %v;
@@ -269,9 +276,14 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 			// Only include label if non-empty
 			if (label) elem.label = label;
 
-			// Only include value for inputs with actual values
+			// Never return a credential-bearing input value.
 			if ((type === 'input' || type === 'select') && el.value) {
-				elem.value = el.value;
+				const descriptor = [
+					el.type || '', el.name || '', el.id || '',
+					el.autocomplete || '', label, ref
+				].join(' ').toLowerCase();
+				const sensitive = /password|passwd|secret|token|api.?key|one.?time.?code|cc.?number|cc.?csc|card.?number|cvv|cvc/.test(descriptor);
+				elem.value = sensitive ? '[REDACTED]' : el.value;
 			}
 
 			// Only include checked for checkboxes/radios
@@ -373,9 +385,9 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 			elements
 		};
 	}
-	`, filter, visibleOnly, limit, internalVerbose)
+	`, visibleOnly, limit, internalVerbose)
 
-	result, err := page.Eval(js)
+	result, err := page.Eval(js, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract elements: %w", err)
 	}
@@ -421,6 +433,16 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 					}
 
 					if v := getStringFromMap(elem, "value"); v != "" {
+						descriptor := strings.Join([]string{ref, elemType, label}, " ")
+						if fpData, ok := elem["fingerprint"].(map[string]interface{}); ok {
+							descriptor += " " + strings.Join([]string{
+								getStringFromMap(fpData, "input_type"),
+								getStringFromMap(fpData, "id"),
+								getStringFromMap(fpData, "name"),
+								getStringFromMap(fpData, "aria_label"),
+							}, " ")
+						}
+						v = mandatoryRedactor(t.redactor).RedactInputValue(descriptor, v)
 						facts = append(facts, mangle.Fact{
 							Predicate: "element_value",
 							Args:      []interface{}{sessionID, ref, v},
@@ -536,6 +558,19 @@ func (t *GetInteractiveElementsTool) Execute(ctx context.Context, args map[strin
 	}
 
 	return result.Value.Val(), nil
+}
+
+func normalizeInteractiveFilter(raw string) (string, error) {
+	filter := strings.ToLower(strings.TrimSpace(raw))
+	if filter == "" {
+		return "all", nil
+	}
+	switch filter {
+	case "all", "buttons", "inputs", "links", "selects":
+		return filter, nil
+	default:
+		return "", fmt.Errorf("invalid interactive element filter %q", raw)
+	}
 }
 
 // DiscoverGridsTool identifies grid/table surfaces and row interaction strategies.
@@ -1004,6 +1039,7 @@ func (t *DiscoverHiddenContentTool) Execute(ctx context.Context, args map[string
 type InteractTool struct {
 	sessions *browser.SessionManager
 	engine   *mangle.Engine
+	redactor *security.Redactor
 }
 
 func (t *InteractTool) Name() string { return "interact" }
@@ -1092,14 +1128,25 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 
 	var validationWarnings []string
+	descriptor := ref
 	if registry != nil {
 		if fp := registry.Get(ref); fp != nil {
 			validation := validateFingerprint(element, fp)
 			if len(validation.Changes) > 0 {
 				validationWarnings = validation.Changes
 			}
+			descriptor += " " + strings.Join([]string{
+				fp.TagName, fp.ID, fp.Name, fp.AriaLabel, fp.DataTestID, fp.Role,
+			}, " ")
 		}
 	}
+	for _, attribute := range []string{"type", "name", "id", "autocomplete", "aria-label"} {
+		if attrValue, attrErr := element.Attribute(attribute); attrErr == nil && attrValue != nil {
+			descriptor += " " + *attrValue
+		}
+	}
+	safeValue := mandatoryRedactor(t.redactor).RedactInputValue(descriptor, value)
+	sensitiveValue := safeValue == security.Redacted
 
 	visible, err := element.Visible()
 	if err != nil || !visible {
@@ -1111,7 +1158,7 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 
 	switch action {
 	case "click":
-		if err := element.Timeout(5 * time.Second).Click("left", 1); err != nil {
+		if err := element.Timeout(5*time.Second).Click("left", 1); err != nil {
 			return map[string]interface{}{"success": false, "error": fmt.Sprintf("Click failed: %v", err)}, nil
 		}
 
@@ -1135,13 +1182,11 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 		tagNameProp, _ := element.Property("tagName")
 		tagName := tagNameProp.Str()
 		if tagName == "SELECT" {
-			if err := element.Timeout(5 * time.Second).Select([]string{value}, true, "value"); err != nil {
-				if err := element.Timeout(5 * time.Second).Select([]string{value}, true, "text"); err != nil {
-					return map[string]interface{}{"success": false, "error": fmt.Sprintf("Option not found: %s", value)}, nil
-				}
+			if err := selectOption(element, value); err != nil {
+				return map[string]interface{}{"success": false, "error": fmt.Sprintf("Option not found: %s", value)}, nil
 			}
 		} else {
-			if err := element.Timeout(5 * time.Second).Click("left", 1); err != nil {
+			if err := element.Timeout(5*time.Second).Click("left", 1); err != nil {
 				return map[string]interface{}{"success": false, "error": fmt.Sprintf("Select click failed: %v", err)}, nil
 			}
 		}
@@ -1150,7 +1195,7 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 		}
 
 	case "toggle":
-		if err := element.Timeout(5 * time.Second).Click("left", 1); err != nil {
+		if err := element.Timeout(5*time.Second).Click("left", 1); err != nil {
 			return map[string]interface{}{"success": false, "error": fmt.Sprintf("Toggle failed: %v", err)}, nil
 		}
 		if checkedProp, err := element.Property("checked"); err == nil {
@@ -1174,22 +1219,26 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 		factArgs = []interface{}{sessionID, ref, now.UnixMilli()}
 	case "type":
 		predicate = "user_type"
-		factArgs = []interface{}{sessionID, ref, value, now.UnixMilli()}
+		factArgs = []interface{}{sessionID, ref, safeValue, now.UnixMilli()}
 	case "select":
 		predicate = "user_select"
-		factArgs = []interface{}{sessionID, ref, value, now.UnixMilli()}
+		factArgs = []interface{}{sessionID, ref, safeValue, now.UnixMilli()}
 	case "toggle":
 		predicate = "user_toggle"
 		factArgs = []interface{}{sessionID, ref, now.UnixMilli()}
 	}
-	if predicate != "" {
+	if predicate != "" && t.engine != nil {
 		_ = t.engine.AddFacts(ctx, []mangle.Fact{{Predicate: predicate, Args: factArgs, Timestamp: now}})
 	}
 
 	// Build sparse result
 	result := map[string]interface{}{"success": true, "ref": ref, "action": action}
 	if resultValue != "" {
-		result["value"] = resultValue
+		if sensitiveValue {
+			result["value"] = security.Redacted
+		} else {
+			result["value"] = mandatoryRedactor(t.redactor).SanitizeString(resultValue)
+		}
 	}
 	if action == "toggle" {
 		result["checked"] = resultChecked
@@ -1200,4 +1249,11 @@ func (t *InteractTool) Execute(ctx context.Context, args map[string]interface{})
 	}
 
 	return result, nil
+}
+
+func mandatoryRedactor(redactor *security.Redactor) *security.Redactor {
+	if redactor != nil {
+		return redactor
+	}
+	return security.NewRedactor(nil)
 }

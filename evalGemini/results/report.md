@@ -1,3 +1,13 @@
+---
+title: BrowserNERD Evaluation Report (Gemini 3)
+created: 2026-02-03
+last_updated: 2026-04-07
+doc_type: reference
+subsystem: infra
+read_when: Reference material for infra
+indexes: []
+---
+
 # BrowserNERD Evaluation Report (Gemini 3)
 
 ## Summary

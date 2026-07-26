@@ -7,22 +7,24 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	"image/jpeg"
 	"image/png"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 
 	"github.com/go-rod/rod/lib/proto"
 )
 
 // ScreenshotTool captures a screenshot with bounding box overlays for interactive elements.
 type ScreenshotTool struct {
-	sessions *browser.SessionManager
-	engine   *mangle.Engine
+	sessions   *browser.SessionManager
+	engine     *mangle.Engine
+	pathPolicy *security.PathPolicy
 }
 
 func (t *ScreenshotTool) Name() string { return "screenshot" }
@@ -169,7 +171,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	// Draw overlays with numbered labels
-	imgData, err = drawBoundingBoxOverlays(imgData, boundingBoxes)
+	imgData, err = drawBoundingBoxOverlays(imgData, boundingBoxes, format, quality)
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("failed to draw overlays: %v", err)}, nil
 	}
@@ -177,20 +179,24 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	sizeBytes := len(imgData)
 
 	if savePath == "" {
-		cwd, _ := os.Getwd()
-		screenshotsDir := filepath.Join(cwd, "screenshots")
-		filename := fmt.Sprintf("screenshot_%s_%d.png", sessionID, time.Now().Unix())
-		savePath = filepath.Join(screenshotsDir, filename)
-	}
-
-	dir := filepath.Dir(savePath)
-	if dir != "" && dir != "." {
-		if mkdirErr := os.MkdirAll(dir, 0755); mkdirErr != nil {
-			return map[string]interface{}{"success": false, "error": fmt.Sprintf("failed to create directory: %v", mkdirErr)}, nil
+		extension := ".png"
+		if format == "jpeg" {
+			extension = ".jpg"
 		}
+		savePath = fmt.Sprintf("screenshot_%s_%d%s", sessionID, time.Now().Unix(), extension)
 	}
 
-	if writeErr := os.WriteFile(savePath, imgData, 0644); writeErr != nil {
+	if t.pathPolicy == nil {
+		return map[string]interface{}{"success": false, "error": "screenshot write path policy is not configured"}, nil
+	}
+	savePath, err = t.pathPolicy.ResolveForWrite(savePath, t.pathPolicy.DefaultRoot(), filepath.Base(savePath))
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}, nil
+	}
+	if mkdirErr := security.EnsurePrivateDir(filepath.Dir(savePath)); mkdirErr != nil {
+		return map[string]interface{}{"success": false, "error": fmt.Sprintf("failed to create directory: %v", mkdirErr)}, nil
+	}
+	if writeErr := security.WritePrivateFile(savePath, imgData); writeErr != nil {
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("failed to write screenshot: %v", writeErr)}, nil
 	}
 
@@ -217,11 +223,13 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 
 	now := time.Now()
 	factArgs := []interface{}{sessionID, format, sizeBytes, now.UnixMilli(), savePath, len(boundingBoxes)}
-	_ = t.engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "screenshot_taken",
-		Args:      factArgs,
-		Timestamp: now,
-	}})
+	if t.engine != nil {
+		_ = t.engine.AddFacts(ctx, []mangle.Fact{{
+			Predicate: "screenshot_taken",
+			Args:      factArgs,
+			Timestamp: now,
+		}})
+	}
 
 	return result, nil
 }
@@ -350,10 +358,19 @@ func (t *ScreenshotTool) extractBoundingBoxes(page interface {
 }
 
 // drawBoundingBoxOverlays draws colored rectangles with numbered labels
-func drawBoundingBoxOverlays(imgData []byte, boxes []BoundingBox) ([]byte, error) {
-	img, err := png.Decode(bytes.NewReader(imgData))
+func drawBoundingBoxOverlays(imgData []byte, boxes []BoundingBox, format string, quality int) ([]byte, error) {
+	var (
+		img image.Image
+		err error
+	)
+	switch format {
+	case "jpeg":
+		img, err = jpeg.Decode(bytes.NewReader(imgData))
+	default:
+		img, err = png.Decode(bytes.NewReader(imgData))
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode PNG: %w", err)
+		return nil, fmt.Errorf("failed to decode %s: %w", strings.ToUpper(format), err)
 	}
 
 	bounds := img.Bounds()
@@ -401,7 +418,11 @@ func drawBoundingBoxOverlays(imgData []byte, boxes []BoundingBox) ([]byte, error
 	}
 
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, rgba); err != nil {
+	if format == "jpeg" {
+		if err := jpeg.Encode(&buf, rgba, &jpeg.Options{Quality: quality}); err != nil {
+			return nil, fmt.Errorf("failed to encode JPEG: %w", err)
+		}
+	} else if err := png.Encode(&buf, rgba); err != nil {
 		return nil, fmt.Errorf("failed to encode PNG: %w", err)
 	}
 

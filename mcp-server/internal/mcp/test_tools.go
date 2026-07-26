@@ -2,8 +2,11 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
@@ -16,12 +19,13 @@ import (
 type TestAssertion struct {
 	Name   string `yaml:"name" json:"name"`
 	Query  string `yaml:"query" json:"query"`
-	Expect string `yaml:"expect" json:"expect"` // "present" (default) | "absent"
+	Expect string `yaml:"expect" json:"expect"`                   // "present" (default) | "absent"
+	Scope  string `yaml:"scope,omitempty" json:"scope,omitempty"` // fresh (action tests) | current
 }
 
 // TestSpec is a compact, declarative browser test: a sequence of actions to
 // replay followed by Mangle assertions over the resulting fact state. It is
-// the token-efficient alternative to an imperative Playwright script — the
+// the token-efficient alternative to an imperative Playwright script. The
 // whole test is a handful of actions and conditions, and a failure returns a
 // causal chain rather than a log dump.
 type TestSpec struct {
@@ -44,8 +48,9 @@ var diagnosticPredicates = []string{
 
 // RunTestTool replays a TestSpec's actions and evaluates its assertions.
 type RunTestTool struct {
-	sessions *browser.SessionManager
-	engine   *mangle.Engine
+	sessions                *browser.SessionManager
+	engine                  *mangle.Engine
+	disableUnsafeJavaScript bool
 }
 
 func (t *RunTestTool) Name() string { return "run-test" }
@@ -57,20 +62,20 @@ TOKEN COST: Low. A test is a list of actions + conditions, not an imperative
 script, and a failure returns a causal chain instead of a trace dump.
 
 A TEST HAS:
-- actions[]: same shape as execute-plan ({type, ref, value}). Optional — omit to
+- actions[]: same shape as browser-act operations. Optional; omit to
   assert against the current fact state without acting.
 - assertions[]: {name, query, expect}. query is a Mangle query. expect is
   "present" (default: pass if the query matches at least one row) or "absent"
-  (pass if it matches nothing — e.g. "no console errors").
+  (pass if it matches nothing, e.g. "no console errors").
 
 EXAMPLE (inline):
 run-test(test: {
   name: "login works",
   session_id: "s1",
   actions: [
-    {type: "type", ref: "email", value: "user@example.com"},
-    {type: "type", ref: "password", value: "secret"},
-    {type: "click", ref: "login-btn"}
+    {type: "interact", action: "type", ref: "email", value: "user@example.com"},
+    {type: "interact", action: "type", ref: "password", value: "${LOGIN_PASSWORD}"},
+    {type: "interact", action: "click", ref: "login-btn"}
   ],
   assertions: [
     {name: "reached dashboard", query: "login_succeeded(S)", expect: "present"},
@@ -104,10 +109,6 @@ func (t *RunTestTool) InputSchema() map[string]interface{} {
 				"type":        "boolean",
 				"description": "Stop replaying actions on the first error (default: true).",
 			},
-			"delay_ms": map[string]interface{}{
-				"type":        "integer",
-				"description": "Delay between actions in milliseconds (default: 100).",
-			},
 			"diagnose_on_failure": map[string]interface{}{
 				"type":        "boolean",
 				"description": "Attach derived causal facts when the test fails (default: true).",
@@ -131,34 +132,48 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	}
 
 	result := map[string]interface{}{
-		"name": spec.Name,
+		"name":          spec.Name,
+		"started_at_ms": time.Now().UnixMilli(),
 	}
 
-	// Replay actions by delegating to execute-plan, so the action semantics stay
-	// in one place. A failed replay does not short-circuit assertions — they are
-	// the source of truth and still run for diagnostic value.
+	resolvedActions, err := resolveTestActions(spec.Actions)
+	if err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error()}, nil
+	}
+
+	baselines := make([][]mangle.QueryResult, len(spec.Assertions))
+	if len(spec.Actions) > 0 {
+		for idx, assertion := range spec.Assertions {
+			baselines[idx], _ = queryAssertionRows(ctx, t.engine, assertion.Query)
+		}
+	}
+
+	// Replay through browser-act so fixtures use the same operation vocabulary
+	// as interactive MCP automation.
 	replayOK := true
 	if len(spec.Actions) > 0 {
 		if sessionID == "" {
 			return map[string]interface{}{"success": false, "error": "session_id is required when a test has actions"}, nil
 		}
-		plan := &ExecutePlanTool{sessions: t.sessions, engine: t.engine}
-		planArgs := map[string]interface{}{
-			"session_id":    sessionID,
-			"actions":       toInterfaceSlice(spec.Actions),
-			"stop_on_error": getBoolArg(args, "stop_on_error", true),
-			"delay_ms":      getIntArg(args, "delay_ms", 100),
+		act := &BrowserActTool{
+			sessions:                t.sessions,
+			engine:                  t.engine,
+			disableUnsafeJavaScript: t.disableUnsafeJavaScript,
 		}
-		replay, replayErr := plan.Execute(ctx, planArgs)
+		actArgs := map[string]interface{}{
+			"session_id":    sessionID,
+			"operations":    toInterfaceSlice(resolvedActions),
+			"stop_on_error": getBoolArg(args, "stop_on_error", true),
+			"view":          "compact",
+			"include_specs": false,
+		}
+		replay, replayErr := act.Execute(ctx, actArgs)
 		if replayErr != nil {
 			replayOK = false
 			result["replay"] = map[string]interface{}{"success": false, "error": replayErr.Error()}
 		} else {
 			result["replay"] = replay
 			if m, ok := replay.(map[string]interface{}); ok {
-				if failed, ok := m["failed"].(int); ok && failed > 0 {
-					replayOK = false
-				}
 				if success, ok := m["success"].(bool); ok && !success {
 					replayOK = false
 				}
@@ -170,7 +185,7 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	assertionResults := make([]map[string]interface{}, 0, len(spec.Assertions))
 	allPassed := true
 	for i, a := range spec.Assertions {
-		ar, passed := t.evaluateAssertion(ctx, i, a)
+		ar, passed := t.evaluateAssertion(ctx, i, a, baselines[i], len(spec.Actions) > 0)
 		if !passed {
 			allPassed = false
 		}
@@ -192,12 +207,100 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 }
 
 // evaluateAssertion runs one assertion's query and scores it against Expect.
-func (t *RunTestTool) evaluateAssertion(ctx context.Context, index int, a TestAssertion) (map[string]interface{}, bool) {
+func (t *RunTestTool) evaluateAssertion(
+	ctx context.Context,
+	index int,
+	a TestAssertion,
+	baseline []mangle.QueryResult,
+	actionTest bool,
+) (map[string]interface{}, bool) {
 	name := a.Name
 	if name == "" {
 		name = fmt.Sprintf("assertion_%d", index)
 	}
+	scope := strings.ToLower(strings.TrimSpace(a.Scope))
+	if scope == "" {
+		if actionTest {
+			scope = "fresh"
+		} else {
+			scope = "current"
+		}
+	}
+	if scope == "fresh" {
+		return evaluateQueryExpectFresh(ctx, t.engine, name, a.Query, a.Expect, baseline)
+	}
 	return evaluateQueryExpect(ctx, t.engine, name, a.Query, a.Expect)
+}
+
+func evaluateQueryExpectFresh(
+	ctx context.Context,
+	engine *mangle.Engine,
+	name, query, expect string,
+	baseline []mangle.QueryResult,
+) (map[string]interface{}, bool) {
+	expect = strings.ToLower(strings.TrimSpace(expect))
+	if expect == "" {
+		expect = "present"
+	}
+	out := map[string]interface{}{"name": name, "expect": expect, "scope": "fresh"}
+	rows, err := queryAssertionRows(ctx, engine, query)
+	if err != nil {
+		out["passed"] = false
+		out["error"] = err.Error()
+		return out, false
+	}
+	fresh := subtractQueryRows(rows, baseline)
+	out["matched"] = len(fresh)
+	out["total_matched"] = len(rows)
+	passed := len(fresh) > 0
+	if expect == "absent" {
+		passed = len(fresh) == 0
+	}
+	out["passed"] = passed
+	if len(fresh) > 0 {
+		sample := fresh
+		if len(sample) > 3 {
+			sample = sample[:3]
+		}
+		out["sample"] = normalizeQueryBindings(sample)
+	}
+	return out, passed
+}
+
+func queryAssertionRows(ctx context.Context, engine *mangle.Engine, query string) ([]mangle.QueryResult, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("no query")
+	}
+	if !strings.HasSuffix(query, ".") {
+		query += "."
+	}
+	return engine.Query(ctx, query)
+}
+
+func subtractQueryRows(rows, baseline []mangle.QueryResult) []mangle.QueryResult {
+	counts := make(map[string]int, len(baseline))
+	for _, row := range baseline {
+		counts[queryResultFingerprint(row)]++
+	}
+	fresh := make([]mangle.QueryResult, 0, len(rows))
+	for _, row := range rows {
+		key := queryResultFingerprint(row)
+		if counts[key] > 0 {
+			counts[key]--
+			continue
+		}
+		fresh = append(fresh, row)
+	}
+	return fresh
+}
+
+func queryResultFingerprint(row mangle.QueryResult) string {
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		return fmt.Sprintf("%v", row)
+	}
+	return string(encoded)
 }
 
 // diagnose evaluates the derived causal predicates and returns those with
@@ -320,4 +423,71 @@ func toInterfaceSlice(actions []map[string]interface{}) []interface{} {
 		out = append(out, a)
 	}
 	return out
+}
+
+// resolveTestActions copies a fixture and resolves explicit value_env fields
+// only at execution time. Resolved values are never written back to the
+// portable fixture.
+func resolveTestActions(actions []map[string]interface{}) ([]map[string]interface{}, error) {
+	resolved := make([]map[string]interface{}, 0, len(actions))
+	for idx, action := range actions {
+		copyAction := cloneStringMap(action)
+		if err := resolveValueEnv(copyAction, fmt.Sprintf("actions[%d]", idx)); err != nil {
+			return nil, err
+		}
+		if fields, ok := copyAction["fields"].([]interface{}); ok {
+			resolvedFields := make([]interface{}, 0, len(fields))
+			for fieldIdx, raw := range fields {
+				field, ok := raw.(map[string]interface{})
+				if !ok {
+					resolvedFields = append(resolvedFields, raw)
+					continue
+				}
+				copyField := cloneStringMap(field)
+				if err := resolveValueEnv(copyField, fmt.Sprintf("actions[%d].fields[%d]", idx, fieldIdx)); err != nil {
+					return nil, err
+				}
+				resolvedFields = append(resolvedFields, copyField)
+			}
+			copyAction["fields"] = resolvedFields
+		}
+		resolved = append(resolved, copyAction)
+	}
+	return resolved, nil
+}
+
+func cloneStringMap(source map[string]interface{}) map[string]interface{} {
+	copyMap := make(map[string]interface{}, len(source))
+	for key, value := range source {
+		copyMap[key] = value
+	}
+	return copyMap
+}
+
+func resolveValueEnv(value map[string]interface{}, location string) error {
+	envName := strings.TrimSpace(getStringFromMap(value, "value_env"))
+	if envName == "" {
+		return nil
+	}
+	if !validEnvironmentName(envName) {
+		return fmt.Errorf("%s has invalid value_env name %q", location, envName)
+	}
+	resolved, ok := os.LookupEnv(envName)
+	if !ok {
+		return fmt.Errorf("%s requires environment variable %s", location, envName)
+	}
+	value["value"] = resolved
+	delete(value, "value_env")
+	return nil
+}
+
+func validEnvironmentName(name string) bool {
+	for idx, r := range name {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			r == '_' || (idx > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return name != ""
 }

@@ -278,4 +278,3 @@ func (t *GetNavigationLinksTool) Execute(ctx context.Context, args map[string]in
 
 	return result, nil
 }
-

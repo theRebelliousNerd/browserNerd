@@ -3,6 +3,7 @@ package mangle
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -76,8 +77,10 @@ type Engine struct {
 	lowValuePredicates map[string]bool // Predicates considered low-value for sampling
 
 	// Watch mode subscriptions (PRD Section 5.2)
-	subscriptions map[string][]chan WatchEvent // predicate -> list of subscriber channels
-	subMu         sync.RWMutex                 // Separate mutex for subscription management
+	subscriptions map[string][]chan WatchEvent   // predicate -> list of subscriber channels
+	subMu         sync.RWMutex                   // Separate mutex for subscription management
+	watchSeen     map[string]map[string]struct{} // predicate -> fact fingerprints observed after subscription
+	evalSlot      chan struct{}                  // prevents timed-out evaluations from piling up
 }
 
 // WatchEvent is emitted when a watched predicate derives new facts.
@@ -101,6 +104,8 @@ func NewEngine(cfg config.MangleConfig) (*Engine, error) {
 		predicateCounts:    make(map[string]int),
 		lowValuePredicates: defaultLowValuePredicates(),
 		subscriptions:      make(map[string][]chan WatchEvent),
+		watchSeen:          make(map[string]map[string]struct{}),
+		evalSlot:           make(chan struct{}, 1),
 	}
 
 	if cfg.Enable && cfg.SchemaPath != "" {
@@ -115,21 +120,24 @@ func NewEngine(cfg config.MangleConfig) (*Engine, error) {
 // LoadSchema parses a Mangle schema file, analyzes it, and prepares the engine for evaluation.
 // This REPLACES the stub implementation that discarded the parsed AST.
 func (e *Engine) LoadSchema(path string) error {
-	data, err := os.ReadFile(path)
+	schemaSources, err := discoverSchemaSources(path)
 	if err != nil {
-		return fmt.Errorf("read schema: %w", err)
+		return err
 	}
 
-	// Parse the Mangle source
-	sourceUnit, err := parse.Unit(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("parse schema: %w", err)
+	sourceUnits := make([]parse.SourceUnit, 0, len(schemaSources))
+	for _, source := range schemaSources {
+		sourceUnit, parseErr := parse.Unit(bytes.NewReader(source.Data))
+		if parseErr != nil {
+			return fmt.Errorf("parse schema module %s: %w", source.Path, parseErr)
+		}
+		sourceUnits = append(sourceUnits, sourceUnit)
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.schemaUnits = []parse.SourceUnit{sourceUnit}
+	e.schemaUnits = sourceUnits
 	e.ruleUnits = nil
 
 	if err := e.rebuildProgramInfoLocked(); err != nil {
@@ -158,6 +166,7 @@ func (e *Engine) evalOptions(ts *factstore.TeeingTemporalStore) []engine.EvalOpt
 	opts := []engine.EvalOption{
 		engine.WithEvaluationTime(time.Now()),
 		engine.WithExternalPredicates(extPreds),
+		engine.WithCreatedFactLimit(e.cfg.GetMaxCreatedFacts()),
 	}
 
 	if ts != nil {
@@ -233,39 +242,50 @@ func (e *Engine) AddRule(ruleSource string) error {
 		return nil
 	}
 
+	if len(ruleSource) > e.cfg.GetMaxRuleBytes() {
+		return fmt.Errorf("rule exceeds max_rule_bytes (%d > %d)", len(ruleSource), e.cfg.GetMaxRuleBytes())
+	}
+
 	// Parse the rule
 	sourceUnit, err := parse.Unit(bytes.NewReader([]byte(ruleSource)))
 	if err != nil {
 		return fmt.Errorf("parse rule: %w", err)
 	}
 
+	if err := e.validateSourceComplexity(sourceUnit, e.cfg.GetMaxRuleClauses(), e.cfg.GetMaxPremises()); err != nil {
+		return fmt.Errorf("rule complexity: %w", err)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	prevRules := append([]parse.SourceUnit(nil), e.ruleUnits...)
-	prevProgram := e.programInfo
-	prevLoaded := e.schemaLoaded
+	if len(e.ruleUnits) >= e.cfg.GetMaxRules() {
+		return fmt.Errorf("rule limit reached (%d)", e.cfg.GetMaxRules())
+	}
 
-	e.ruleUnits = append(e.ruleUnits, sourceUnit)
-	if err := e.rebuildProgramInfoLocked(); err != nil {
-		e.ruleUnits = prevRules
-		e.programInfo = prevProgram
-		e.schemaLoaded = prevLoaded
+	candidateRules := append(append([]parse.SourceUnit(nil), e.ruleUnits...), sourceUnit)
+	units := make([]parse.SourceUnit, 0, len(e.schemaUnits)+len(candidateRules))
+	units = append(units, e.schemaUnits...)
+	units = append(units, candidateRules...)
+	candidateProgram, err := analysis.Analyze(units, make(map[ast.PredicateSym]ast.Decl))
+	if err != nil {
 		return fmt.Errorf("analyze rule: %w", err)
 	}
 
-	// Materialize derivations immediately so evaluate-rule / wait-for-condition
-	// can see the new rule without waiting for another fact insertion.
-	if e.programInfo != nil {
-		evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
-		if err := e.evalProgramSafe(evalStore, "add_rule"); err != nil {
-			e.ruleUnits = prevRules
-			e.programInfo = prevProgram
-			e.schemaLoaded = prevLoaded
-			return fmt.Errorf("eval program after rule insertion: %w", err)
-		}
+	// Evaluate the untrusted rule against an isolated store. A timed-out
+	// evaluation may finish in the background, but it cannot mutate live facts.
+	isolatedBase, isolated := e.buildIsolatedTeeingStoreLocked()
+	evalStore := factstore.NewTemporalFactStoreAdapter(isolated)
+	if err := e.evalProgramWithTimeout(context.Background(), candidateProgram, evalStore, isolated, "add_rule"); err != nil {
+		return fmt.Errorf("eval program after rule insertion: %w", err)
 	}
 
+	e.ruleUnits = candidateRules
+	e.programInfo = candidateProgram
+	e.schemaLoaded = true
+	e.store = isolatedBase
+	e.tempStore = isolated
+	e.checkAndNotifyWatchers(evalStore)
 	return nil
 }
 
@@ -289,6 +309,9 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 			filtered = append(filtered, f)
 			e.predicateCounts[f.Predicate]++
 		}
+	}
+	if len(e.ruleUnits) > 0 {
+		return e.addFactsWithDynamicRulesLocked(ctx, filtered)
 	}
 
 	// Add to temporal buffer with circular buffering
@@ -362,6 +385,41 @@ func (e *Engine) AddFacts(ctx context.Context, facts []Fact) error {
 	return nil
 }
 
+// addFactsWithDynamicRulesLocked evaluates user-extended programs
+// transactionally. A timeout can leave third-party evaluation running, so the
+// candidate store is isolated and the live fact buffer/store are swapped only
+// after successful completion. Caller must hold e.mu.
+func (e *Engine) addFactsWithDynamicRulesLocked(ctx context.Context, filtered []Fact) error {
+	previousFacts := e.facts
+	candidateFacts := make([]Fact, 0, len(previousFacts)+len(filtered))
+	candidateFacts = append(candidateFacts, previousFacts...)
+	candidateFacts = append(candidateFacts, filtered...)
+	if limit := e.cfg.FactBufferLimit; limit > 0 && len(candidateFacts) > limit {
+		candidateFacts = candidateFacts[len(candidateFacts)-limit:]
+	}
+
+	e.facts = candidateFacts
+	candidateBase, candidateStore := e.buildIsolatedTeeingStoreLocked()
+	e.facts = previousFacts
+
+	evalStore := factstore.NewTemporalFactStoreAdapter(candidateStore)
+	if err := e.evalProgramWithTimeout(ctx, e.programInfo, evalStore, candidateStore, "add_facts_dynamic"); err != nil {
+		for _, fact := range filtered {
+			if e.predicateCounts[fact.Predicate] > 0 {
+				e.predicateCounts[fact.Predicate]--
+			}
+		}
+		return fmt.Errorf("eval dynamic program after fact insertion: %w", err)
+	}
+
+	e.facts = candidateFacts
+	e.rebuildIndex()
+	e.store = candidateBase
+	e.tempStore = candidateStore
+	e.checkAndNotifyWatchers(evalStore)
+	return nil
+}
+
 // checkAndNotifyWatchers evaluates watched predicates and notifies subscribers.
 func (e *Engine) checkAndNotifyWatchers(store factstore.FactStore) {
 	watchedPredicates := e.WatchPredicates()
@@ -391,8 +449,8 @@ func (e *Engine) checkAndNotifyWatchers(store factstore.FactStore) {
 			return nil
 		})
 
-		if len(derivedFacts) > 0 {
-			e.notifySubscribers(predicate, derivedFacts)
+		if fresh := e.filterNewWatchFacts(predicate, derivedFacts); len(fresh) > 0 {
+			e.notifySubscribers(predicate, fresh)
 		}
 	}
 }
@@ -500,10 +558,15 @@ func (e *Engine) SamplingRate() float64 {
 // Returns a subscription ID for later unsubscription.
 // This implements PRD Section 5.2: Watch Mode for continuous rule evaluation.
 func (e *Engine) Subscribe(predicate string, ch chan WatchEvent) string {
+	e.mu.RLock()
+	baseline := e.currentPredicateFingerprintsLocked(predicate)
 	e.subMu.Lock()
-	defer e.subMu.Unlock()
-
+	if len(e.subscriptions[predicate]) == 0 {
+		e.watchSeen[predicate] = baseline
+	}
 	e.subscriptions[predicate] = append(e.subscriptions[predicate], ch)
+	e.subMu.Unlock()
+	e.mu.RUnlock()
 	// Return a unique ID (channel address as string for simplicity)
 	return fmt.Sprintf("%s:%p", predicate, ch)
 }
@@ -521,6 +584,7 @@ func (e *Engine) Unsubscribe(predicate string, ch chan WatchEvent) {
 			next = append(next, channels[i+1:]...)
 			if len(next) == 0 {
 				delete(e.subscriptions, predicate)
+				delete(e.watchSeen, predicate)
 			} else {
 				e.subscriptions[predicate] = next
 			}
@@ -582,6 +646,12 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 	if queryStr == "" {
 		return nil, fmt.Errorf("query is required")
 	}
+	if len(queryStr) > e.cfg.GetMaxQueryBytes() {
+		return nil, fmt.Errorf("query exceeds max_query_bytes (%d > %d)", len(queryStr), e.cfg.GetMaxQueryBytes())
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !strings.HasSuffix(queryStr, ".") {
 		queryStr += "."
 	}
@@ -596,6 +666,12 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 	if len(sourceUnit.Clauses) == 0 {
 		return nil, fmt.Errorf("no query found")
 	}
+	if len(sourceUnit.Clauses) != 1 {
+		return nil, fmt.Errorf("query must contain exactly one clause")
+	}
+	if err := e.validateSourceComplexity(sourceUnit, 1, e.cfg.GetMaxPremises()); err != nil {
+		return nil, fmt.Errorf("query complexity: %w", err)
+	}
 
 	clause := sourceUnit.Clauses[0]
 
@@ -607,10 +683,10 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 	// rather than pattern-matching the head against stored facts, which would
 	// silently ignore the conditions (e.g. `T > 3000`).
 	if len(clause.Premises) > 0 {
-		return e.queryWithBodyLocked(clause)
+		return e.queryWithBodyLocked(ctx, clause)
 	}
 
-	// In Mangle v0.4.0, a body-less query is just a Clause with a Head atom.
+	// In Mangle Go v0.5.0, a body-less query is a Clause with a Head atom.
 	queryAtom := clause.Head
 	queryAtom = normalizeAnonymousVariables(queryAtom)
 
@@ -619,6 +695,12 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 
 	evalStore := factstore.NewTemporalFactStoreAdapter(e.tempStore)
 	err = evalStore.GetFacts(queryAtom, func(atom ast.Atom) error {
+		if len(results) >= e.cfg.GetMaxQueryResults() {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		result := make(QueryResult)
 		matched := true
 
@@ -664,6 +746,9 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 		bufferResults := e.queryBufferDirect(predName, queryAtom.Args)
 		results = append(results, bufferResults...)
 	}
+	if len(results) > e.cfg.GetMaxQueryResults() {
+		results = results[:e.cfg.GetMaxQueryResults()]
+	}
 
 	return results, nil
 }
@@ -675,10 +760,10 @@ const queryResultPredicate = "__browsernerd_query_result"
 
 // queryWithBodyLocked evaluates a conditional query (a clause with premises) by
 // projecting its body onto a synthetic head predicate and running full Mangle
-// evaluation over an isolated store. This keeps the query read-only — it never
-// mutates the engine's live program or temporal store — while still enforcing
+// evaluation over an isolated store. This keeps the query read-only; it never
+// mutates the engine's live program or temporal store while still enforcing
 // the body's conditions, negation, and comparisons. e.mu must be held.
-func (e *Engine) queryWithBodyLocked(clause ast.Clause) ([]QueryResult, error) {
+func (e *Engine) queryWithBodyLocked(ctx context.Context, clause ast.Clause) ([]QueryResult, error) {
 	if !e.schemaLoaded || e.programInfo == nil {
 		return nil, fmt.Errorf("engine not ready")
 	}
@@ -704,10 +789,10 @@ func (e *Engine) queryWithBodyLocked(clause ast.Clause) ([]QueryResult, error) {
 		return nil, fmt.Errorf("analyze query: %w", err)
 	}
 
-	// Evaluate into an isolated copy of the current facts.
-	isolated := e.buildTeeingStoreLocked()
+	// Evaluate into a fully isolated copy of the current facts.
+	_, isolated := e.buildIsolatedTeeingStoreLocked()
 	evalStore := factstore.NewTemporalFactStoreAdapter(isolated)
-	if err := e.evalProgramWith(programInfo, evalStore, isolated, "query_body"); err != nil {
+	if err := e.evalProgramWithTimeout(ctx, programInfo, evalStore, isolated, "query_body"); err != nil {
 		return nil, fmt.Errorf("evaluate query: %w", err)
 	}
 
@@ -720,6 +805,9 @@ func (e *Engine) queryWithBodyLocked(clause ast.Clause) ([]QueryResult, error) {
 
 	results := make([]QueryResult, 0)
 	err = evalStore.GetFacts(ast.Atom{Predicate: synthSym, Args: wildcards}, func(atom ast.Atom) error {
+		if len(results) >= e.cfg.GetMaxQueryResults() {
+			return nil
+		}
 		result := make(QueryResult)
 		for i, arg := range headArgs {
 			if i >= len(atom.Args) {
@@ -737,6 +825,119 @@ func (e *Engine) queryWithBodyLocked(clause ast.Clause) ([]QueryResult, error) {
 	}
 
 	return results, nil
+}
+
+func (e *Engine) evalProgramWithTimeout(ctx context.Context, pi *analysis.ProgramInfo, store factstore.FactStore, ts *factstore.TeeingTemporalStore, phase string) error {
+	timeout := e.cfg.GetEvaluationTimeout()
+	evalCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	select {
+	case e.evalSlot <- struct{}{}:
+	default:
+		return fmt.Errorf("mangle evaluation busy during %s", phase)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		defer func() { <-e.evalSlot }()
+		errCh <- e.evalProgramWith(pi, store, ts, phase)
+	}()
+	select {
+	case err := <-errCh:
+		return err
+	case <-evalCtx.Done():
+		return fmt.Errorf("mangle evaluation timed out during %s after %s: %w", phase, timeout, evalCtx.Err())
+	}
+}
+
+func (e *Engine) buildIsolatedTeeingStoreLocked() (*factstore.TemporalStore, *factstore.TeeingTemporalStore) {
+	base := factstore.NewTemporalStore()
+	ts := factstore.NewTeeingTemporalStore(base)
+	activePredicates := make(map[ast.PredicateSym]bool)
+	for _, fact := range e.facts {
+		atom, err := e.factToAtom(fact)
+		if err != nil {
+			continue
+		}
+		if fact.Timestamp.IsZero() {
+			_, _ = base.AddEternal(atom)
+			continue
+		}
+		_, _ = ts.Add(atom, ast.NewPointInterval(fact.Timestamp))
+		activePredicates[atom.Predicate] = true
+		mtAtom := atom
+		mtAtom.Predicate.Symbol = "mt_" + atom.Predicate.Symbol
+		_, _ = ts.Add(mtAtom, ast.NewPointInterval(fact.Timestamp))
+		activePredicates[mtAtom.Predicate] = true
+	}
+	for predicate := range activePredicates {
+		_ = ts.Coalesce(predicate)
+	}
+	return base, ts
+}
+
+func (e *Engine) validateSourceComplexity(unit parse.SourceUnit, maxClauses, maxPremises int) error {
+	if len(unit.Clauses) > maxClauses {
+		return fmt.Errorf("clause limit exceeded (%d > %d)", len(unit.Clauses), maxClauses)
+	}
+	totalPremises := 0
+	for _, clause := range unit.Clauses {
+		totalPremises += len(clause.Premises)
+	}
+	if totalPremises > maxPremises {
+		return fmt.Errorf("premise limit exceeded (%d > %d)", totalPremises, maxPremises)
+	}
+	return nil
+}
+
+func (e *Engine) currentPredicateFingerprintsLocked(predicate string) map[string]struct{} {
+	seen := make(map[string]struct{})
+	if e.tempStore == nil {
+		return seen
+	}
+	arity := e.predicateArityLocked(predicate)
+	query := ast.Atom{Predicate: ast.PredicateSym{Symbol: predicate, Arity: arity}}
+	if arity >= 0 {
+		query.Args = make([]ast.BaseTerm, arity)
+		for i := range query.Args {
+			query.Args[i] = ast.Variable{Symbol: fmt.Sprintf("B%d", i)}
+		}
+	}
+	store := factstore.NewTemporalFactStoreAdapter(e.tempStore)
+	_ = store.GetFacts(query, func(atom ast.Atom) error {
+		if fact, err := e.atomToFact(atom); err == nil {
+			seen[factFingerprint(fact)] = struct{}{}
+		}
+		return nil
+	})
+	return seen
+}
+
+func (e *Engine) filterNewWatchFacts(predicate string, facts []Fact) []Fact {
+	e.subMu.Lock()
+	defer e.subMu.Unlock()
+	seen, ok := e.watchSeen[predicate]
+	if !ok {
+		seen = make(map[string]struct{})
+		e.watchSeen[predicate] = seen
+	}
+	fresh := make([]Fact, 0, len(facts))
+	for _, fact := range facts {
+		key := factFingerprint(fact)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		fresh = append(fresh, fact)
+	}
+	return fresh
+}
+
+func factFingerprint(fact Fact) string {
+	encoded, err := json.Marshal(fact.Args)
+	if err != nil {
+		return fact.Predicate + ":" + fmt.Sprint(fact.Args)
+	}
+	return fact.Predicate + ":" + string(encoded)
 }
 
 // queryBufferDirect searches the temporal buffer for facts matching predicate and args pattern.

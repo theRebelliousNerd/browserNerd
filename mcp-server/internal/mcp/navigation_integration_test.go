@@ -9,6 +9,7 @@ import (
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 )
 
 // TestIntegrationNavigationTools tests navigation tools with a real browser
@@ -49,17 +50,18 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	<a href="#section1" id="link-1">Section 1</a>
 	<a href="#section2" id="link-2">Section 2</a>
 	<input id="input-1" type="text" placeholder="Enter name">
+	<input id="password" type="password" value="never-return-this">
 	<select id="select-1">
 		<option value="1">Option 1</option>
 		<option value="2">Option 2</option>
 	</select>
 	<div id="section1">Section 1 Content</div>
-	<div id="section2" style="display:none;">Hidden Section 2</div>
+	<div id="section2" role="tabpanel" style="display:none;">Hidden Section 2</div>
 </body>
 </html>`
 
 	page, _ := sessions.Page(sessionID)
-	dataURL := "data:text/html;charset=utf-8," + testHTML
+	dataURL := htmlDataURL(testHTML)
 	err = page.Navigate(dataURL)
 	if err != nil {
 		t.Fatalf("Navigate failed: %v", err)
@@ -89,7 +91,7 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	})
 
 	t.Run("NavigateURLTool", func(t *testing.T) {
-		tool := &NavigateURLTool{sessions: sessions}
+		tool := &NavigateURLTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id": sessionID,
@@ -103,6 +105,14 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		resultMap := result.(map[string]interface{})
 		if !resultMap["success"].(bool) {
 			t.Errorf("expected success, got error: %v", resultMap["error"])
+		}
+		currentURLs := engine.FactsByPredicate("current_url")
+		if len(currentURLs) == 0 {
+			t.Fatal("expected navigate-url to emit current_url even when already on the requested URL")
+		}
+		last := currentURLs[len(currentURLs)-1]
+		if last.Args[0] != sessionID || last.Args[1] != dataURL {
+			t.Fatalf("unexpected current_url fact: %+v", last)
 		}
 	})
 
@@ -132,6 +142,19 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		}
 		if firstElem["type"] == nil {
 			t.Error("expected type in element")
+		}
+		for _, raw := range elements {
+			elem := raw.(map[string]interface{})
+			if elem["ref"] == "password" && elem["value"] != security.Redacted {
+				t.Fatalf("password element value was not redacted: %+v", elem)
+			}
+		}
+		for _, fact := range engine.FactsByPredicate("element_value") {
+			for _, arg := range fact.Args {
+				if arg == "never-return-this" {
+					t.Fatalf("password was persisted in element_value: %+v", fact)
+				}
+			}
 		}
 	})
 
@@ -170,18 +193,17 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		}
 
 		resultMap := result.(map[string]interface{})
-		links := resultMap["links"].([]interface{})
-		if len(links) == 0 {
-			t.Error("expected at least some links")
+		counts, ok := resultMap["counts"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected navigation counts, got %T", resultMap["counts"])
 		}
-
-		// Verify link structure
-		firstLink := links[0].(map[string]interface{})
-		if firstLink["ref"] == nil {
-			t.Error("expected ref in link")
+		total, ok := counts["total"].(float64)
+		if !ok || total < 2 {
+			t.Fatalf("expected at least two navigation links, got %+v", counts)
 		}
-		if firstLink["href"] == nil {
-			t.Error("expected href in link")
+		mainLinks, ok := resultMap["main"].(map[string]interface{})
+		if !ok || len(mainLinks) < 2 {
+			t.Fatalf("expected grouped main-area links, got %+v", resultMap["main"])
 		}
 	})
 
@@ -228,7 +250,12 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	})
 
 	t.Run("ScreenshotTool full page", func(t *testing.T) {
-		tool := &ScreenshotTool{sessions: sessions}
+		screenshotDir := t.TempDir()
+		pathPolicy, err := security.NewPathPolicy(screenshotDir, []string{screenshotDir})
+		if err != nil {
+			t.Fatalf("NewPathPolicy failed: %v", err)
+		}
+		tool := &ScreenshotTool{sessions: sessions, engine: engine, pathPolicy: pathPolicy}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id": sessionID,
@@ -244,13 +271,19 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		if !resultMap["success"].(bool) {
 			t.Errorf("expected success, got error: %v", resultMap["error"])
 		}
-		if resultMap["data"] == nil {
-			t.Error("expected screenshot data")
+		filePath, _ := resultMap["file_path"].(string)
+		if _, err := os.Stat(filePath); err != nil {
+			t.Errorf("expected confined screenshot file: %v", err)
 		}
 	})
 
 	t.Run("ScreenshotTool element screenshot", func(t *testing.T) {
-		tool := &ScreenshotTool{sessions: sessions}
+		screenshotDir := t.TempDir()
+		pathPolicy, err := security.NewPathPolicy(screenshotDir, []string{screenshotDir})
+		if err != nil {
+			t.Fatalf("NewPathPolicy failed: %v", err)
+		}
+		tool := &ScreenshotTool{sessions: sessions, engine: engine, pathPolicy: pathPolicy}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id":  sessionID,
@@ -268,7 +301,7 @@ func TestIntegrationNavigationTools(t *testing.T) {
 	})
 
 	t.Run("BrowserHistoryTool", func(t *testing.T) {
-		tool := &BrowserHistoryTool{sessions: sessions}
+		tool := &BrowserHistoryTool{sessions: sessions, engine: engine}
 
 		// Navigate to create history
 		navTool := &NavigateURLTool{sessions: sessions}
@@ -322,6 +355,12 @@ func TestIntegrationNavigationTools(t *testing.T) {
 
 	t.Run("DiscoverHiddenContentTool", func(t *testing.T) {
 		tool := &DiscoverHiddenContentTool{sessions: sessions}
+		if err := page.Navigate(dataURL); err != nil {
+			t.Fatalf("restore test page: %v", err)
+		}
+		if err := page.WaitLoad(); err != nil {
+			t.Fatalf("wait for restored test page: %v", err)
+		}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id": sessionID,
@@ -331,14 +370,13 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		}
 
 		resultMap := result.(map[string]interface{})
-		if resultMap["hidden_elements"] == nil {
-			t.Error("expected hidden_elements in result")
+		if resultMap["sections"] == nil {
+			t.Fatal("expected sections in result")
 		}
 
-		hiddenElems := resultMap["hidden_elements"].([]interface{})
-		// section2 is hidden, should be found
-		if len(hiddenElems) == 0 {
-			t.Log("Warning: No hidden elements found - test may need adjustment")
+		sections := resultMap["sections"].([]interface{})
+		if len(sections) == 0 {
+			t.Error("expected hidden tab panel to be discovered")
 		}
 	})
 }
@@ -363,6 +401,7 @@ func TestIntegrationInteractionTools(t *testing.T) {
 <body>
 	<button id="click-btn" onclick="this.textContent='Clicked'">Click Me</button>
 	<input id="text-input" type="text" value="">
+	<input id="login-password" name="password" type="password" value="">
 	<input id="checkbox" type="checkbox">
 	<select id="dropdown">
 		<option value="a">Option A</option>
@@ -392,7 +431,7 @@ func TestIntegrationInteractionTools(t *testing.T) {
 	}})
 
 	page, _ := sessions.Page(sessionID)
-	dataURL := "data:text/html;charset=utf-8," + testHTML
+	dataURL := htmlDataURL(testHTML)
 	err = page.Navigate(dataURL)
 	if err != nil {
 		t.Fatalf("Navigate failed: %v", err)
@@ -465,6 +504,34 @@ func TestIntegrationInteractionTools(t *testing.T) {
 		}
 	})
 
+	t.Run("InteractTool redacts password values from facts and results", func(t *testing.T) {
+		tool := &InteractTool{sessions: sessions, engine: engine}
+		const password = "never-persist-this"
+
+		result, err := tool.Execute(ctx, map[string]interface{}{
+			"session_id": sessionID,
+			"ref":        "login-password",
+			"action":     "type",
+			"value":      password,
+		})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+		resultMap := result.(map[string]interface{})
+		if resultMap["value"] != security.Redacted {
+			t.Fatalf("password result was not redacted: %+v", resultMap)
+		}
+
+		facts := engine.FactsByPredicate("user_type")
+		if len(facts) == 0 {
+			t.Fatal("expected user_type fact")
+		}
+		latest := facts[len(facts)-1]
+		if latest.Args[2] != security.Redacted {
+			t.Fatalf("password fact was not redacted: %+v", latest)
+		}
+	})
+
 	t.Run("InteractTool select", func(t *testing.T) {
 		tool := &InteractTool{sessions: sessions, engine: engine}
 
@@ -503,7 +570,7 @@ func TestIntegrationInteractionTools(t *testing.T) {
 	})
 
 	t.Run("PressKeyTool", func(t *testing.T) {
-		tool := &PressKeyTool{sessions: sessions}
+		tool := &PressKeyTool{sessions: sessions, engine: engine}
 
 		// Focus the input first
 		page, _ := sessions.Page(sessionID)
@@ -525,7 +592,7 @@ func TestIntegrationInteractionTools(t *testing.T) {
 	})
 
 	t.Run("PressKeyTool with modifiers", func(t *testing.T) {
-		tool := &PressKeyTool{sessions: sessions}
+		tool := &PressKeyTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{
 			"session_id": sessionID,

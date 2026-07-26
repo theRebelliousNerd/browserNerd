@@ -3,8 +3,12 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 
+	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/mangle"
 	"browsernerd-mcp-server/internal/spec"
 )
@@ -41,6 +45,55 @@ func specFilterFromArgs(args map[string]interface{}) specFilter {
 		f.from, f.to = line, line
 	}
 	return f
+}
+
+func specTermsFromArgs(args map[string]interface{}) []string {
+	raw, ok := args["terms"].([]interface{})
+	if !ok {
+		if typed, typedOK := args["terms"].([]string); typedOK {
+			return append([]string(nil), typed...)
+		}
+		return nil
+	}
+	terms := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if term := strings.TrimSpace(fmt.Sprintf("%v", value)); term != "" {
+			terms = append(terms, term)
+		}
+	}
+	return terms
+}
+
+func specTermsFromRaw(value interface{}) []string {
+	return specTermsFromArgs(map[string]interface{}{"terms": value})
+}
+
+func specContextForSession(
+	cfg config.SpecsConfig,
+	sessions *browser.SessionManager,
+	sessionID string,
+	terms []string,
+) []spec.Match {
+	if !cfg.IsEnabled() || len(cfg.Sources) == 0 {
+		return nil
+	}
+	_, docs, err := loadSpecs(cfg, map[string]interface{}{})
+	if err != nil {
+		return nil
+	}
+	route := ""
+	if sessions != nil && sessionID != "" {
+		if session, ok := sessions.GetSession(sessionID); ok {
+			if parsed, parseErr := url.Parse(session.URL); parseErr == nil {
+				route = parsed.Path
+			}
+		}
+	}
+	return spec.MatchSpecs(docs, spec.MatchInput{
+		Route: route,
+		Terms: terms,
+		Max:   cfg.GetMaxResults(),
+	}, cfg.GetMaxExcerptBytes())
 }
 
 // bindingMatches reports whether a spec satisfies the filter's binding dimension.
@@ -101,11 +154,39 @@ func selectInvariants(specs []spec.Spec, f specFilter) []selectedInvariant {
 	return out
 }
 
-func loadSpecsDir(args map[string]interface{}) (string, []spec.Spec, error) {
+func loadSpecs(cfg config.SpecsConfig, args map[string]interface{}) (string, []spec.Spec, error) {
 	dir := getStringArg(args, "dir")
-	if dir == "" {
-		dir = defaultSpecsDir
+	if dir != "" {
+		return loadSpecsDir(dir)
 	}
+
+	if cfg.IsEnabled() && len(cfg.Sources) > 0 {
+		sources := make([]spec.Source, 0, len(cfg.Sources))
+		names := make([]string, 0, len(cfg.Sources))
+		for _, sourceCfg := range cfg.Sources {
+			names = append(names, sourceCfg.Name)
+			sources = append(sources, spec.Source{
+				Name:    sourceCfg.Name,
+				Roots:   append([]string(nil), sourceCfg.Roots...),
+				Indexes: append([]string(nil), sourceCfg.Indexes...),
+				Include: append([]string(nil), sourceCfg.Include...),
+				Exclude: append([]string(nil), sourceCfg.Exclude...),
+			})
+		}
+		specs, errs := spec.LoadSources(sources, spec.LoadOptions{
+			MaxFiles:     cfg.GetMaxFiles(),
+			MaxFileBytes: cfg.GetMaxFileBytes(),
+		})
+		label := strings.Join(names, ",")
+		if len(errs) > 0 && len(specs) == 0 {
+			return label, nil, fmt.Errorf("failed to load spec corpora: %v", errs[0])
+		}
+		return label, specs, nil
+	}
+	return loadSpecsDir(defaultSpecsDir)
+}
+
+func loadSpecsDir(dir string) (string, []spec.Spec, error) {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return dir, nil, fmt.Errorf("specs directory not found: %s", dir)
 	}
@@ -144,9 +225,10 @@ func defaultExpect(e string) string {
 }
 
 // GetSpecsTool delivers spec invariants relevant to a component, route, or code
-// region — spec delivery mode.
+// region - spec delivery mode.
 type GetSpecsTool struct {
-	engine *mangle.Engine
+	engine   *mangle.Engine
+	specsCfg config.SpecsConfig
 }
 
 func (t *GetSpecsTool) Name() string { return "get-specs" }
@@ -155,7 +237,7 @@ func (t *GetSpecsTool) Description() string {
 	return `Deliver frontend spec invariants relevant to what you're working on.
 
 TOKEN COST: Low. Returns only the invariants that govern your target, as
-compact facts — not whole documents.
+compact facts - not whole documents.
 
 FILTER BY (any combination):
 - file + from/to (or line): invariants whose code line-range overlaps yours.
@@ -177,29 +259,31 @@ func (t *GetSpecsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"dir":       map[string]interface{}{"type": "string", "description": "Specs directory (default .browsernerd/specs)."},
-			"file":      map[string]interface{}{"type": "string", "description": "Source file you're working in."},
-			"from":      map[string]interface{}{"type": "integer", "description": "Start line of the region you're working on."},
-			"to":        map[string]interface{}{"type": "integer", "description": "End line of the region you're working on."},
-			"line":      map[string]interface{}{"type": "integer", "description": "A single line, shorthand for from==to."},
+			"dir":        map[string]interface{}{"type": "string", "description": "Specs directory (default .browsernerd/specs)."},
+			"file":       map[string]interface{}{"type": "string", "description": "Source file you're working in."},
+			"from":       map[string]interface{}{"type": "integer", "description": "Start line of the region you're working on."},
+			"to":         map[string]interface{}{"type": "integer", "description": "End line of the region you're working on."},
+			"line":       map[string]interface{}{"type": "integer", "description": "A single line, shorthand for from==to."},
 			"component":  map[string]interface{}{"type": "string", "description": "React component name to match a spec binding."},
 			"route":      map[string]interface{}{"type": "string", "description": "Route/path to match a spec binding."},
 			"selector":   map[string]interface{}{"type": "string", "description": "Selector to match a spec binding."},
 			"session_id": map[string]interface{}{"type": "string", "description": "Resolve bindings against this live session (component->fiber->DOM, route, selector)."},
+			"terms":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Additional feature, subsystem, or requirement terms for generic corpus matching."},
 		},
 	}
 }
 
 func (t *GetSpecsTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	dir, specs, err := loadSpecsDir(args)
+	dir, specs, err := loadSpecs(t.specsCfg, args)
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error(), "dir": dir}, nil
 	}
 
 	f := specFilterFromArgs(args)
+	terms := specTermsFromArgs(args)
 
 	// No filter: return a compact summary of available specs.
-	if f.empty() {
+	if f.empty() && len(terms) == 0 {
 		summary := make([]map[string]interface{}, 0, len(specs))
 		for _, s := range specs {
 			summary = append(summary, map[string]interface{}{
@@ -224,6 +308,17 @@ func (t *GetSpecsTool) Execute(ctx context.Context, args map[string]interface{})
 		"specs_loaded": len(specs),
 		"invariants":   views,
 		"count":        len(views),
+	}
+	matches := spec.MatchSpecs(specs, spec.MatchInput{
+		File:      f.file,
+		Component: f.component,
+		Route:     f.route,
+		Selector:  f.selector,
+		Terms:     terms,
+		Max:       t.specsCfg.GetMaxResults(),
+	}, t.specsCfg.GetMaxExcerptBytes())
+	if len(matches) > 0 {
+		out["documents"] = matches
 	}
 
 	// When a session is given, resolve each matched spec's bindings against the
@@ -255,9 +350,10 @@ func (t *GetSpecsTool) Execute(ctx context.Context, args map[string]interface{})
 }
 
 // CheckSpecsTool evaluates spec invariants against the current fact state and
-// reports violations — spec conformance mode.
+// reports violations - spec conformance mode.
 type CheckSpecsTool struct {
-	engine *mangle.Engine
+	engine   *mangle.Engine
+	specsCfg config.SpecsConfig
 }
 
 func (t *CheckSpecsTool) Name() string { return "check-specs" }
@@ -295,7 +391,7 @@ func (t *CheckSpecsTool) InputSchema() map[string]interface{} {
 }
 
 func (t *CheckSpecsTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	dir, specs, err := loadSpecsDir(args)
+	dir, specs, err := loadSpecs(t.specsCfg, args)
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error(), "dir": dir}, nil
 	}

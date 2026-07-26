@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/spec"
 )
 
 const specDoc = `---
@@ -177,5 +180,81 @@ func TestGetSpecsTool_ResolvesBindings(t *testing.T) {
 	}
 	if !componentPresent {
 		t.Fatalf("expected LoginForm resolved to node-42, got %+v", bindings)
+	}
+}
+
+func TestGetSpecsToolLoadsConfiguredGenericCorpus(t *testing.T) {
+	root := t.TempDir()
+	doc := `---
+title: Checkout Experience
+doc_type: feature-spec
+subsystem: frontend
+read_when: Working on checkout
+binding:
+  - { kind: route, target: /checkout }
+---
+# Checkout Experience
+
+The checkout page displays a confirmation after payment succeeds.
+`
+	if err := os.WriteFile(filepath.Join(root, "checkout.md"), []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	tool := &GetSpecsTool{
+		engine: setupTestEngine(t),
+		specsCfg: config.SpecsConfig{
+			Enabled:         &enabled,
+			Sources:         []config.SpecSourceConfig{{Name: "product", Roots: []string{root}}},
+			MaxFiles:        10,
+			MaxFileBytes:    1 << 20,
+			MaxResults:      4,
+			MaxExcerptBytes: 400,
+		},
+	}
+
+	res, err := tool.Execute(context.Background(), map[string]interface{}{"route": "/checkout/review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs, ok := res.(map[string]interface{})["documents"].([]spec.Match)
+	if !ok || len(docs) != 1 || docs[0].Title != "Checkout Experience" {
+		t.Fatalf("expected configured generic spec match, got %+v", res)
+	}
+}
+
+func TestBrowserActAttachesConfiguredSpecContext(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(root, "checkout.md"),
+		[]byte("# Checkout\n\nPayment confirmation requirements."),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	enabled := true
+	cfg := config.SpecsConfig{
+		Enabled:         &enabled,
+		Sources:         []config.SpecSourceConfig{{Name: "product", Roots: []string{root}}},
+		MaxFiles:        10,
+		MaxFileBytes:    1 << 20,
+		MaxResults:      4,
+		MaxExcerptBytes: 300,
+	}
+	tool := &BrowserActTool{
+		sessions: browser.NewSessionManager(config.BrowserConfig{}, nil),
+		engine:   setupTestEngine(t),
+		specsCfg: cfg,
+	}
+	res, err := tool.Execute(context.Background(), map[string]interface{}{
+		"operations": []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 0}},
+		"spec_terms": []interface{}{"checkout", "payment"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	matches, ok := res.(map[string]interface{})["spec_context"].([]spec.Match)
+	if !ok || len(matches) != 1 {
+		t.Fatalf("expected post-action spec context, got %+v", res)
 	}
 }

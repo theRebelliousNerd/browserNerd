@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -168,6 +169,60 @@ docker:
 	}
 }
 
+func TestLoadWithWorkspaceRejectsUntrustedLaunch(t *testing.T) {
+	tmpDir := t.TempDir()
+	wsDir := filepath.Join(tmpDir, WorkspaceDirName)
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("browser:\n  auto_start: true\n  launch: [\"malicious-command\"]\n")
+	if err := os.WriteFile(filepath.Join(wsDir, WorkspaceConfigFile), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := LoadWithWorkspace("", WorkspaceOptions{ExplicitDir: tmpDir})
+	if err == nil || !strings.Contains(err.Error(), "--trust-workspace-config") {
+		t.Fatalf("expected untrusted launch rejection, got %v", err)
+	}
+}
+
+func TestLoadWithWorkspaceAllowsExplicitlyTrustedLaunch(t *testing.T) {
+	tmpDir := t.TempDir()
+	wsDir := filepath.Join(tmpDir, WorkspaceDirName)
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("browser:\n  auto_start: true\n  launch: [\"chrome\"]\n")
+	if err := os.WriteFile(filepath.Join(wsDir, WorkspaceConfigFile), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _, err := LoadWithWorkspace("", WorkspaceOptions{ExplicitDir: tmpDir, Trust: true})
+	if err != nil {
+		t.Fatalf("expected trusted launch to load: %v", err)
+	}
+	if len(cfg.Browser.Launch) != 1 || cfg.Browser.Launch[0] != "chrome" {
+		t.Fatalf("unexpected launch config: %v", cfg.Browser.Launch)
+	}
+}
+
+func TestLoadWithWorkspaceRejectsPathEscape(t *testing.T) {
+	tmpDir := t.TempDir()
+	wsDir := filepath.Join(tmpDir, WorkspaceDirName)
+	if err := os.MkdirAll(wsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("browser:\n  auto_start: false\nrecorder:\n  trace_dir: ../outside\n")
+	if err := os.WriteFile(filepath.Join(wsDir, WorkspaceConfigFile), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := LoadWithWorkspace("", WorkspaceOptions{ExplicitDir: tmpDir})
+	if err == nil || !strings.Contains(err.Error(), "must remain inside the workspace") {
+		t.Fatalf("expected path escape rejection, got %v", err)
+	}
+}
+
 func TestLoadWithWorkspace_ExplicitOverridesWorkspace(t *testing.T) {
 	// Set up workspace with docker containers
 	tmpDir := t.TempDir()
@@ -282,10 +337,20 @@ func TestResolveWorkspacePaths_Relative(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := Config{
-		Server:   ServerConfig{LogFile: "browsernerd-mcp.log"},
-		Browser:  BrowserConfig{SessionStore: "sessions.json"},
+		Server: ServerConfig{LogFile: "browsernerd-mcp.log"},
+		Browser: BrowserConfig{
+			SessionStore: "sessions.json",
+			RepoTrace: RepoTraceConfig{
+				RootDir: "workspace",
+			},
+		},
 		Mangle:   MangleConfig{SchemaPath: filepath.Join("schemas", "browser.mg")},
 		Recorder: RecorderConfig{TraceDir: filepath.Join("data", "traces")},
+		Specs: SpecsConfig{Sources: []SpecSourceConfig{{
+			Name:    "project",
+			Roots:   []string{filepath.Join("docs", "specs")},
+			Indexes: []string{filepath.Join("docs", "indexes", "specs.md")},
+		}}},
 	}
 
 	resolved := resolveWorkspacePaths(cfg, tmpDir)
@@ -298,6 +363,10 @@ func TestResolveWorkspacePaths_Relative(t *testing.T) {
 	if resolved.Browser.SessionStore != expected {
 		t.Errorf("expected session store %q, got %q", expected, resolved.Browser.SessionStore)
 	}
+	expected = filepath.Join(tmpDir, "workspace")
+	if resolved.Browser.RepoTrace.RootDir != expected {
+		t.Errorf("expected repo trace root %q, got %q", expected, resolved.Browser.RepoTrace.RootDir)
+	}
 	expected = filepath.Join(tmpDir, "schemas", "browser.mg")
 	if resolved.Mangle.SchemaPath != expected {
 		t.Errorf("expected schema path %q, got %q", expected, resolved.Mangle.SchemaPath)
@@ -305,6 +374,14 @@ func TestResolveWorkspacePaths_Relative(t *testing.T) {
 	expected = filepath.Join(tmpDir, "data", "traces")
 	if resolved.Recorder.TraceDir != expected {
 		t.Errorf("expected recorder trace dir %q, got %q", expected, resolved.Recorder.TraceDir)
+	}
+	expected = filepath.Join(tmpDir, "docs", "specs")
+	if resolved.Specs.Sources[0].Roots[0] != expected {
+		t.Errorf("expected spec root %q, got %q", expected, resolved.Specs.Sources[0].Roots[0])
+	}
+	expected = filepath.Join(tmpDir, "docs", "indexes", "specs.md")
+	if resolved.Specs.Sources[0].Indexes[0] != expected {
+		t.Errorf("expected spec index %q, got %q", expected, resolved.Specs.Sources[0].Indexes[0])
 	}
 }
 
@@ -324,8 +401,13 @@ func TestResolveWorkspacePaths_AbsoluteUntouched(t *testing.T) {
 	}
 
 	cfg := Config{
-		Server:   ServerConfig{LogFile: absLog},
-		Browser:  BrowserConfig{SessionStore: absSession},
+		Server: ServerConfig{LogFile: absLog},
+		Browser: BrowserConfig{
+			SessionStore: absSession,
+			RepoTrace: RepoTraceConfig{
+				RootDir: absSchema,
+			},
+		},
 		Mangle:   MangleConfig{SchemaPath: absSchema},
 		Recorder: RecorderConfig{TraceDir: absSchema},
 	}
@@ -337,6 +419,9 @@ func TestResolveWorkspacePaths_AbsoluteUntouched(t *testing.T) {
 	}
 	if resolved.Browser.SessionStore != absSession {
 		t.Errorf("expected absolute session store untouched %q, got %q", absSession, resolved.Browser.SessionStore)
+	}
+	if resolved.Browser.RepoTrace.RootDir != absSchema {
+		t.Errorf("expected absolute repo trace root untouched %q, got %q", absSchema, resolved.Browser.RepoTrace.RootDir)
 	}
 	if resolved.Mangle.SchemaPath != absSchema {
 		t.Errorf("expected absolute schema path untouched %q, got %q", absSchema, resolved.Mangle.SchemaPath)
@@ -402,5 +487,115 @@ func TestInitWorkspace_AlreadyExists(t *testing.T) {
 	err := InitWorkspace(tmpDir)
 	if err == nil {
 		t.Error("expected error when workspace already exists")
+	}
+}
+
+func TestLoadWithWorkspaceRejectsUntrustedExternalSpecCorpus(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, WorkspaceDirName)
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`
+browser:
+  auto_start: false
+specs:
+  sources:
+    - name: external
+      roots: ["../other/specs"]
+      indexes: ["../other/index.md"]
+`)
+	if err := os.WriteFile(filepath.Join(configDir, WorkspaceConfigFile), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := LoadWithWorkspace("", WorkspaceOptions{ExplicitDir: root})
+	if err == nil || !strings.Contains(err.Error(), "specs.sources") {
+		t.Fatalf("expected external spec corpus rejection, got %v", err)
+	}
+}
+
+func TestLoadWithWorkspaceRejectsUntrustedUnsafeJavaScript(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, WorkspaceDirName)
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`
+browser:
+  auto_start: false
+security:
+  allow_unsafe_javascript: true
+`)
+	if err := os.WriteFile(filepath.Join(configDir, WorkspaceConfigFile), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := LoadWithWorkspace("", WorkspaceOptions{ExplicitDir: root})
+	if err == nil || !strings.Contains(err.Error(), "--trust-workspace-config") {
+		t.Fatalf("expected unsafe JavaScript trust rejection, got %v", err)
+	}
+}
+
+// TestExplicitConfigPathsAnchorToConfigFile locks in that relative paths in an
+// explicit --config resolve against that config FILE's directory, never against
+// the process working directory.
+//
+// Regression: an MCP client launches the server with an arbitrary cwd. When
+// these paths were left relative, a correct config silently pointed at
+// nonexistent files -- the mangle schema in particular -- and the server exited
+// during startup with no output the operator could see.
+func TestExplicitConfigPathsAnchorToConfigFile(t *testing.T) {
+	configDir := t.TempDir()
+	schemaDir := filepath.Join(configDir, "schemas")
+	if err := os.MkdirAll(schemaDir, 0o755); err != nil {
+		t.Fatalf("creating schema dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(schemaDir, "browser.mg"), []byte("# test schema\n"), 0o644); err != nil {
+		t.Fatalf("writing schema: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	body := "server:\n" +
+		"  log_file: \"data/browsernerd-mcp.log\"\n" +
+		"browser:\n" +
+		"  auto_start: false\n" +
+		"  session_store: \"data/sessions.json\"\n" +
+		"mangle:\n" +
+		"  schema_path: \"schemas/browser.mg\"\n"
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+
+	// Run from a DIFFERENT directory than the config lives in. If resolution
+	// used the working directory, every assertion below would point here.
+	otherDir := t.TempDir()
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(otherDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(original) })
+
+	cfg, _, err := LoadWithWorkspace(configPath, WorkspaceOptions{Disable: true})
+	if err != nil {
+		t.Fatalf("LoadWithWorkspace: %v", err)
+	}
+
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"server.log_file", cfg.Server.LogFile, filepath.Join(configDir, "data", "browsernerd-mcp.log")},
+		{"browser.session_store", cfg.Browser.SessionStore, filepath.Join(configDir, "data", "sessions.json")},
+		{"mangle.schema_path", cfg.Mangle.SchemaPath, filepath.Join(configDir, "schemas", "browser.mg")},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: expected %q, got %q", c.name, c.want, c.got)
+		}
 	}
 }

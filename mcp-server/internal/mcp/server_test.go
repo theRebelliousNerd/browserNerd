@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"math"
 	"testing"
+	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 )
 
 func setupTestServerConfig() config.Config {
-	// Default: progressive_only is nil (defaults to true) -- only 6 tools
+	// Default: progressive_only is nil (defaults to true) -- only progressive tools
 	return config.Config{
 		Server: config.ServerConfig{
 			Name:    "test-server",
@@ -167,6 +169,45 @@ func TestExecuteTool(t *testing.T) {
 			t.Error("expected non-nil result")
 		}
 	})
+
+	t.Run("browser-audit discover via server wrapper", func(t *testing.T) {
+		sessionID := "server-audit-wrapper"
+		repoRoot := t.TempDir()
+		if err := engine.AddFacts(context.Background(), []mangle.Fact{
+			{
+				Predicate: "current_url",
+				Args:      []interface{}{sessionID, "https://app.example.com/settings"},
+				Timestamp: time.Now(),
+			},
+		}); err != nil {
+			t.Fatalf("seed browser-audit discover facts: %v", err)
+		}
+
+		result, err := server.ExecuteTool("browser-audit", map[string]interface{}{
+			"session_id":           sessionID,
+			"repo_root":            repoRoot,
+			"phase":                "discover",
+			"view":                 "summary",
+			"include_repo_matches": false,
+			"include_live_observe": false,
+		})
+		if err != nil {
+			t.Fatalf("ExecuteTool browser-audit discover failed: %v", err)
+		}
+		resultMap, ok := result.(map[string]interface{})
+		if !ok {
+			t.Fatalf("expected map result from browser-audit, got %T", result)
+		}
+		if success, _ := resultMap["success"].(bool); !success {
+			t.Fatalf("expected browser-audit discover success, got %+v", resultMap)
+		}
+		if resultMap["phase"] != "discover" {
+			t.Fatalf("expected browser-audit phase discover, got %+v", resultMap["phase"])
+		}
+		if _, ok := resultMap["audit_id"].(string); !ok {
+			t.Fatalf("expected persisted audit_id from browser-audit discover, got %+v", resultMap)
+		}
+	})
 }
 
 func TestToolInterface(t *testing.T) {
@@ -214,7 +255,7 @@ func TestToolInterface(t *testing.T) {
 }
 
 func TestToolCount(t *testing.T) {
-	t.Run("progressive_only mode has exactly 6 tools", func(t *testing.T) {
+	t.Run("progressive_only mode has exactly 11 tools", func(t *testing.T) {
 		cfg := setupTestServerConfig() // progressive_only defaults to true
 		engine, err := mangle.NewEngine(cfg.Mangle)
 		if err != nil {
@@ -225,15 +266,15 @@ func TestToolCount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewServer failed: %v", err)
 		}
-		if len(server.tools) != 6 {
-			t.Errorf("expected exactly 6 tools in progressive_only mode, got %d", len(server.tools))
+		if len(server.tools) != 11 {
+			t.Errorf("expected exactly 11 tools in progressive_only mode, got %d", len(server.tools))
 			for name := range server.tools {
 				t.Logf("  registered: %s", name)
 			}
 		}
 	})
 
-	t.Run("all_tools mode has at least 30 tools", func(t *testing.T) {
+	t.Run("all_tools mode has exactly 48 tools", func(t *testing.T) {
 		cfg := setupTestServerConfigAllTools() // progressive_only = false
 		engine, err := mangle.NewEngine(cfg.Mangle)
 		if err != nil {
@@ -244,9 +285,9 @@ func TestToolCount(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewServer failed: %v", err)
 		}
-		expectedMinTools := 30
-		if len(server.tools) < expectedMinTools {
-			t.Errorf("expected at least %d tools in all_tools mode, got %d", expectedMinTools, len(server.tools))
+		const expectedTools = 48
+		if len(server.tools) != expectedTools {
+			t.Errorf("expected exactly %d tools in all_tools mode, got %d", expectedTools, len(server.tools))
 		}
 	})
 }
@@ -297,8 +338,30 @@ func TestMarshalToolPayloadFallback(t *testing.T) {
 	}
 }
 
+func TestSanitizeToolPayloadRedactsCredentialsBeforeReturn(t *testing.T) {
+	payload := []byte(`{"authorization":"Bearer secret-value","nested":{"cookie":"session=abc"},"jwt":"eyJabcdefgh.abcdefgh.abcdefgh"}`)
+	safe := sanitizeToolPayload(payload, security.NewRedactor(nil))
+	if string(safe) == string(payload) {
+		t.Fatal("expected payload redaction")
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(safe, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["authorization"] != security.Redacted {
+		t.Fatalf("authorization was not redacted: %s", safe)
+	}
+	nested := decoded["nested"].(map[string]interface{})
+	if nested["cookie"] != security.Redacted {
+		t.Fatalf("cookie was not redacted: %s", safe)
+	}
+	if decoded["jwt"] != security.Redacted {
+		t.Fatalf("JWT was not redacted: %s", safe)
+	}
+}
+
 func TestServerToolRegistration(t *testing.T) {
-	t.Run("progressive_only registers 6 progressive tools", func(t *testing.T) {
+	t.Run("progressive_only registers 11 progressive tools", func(t *testing.T) {
 		cfg := setupTestServerConfig()
 		engine, err := mangle.NewEngine(cfg.Mangle)
 		if err != nil {
@@ -313,9 +376,14 @@ func TestServerToolRegistration(t *testing.T) {
 		progressiveTools := []string{
 			"launch-browser",
 			"shutdown-browser",
+			"close-session",
 			"browser-observe",
 			"browser-act",
 			"browser-reason",
+			"browser-audit",
+			"get-specs",
+			"check-specs",
+			"browser-test",
 			"browser-mangle",
 		}
 
@@ -342,15 +410,22 @@ func TestServerToolRegistration(t *testing.T) {
 			// Lifecycle (always)
 			"launch-browser",
 			"shutdown-browser",
+			"close-session",
 			// Progressive (always)
 			"browser-observe",
 			"browser-act",
 			"browser-reason",
+			"browser-audit",
+			"get-specs",
+			"check-specs",
+			"browser-test",
 			"browser-mangle",
 			// Individual (only when progressive_only=false)
 			"list-sessions",
+			"list-browsers",
 			"create-session",
 			"attach-session",
+			"focus-session",
 			"fork-session",
 			"reify-react",
 			"snapshot-dom",
@@ -381,6 +456,8 @@ func TestServerToolRegistration(t *testing.T) {
 			"wait-for-condition",
 			"diagnose-page",
 			"await-stable-state",
+			"run-test",
+			"generate-test",
 		}
 
 		for _, toolName := range expectedTools {

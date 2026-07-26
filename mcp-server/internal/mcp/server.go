@@ -15,6 +15,7 @@ import (
 	"browsernerd-mcp-server/internal/docker"
 	"browsernerd-mcp-server/internal/mangle"
 	"browsernerd-mcp-server/internal/recorder"
+	"browsernerd-mcp-server/internal/security"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -27,6 +28,8 @@ type Server struct {
 	engine       *mangle.Engine
 	dockerClient *docker.Client
 	recorder     *recorder.Recorder
+	redactor     *security.Redactor
+	pathPolicy   *security.PathPolicy
 	tools        map[string]Tool
 	mcpServer    *mcpserver.MCPServer
 }
@@ -51,6 +54,14 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 		mcpserver.WithRecovery(),
 	)
 
+	// Credential redaction is a mandatory trust boundary. Configuration can
+	// tune additional keys, but cannot disable protection of built-in secrets.
+	redactor := security.NewRedactor(cfg.Security.ExtraSensitiveKeys)
+	pathPolicy, err := security.NewPathPolicy(cfg.Security.BaseDir, cfg.Security.WritableRoots)
+	if err != nil {
+		return nil, fmt.Errorf("initialize write path policy: %w", err)
+	}
+
 	// Initialize Docker client if enabled
 	var dockerClient *docker.Client
 	if cfg.Docker.Enabled {
@@ -64,8 +75,7 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 
 	var flightRecorder *recorder.Recorder
 	if cfg.Recorder.Enabled {
-		var err error
-		flightRecorder, err = recorder.NewRecorderWithOptions(cfg.Recorder.TraceDir, cfg.Recorder.MaxRotatedFiles)
+		flightRecorder, err = recorder.NewRecorderWithSecurity(cfg.Recorder.TraceDir, cfg.Recorder.MaxRotatedFiles, redactor)
 		if err != nil {
 			return nil, fmt.Errorf("initialize recorder: %w", err)
 		}
@@ -86,6 +96,8 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 		engine:       engine,
 		dockerClient: dockerClient,
 		recorder:     flightRecorder,
+		redactor:     redactor,
+		pathPolicy:   pathPolicy,
 		tools:        make(map[string]Tool),
 		mcpServer:    mcpSrv,
 	}
@@ -156,18 +168,36 @@ func (s *Server) ExecuteTool(name string, args map[string]interface{}) (interfac
 }
 
 func (s *Server) registerAllTools() {
+	disableUnsafeJavaScript := !s.cfg.Security.AllowsUnsafeJavaScript()
 	// Always register lifecycle tools (cannot consolidate)
 	s.registerTool(&LaunchBrowserTool{sessions: s.sessions})
 	s.registerTool(&ShutdownBrowserTool{sessions: s.sessions})
+	s.registerTool(&CloseSessionTool{sessions: s.sessions})
 
 	// Always register progressive disclosure tools
-	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine})
-	s.registerTool(&BrowserActTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine, pathPolicy: s.pathPolicy, specsCfg: s.cfg.Specs})
+	s.registerTool(&BrowserActTool{
+		sessions:                s.sessions,
+		engine:                  s.engine,
+		redactor:                s.redactor,
+		specsCfg:                s.cfg.Specs,
+		disableUnsafeJavaScript: disableUnsafeJavaScript,
+	})
 	s.registerTool(&BrowserReasonTool{engine: s.engine, dockerClient: s.dockerClient})
+	s.registerTool(&BrowserAuditTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&GetSpecsTool{engine: s.engine, specsCfg: s.cfg.Specs})
+	s.registerTool(&CheckSpecsTool{engine: s.engine, specsCfg: s.cfg.Specs})
+	s.registerTool(&BrowserTestTool{
+		sessions:                s.sessions,
+		engine:                  s.engine,
+		disableUnsafeJavaScript: disableUnsafeJavaScript,
+	})
 	s.registerTool(&BrowserMangleTool{
 		engine:           s.engine,
 		dockerClient:     s.dockerClient,
 		recorder:         s.recorder,
+		redactor:         s.redactor,
+		pathPolicy:       s.pathPolicy,
 		defaultTraceDir:  s.cfg.Recorder.TraceDir,
 		defaultLogWindow: s.cfg.Docker.GetLogWindow(),
 	})
@@ -179,10 +209,13 @@ func (s *Server) registerAllTools() {
 }
 
 func (s *Server) registerIndividualTools() {
+	disableUnsafeJavaScript := !s.cfg.Security.AllowsUnsafeJavaScript()
 	// Browser session management
 	s.registerTool(&ListSessionsTool{sessions: s.sessions})
+	s.registerTool(&ListBrowsersTool{sessions: s.sessions})
 	s.registerTool(&CreateSessionTool{sessions: s.sessions})
 	s.registerTool(&AttachSessionTool{sessions: s.sessions})
+	s.registerTool(&FocusSessionTool{sessions: s.sessions})
 	s.registerTool(&ForkSessionTool{sessions: s.sessions})
 	s.registerTool(&ReifyReactTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&SnapshotDOMTool{sessions: s.sessions, engine: s.engine})
@@ -206,18 +239,23 @@ func (s *Server) registerIndividualTools() {
 
 	// Navigation tools - Token-efficient interaction
 	s.registerTool(&GetNavigationLinksTool{sessions: s.sessions, engine: s.engine})
-	s.registerTool(&GetInteractiveElementsTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&GetInteractiveElementsTool{sessions: s.sessions, engine: s.engine, redactor: s.redactor})
 	s.registerTool(&DiscoverGridsTool{sessions: s.sessions})
 	s.registerTool(&DiscoverHiddenContentTool{sessions: s.sessions})
-	s.registerTool(&InteractTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&InteractTool{sessions: s.sessions, engine: s.engine, redactor: s.redactor})
 	s.registerTool(&GetPageStateTool{sessions: s.sessions})
 	s.registerTool(&NavigateURLTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&PressKeyTool{sessions: s.sessions, engine: s.engine})
 
 	// Advanced tools - Screenshots, JS eval, batch operations
-	s.registerTool(&ScreenshotTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&ScreenshotTool{sessions: s.sessions, engine: s.engine, pathPolicy: s.pathPolicy})
 	s.registerTool(&BrowserHistoryTool{sessions: s.sessions, engine: s.engine})
-	s.registerTool(&EvaluateJSTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&EvaluateJSTool{
+		sessions:                s.sessions,
+		engine:                  s.engine,
+		redactor:                s.redactor,
+		disableUnsafeJavaScript: disableUnsafeJavaScript,
+	})
 	s.registerTool(&FillFormTool{sessions: s.sessions, engine: s.engine})
 
 	// Mangle-driven automation
@@ -227,12 +265,13 @@ func (s *Server) registerIndividualTools() {
 	s.registerTool(&AwaitStableStateTool{engine: s.engine})
 
 	// Declarative testing
-	s.registerTool(&RunTestTool{sessions: s.sessions, engine: s.engine})
+	s.registerTool(&RunTestTool{
+		sessions:                s.sessions,
+		engine:                  s.engine,
+		disableUnsafeJavaScript: disableUnsafeJavaScript,
+	})
 	s.registerTool(&GenerateTestTool{engine: s.engine})
 
-	// Frontend spec delivery & conformance
-	s.registerTool(&GetSpecsTool{engine: s.engine})
-	s.registerTool(&CheckSpecsTool{engine: s.engine})
 }
 
 func (s *Server) registerTool(tool Tool) {
@@ -281,7 +320,7 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 			}, nil
 		}
 
-		payload := marshalToolPayload(tool.Name(), result)
+		payload := sanitizeToolPayload(marshalToolPayload(tool.Name(), result), s.redactor)
 		if s.recorder != nil {
 			payloadString := string(payload)
 			payloadTruncated := false
@@ -303,6 +342,21 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 			IsError: false,
 		}, nil
 	}
+}
+
+func sanitizeToolPayload(payload []byte, redactor *security.Redactor) []byte {
+	if redactor == nil || len(payload) == 0 {
+		return payload
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return payload
+	}
+	safe, err := json.Marshal(redactor.Sanitize(decoded))
+	if err != nil {
+		return payload
+	}
+	return safe
 }
 
 func marshalToolPayload(toolName string, result interface{}) []byte {

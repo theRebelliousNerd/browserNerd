@@ -1,10 +1,20 @@
+---
+title: Browser Session Management
+created: 2026-02-07
+last_updated: 2026-05-21
+doc_type: reference
+subsystem: infra
+read_when: Reference material for infra
+indexes: []
+---
+
 # Browser Session Management
 
 # ⚠️ CRITICAL ARCHITECTURAL BOUNDARY ⚠️
 
 **ABSOLUTE ISOLATION REQUIREMENT**
 
-This code is part of `dev_tools/` - development utilities for BUILDING SymbioGen.
+This code is part of `dev_tools/` - development utilities for BUILDING Cross-Thread™.
 
 **NEVER EVER EVER:**
 - ❌ Import from `ai_engine/`
@@ -14,17 +24,17 @@ This code is part of `dev_tools/` - development utilities for BUILDING SymbioGen
 - ❌ Import from `ingestion/`
 - ❌ Import from `graph_rag_service/`
 - ❌ Import from `frontend/`
-- ❌ Use SymbioGen's ArangoDB (localhost:8529, database: symbiogen_db)
-- ❌ Use SymbioGen's database credentials
-- ❌ Call SymbioGen's API endpoints (localhost:8000)
-- ❌ Share any SymbioGen runtime resources
+- ❌ Use Cross-Thread™'s Vectryx (localhost:8529, database: cross-thread_db)
+- ❌ Use Cross-Thread™'s database credentials
+- ❌ Call Cross-Thread™'s API endpoints (localhost:8000)
+- ❌ Share any Cross-Thread™ runtime resources
 
-**WHY:** `dev_tools/` is scaffolding. Once built, the scaffolding comes down. The cathedral (SymbioGen) stands alone. They MUST remain completely isolated.
+**WHY:** `dev_tools/` is scaffolding. Once built, the scaffolding comes down. The cathedral (Cross-Thread™) stands alone. They MUST remain completely isolated.
 
-**IF YOU NEED SHARED CODE:** Extract it to a standalone library or duplicate it. Never create dependencies on SymbioGen runtime code.
+**IF YOU NEED SHARED CODE:** Extract it to a standalone library or duplicate it. Never create dependencies on Cross-Thread™ runtime code.
 
 **dev_tools has its own resources:**
-- Separate ArangoDB instance (localhost:8530, database: code_graph)
+- Separate Vectryx instance (localhost:8530, database: code_graph)
 - Separate credentials
 - Standalone Go binaries
 - Independent MCP servers

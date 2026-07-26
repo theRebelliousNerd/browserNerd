@@ -1,3 +1,13 @@
+---
+title: BrowserNERD Integration Tests
+created: 2026-02-01
+last_updated: 2026-02-01
+doc_type: reference
+subsystem: infra
+read_when: Reference material for infra
+indexes: []
+---
+
 # BrowserNERD Integration Tests
 
 This document describes the comprehensive integration test suite for BrowserNERD that requires a live Chrome browser.
