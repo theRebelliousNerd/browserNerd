@@ -2,6 +2,7 @@ package mangle
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -485,7 +486,7 @@ func TestEngineBufferLimit(t *testing.T) {
 func TestEngineQueryNotReady(t *testing.T) {
 	cfg := config.MangleConfig{
 		Enable:          true,
-		SchemaPath:      "", // No schema
+		DisableBuiltin:  true, // No schema
 		FactBufferLimit: 1000,
 	}
 
@@ -504,7 +505,7 @@ func TestEngineQueryNotReady(t *testing.T) {
 func TestEngineEvaluateNotReady(t *testing.T) {
 	cfg := config.MangleConfig{
 		Enable:          true,
-		SchemaPath:      "", // No schema
+		DisableBuiltin:  true, // No schema
 		FactBufferLimit: 1000,
 	}
 
@@ -910,7 +911,7 @@ func TestEngineToConstantTypes(t *testing.T) {
 func TestEngineAddRuleWithoutSchema(t *testing.T) {
 	cfg := config.MangleConfig{
 		Enable:          true,
-		SchemaPath:      "", // No schema loaded
+		DisableBuiltin:  true, // No schema loaded
 		FactBufferLimit: 1000,
 	}
 
@@ -1070,13 +1071,10 @@ func TestEngineQueryWithVariousPredicates(t *testing.T) {
 		t.Logf("Got %d results for error console_event", len(results))
 	})
 
-	t.Run("query non-existent predicate", func(t *testing.T) {
-		results, err := engine.Query(ctx, "nonexistent_predicate(X, Y).")
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("Expected 0 results for non-existent predicate, got %d", len(results))
+	t.Run("query non-existent predicate is an error, not zero rows", func(t *testing.T) {
+		_, err := engine.Query(ctx, "nonexistent_predicate(X, Y).")
+		if err == nil || !strings.Contains(err.Error(), "unknown predicate nonexistent_predicate") {
+			t.Fatalf("expected an unknown predicate error, got %v", err)
 		}
 	})
 }
@@ -1577,52 +1575,47 @@ func TestEngineQueryBufferDirectWithConstants(t *testing.T) {
 	}
 	_ = engine.AddFacts(ctx, facts)
 
-	// Query with constant that should match only GET requests
-	// This exercises queryBufferDirect constant matching branch
-	results, err := engine.Query(ctx, `net_request(SessionId, ReqId, "GET", Url, InitiatorId).`)
+	// A constant argument selects only the matching requests.
+	results, err := engine.Query(ctx, `net_request(SessionId, ReqId, "GET", Url, InitiatorId, T).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
-
-	t.Logf("Query for GET requests returned %d results", len(results))
-	// Should match req-1 and req-3 (both GET)
-	if len(results) < 2 {
-		t.Logf("Expected at least 2 GET requests, got %d", len(results))
+	if len(results) != 2 {
+		t.Fatalf("expected req-1 and req-3 (both GET), got %d: %v", len(results), results)
 	}
 
-	// Query with constant that matches no facts
-	results2, err := engine.Query(ctx, `net_request(SessionId, ReqId, "DELETE", Url, InitiatorId).`)
+	results2, err := engine.Query(ctx, `net_request(SessionId, ReqId, "DELETE", Url, InitiatorId, T).`)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
-
 	if len(results2) != 0 {
 		t.Errorf("Expected 0 results for DELETE requests, got %d", len(results2))
 	}
 
-	t.Run("query with more args than stored fact", func(t *testing.T) {
-		// Add a fact with fewer args
+	t.Run("a declared predicate queried with the wrong arity names its signature", func(t *testing.T) {
+		_, err := engine.Query(ctx, `net_request(SessionId, ReqId, "GET", Url, InitiatorId).`)
+		if err == nil || !strings.Contains(err.Error(), "net_request(SessionId, Id, Method, Url, InitiatorId, StartTime)") {
+			t.Fatalf("expected the declared signature in the error, got %v", err)
+		}
+	})
+
+	t.Run("a pushed predicate queried with the wrong arity is an error", func(t *testing.T) {
 		_ = engine.AddFacts(ctx, []Fact{
 			{Predicate: "short_query_test", Args: []interface{}{"a", "b"}, Timestamp: time.Now()},
 		})
-		// Query with more args - should not match (tests len check in queryBufferDirect)
-		results, err := engine.Query(ctx, `short_query_test(A, B, C, D).`)
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
+		if _, err := engine.Query(ctx, `short_query_test(A, B, C, D).`); err == nil || !strings.Contains(err.Error(), "takes 2 arguments, not 4") {
+			t.Fatalf("expected an arity error, got %v", err)
 		}
-		t.Logf("Query with more args than fact returned %d results", len(results))
+		rows, err := engine.Query(ctx, `short_query_test(A, B).`)
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("expected the pushed fact, got %v, %v", rows, err)
+		}
 	})
 
-	t.Run("query with invalid index", func(t *testing.T) {
-		// This tests the idx bounds check in queryBufferDirect
-		// We need a scenario where index contains stale indices
-		// For now, verify basic behavior
-		results, err := engine.Query(ctx, `nonexistent_query_pred(X).`)
-		if err != nil {
-			t.Fatalf("Query failed: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("Expected 0 results for nonexistent predicate, got %d", len(results))
+	t.Run("a misspelled predicate suggests the right one", func(t *testing.T) {
+		_, err := engine.Query(ctx, `net_requests(S, R, M, U, I, T).`)
+		if err == nil || !strings.Contains(err.Error(), "did you mean net_request(") {
+			t.Fatalf("expected a did-you-mean, got %v", err)
 		}
 	})
 }

@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Secure Declarative Browser Automation
 created: 2026-07-23
-last_updated: 2026-07-23
+last_updated: 2026-09-24
 doc_type: spec
 subsystem: infra
 read_when: Changing BrowserNERD security, browser automation, spec delivery, test generation, or workspace configuration
@@ -157,8 +157,8 @@ current session and reports causal evidence for violations.
   removes persisted metadata, and is idempotent.
 - Shared-context tabs are the default; isolated tabs are opt-in.
 - Multiple independent Chrome instances are selectable by `browser_id`.
-- Session creation fails fast at `max_tabs`; browser launch fails fast at
-  `max_browsers`.
+- Session creation fails fast at `max_tabs` open tabs (detached sessions do not
+  count); browser launch fails fast at `max_browsers`.
 - Idle reaping is configurable and disabled only by an explicit zero timeout.
 - Browser shutdown closes every session before closing Rod.
 

@@ -43,7 +43,9 @@ Decl dom_layout(SessionId, NodeId, X, Y, Width, Height, Visible).
 # Core transaction record
 # Session-scoped to prevent cross-session contamination.
 Decl net_request(SessionId, Id, Method, Url, InitiatorId, StartTime).
-# Response metadata with timing
+# Response metadata with timing, whole milliseconds: Latency is the server's
+# wait (request sent to first byte); Duration is request issued to response
+# headers received, queueing and connection setup included.
 Decl net_response(SessionId, Id, Status, Latency, Duration).
 # Normalized headers (keys lowercased)
 Decl net_header(SessionId, Id, Kind, Key, Value).
@@ -51,6 +53,17 @@ Decl net_header(SessionId, Id, Kind, Key, Value).
 Decl net_correlation_key(SessionId, Id, KeyType, KeyValue).
 # Critical for causality: what triggered this request?
 Decl request_initiator(SessionId, Id, Type, ScriptId).
+# A response with Status >= 400, stamped when it arrived. ResourceType is the
+# CDP type (Document, XHR, Fetch, Script, Image, Font, Stylesheet, ...).
+Decl net_http_error(SessionId, Id, Url, Status, ResourceType, Timestamp).
+# A request that got no response: refused connection, DNS, CORS, abort.
+# Canceled is "true" for aborted requests (navigation away, AbortController).
+Decl net_loading_failed(SessionId, Id, ErrorText, Canceled, Timestamp).
+# The first KB of a failed (>= 400) text/JSON response body, redacted.
+Decl net_failure_body(SessionId, Id, Snippet).
+# WebSocket lifecycle; Event is created | handshake | open | closed | error.
+# Frame payloads are never captured.
+Decl ws_event(SessionId, WsId, Url, Event, Detail, Timestamp).
 
 # --- Browser/User Events ---
 # Session-scoped to prevent cross-session contamination.
@@ -60,8 +73,21 @@ Decl input_event(SessionId, NodeId, Value, Timestamp).
 Decl state_change(SessionId, Name, Value, Timestamp).
 Decl navigation_event(SessionId, Url, Timestamp).
 
+# Browser-generated warnings and errors (deprecation, intervention, security,
+# CSP, violation); Level is warning | error.
+Decl browser_log(SessionId, Source, Level, Text, Url, Timestamp).
+# A JavaScript alert/confirm/prompt/beforeunload, answered the moment it
+# opened. Accepted is "true"/"false"; HandledBy is armed | policy.
+Decl js_dialog(SessionId, Type, Message, Accepted, HandledBy, Timestamp).
+# A download; State is started | completed | canceled.
+Decl download(SessionId, Guid, Url, SuggestedName, State, Timestamp).
+
 # --- Session State (for current_url predicate) ---
+# The engine keeps only the latest current_url per session.
 Decl current_url(SessionId, Url).
+# The main frame failed to load Url: a network error, an HTTP >= 400
+# document, or Chrome's error page committed in its place.
+Decl page_load_failed(SessionId, Url, ErrorText, Timestamp).
 
 # --- Toast/Notification Events (instant error overlay detection) ---
 # Captured via MutationObserver watching for toast elements in real-time

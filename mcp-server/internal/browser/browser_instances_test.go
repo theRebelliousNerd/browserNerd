@@ -2,8 +2,11 @@ package browser
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-rod/rod"
 
 	"browsernerd-mcp-server/internal/config"
 )
@@ -43,6 +46,30 @@ func TestReapIdleTabsClosesOnlyExpiredSessions(t *testing.T) {
 	}
 	if _, ok := manager.sessions["fresh"]; !ok {
 		t.Fatal("fresh tab was reaped")
+	}
+}
+
+func TestDetachedSessionsDoNotCountTowardTheTabLimit(t *testing.T) {
+	manager := NewSessionManager(config.BrowserConfig{MaxTabs: 2}, nil)
+	for _, id := range []string{"stale-1", "stale-2", "stale-3"} {
+		// What loadSessions produces after a restart: metadata, no page.
+		manager.sessions[id] = &sessionRecord{meta: Session{ID: id, Status: "detached"}}
+	}
+
+	_, err := manager.CreateTab(context.Background(), "", "about:blank", false)
+	if err != nil && strings.Contains(err.Error(), "tab limit") {
+		t.Fatalf("three detached sessions own no tab and must not hit a limit of 2: %v", err)
+	}
+}
+
+func TestOpenTabsStillHitTheTabLimit(t *testing.T) {
+	manager := NewSessionManager(config.BrowserConfig{MaxTabs: 2}, nil)
+	manager.sessions["open-1"] = &sessionRecord{meta: Session{ID: "open-1"}, page: &rod.Page{}}
+	manager.sessions["open-2"] = &sessionRecord{meta: Session{ID: "open-2"}, page: &rod.Page{}}
+
+	_, err := manager.CreateTab(context.Background(), "", "about:blank", false)
+	if err == nil || !strings.Contains(err.Error(), "tab limit reached (2)") {
+		t.Fatalf("two open tabs at a limit of 2 must refuse a third, got %v", err)
 	}
 }
 

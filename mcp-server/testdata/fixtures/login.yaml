@@ -1,6 +1,6 @@
 name: login reaches dashboard without new failures
 session_id: replace-at-runtime
-actions:
+operations:
   - type: interact
     action: type
     ref: email

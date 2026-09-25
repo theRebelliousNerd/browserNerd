@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // LogEntry represents a parsed Docker log line.
@@ -26,31 +27,58 @@ type Client struct {
 	containers []string
 	logWindow  time.Duration
 	host       string
+	// query fetches one container's logs; NewClient wires queryContainer.
+	query func(ctx context.Context, container string, since time.Time) ([]LogEntry, error)
 }
 
 // NewClient creates a Docker log client.
 func NewClient(containers []string, logWindow time.Duration, host string) *Client {
-	return &Client{
+	c := &Client{
 		containers: containers,
 		logWindow:  logWindow,
 		host:       host,
 	}
+	c.query = c.queryContainer
+	return c
 }
 
+// maxContainerErrorBytes bounds each container's share of a QueryLogs error.
+const maxContainerErrorBytes = 300
+
 // QueryLogs fetches logs from all configured containers since the given time.
+// One container failing still returns the others' logs. Every container
+// failing is an error: an empty result with Docker stopped or every name wrong
+// would otherwise read as "the backend logged nothing".
 func (c *Client) QueryLogs(ctx context.Context, since time.Time) ([]LogEntry, error) {
 	var allLogs []LogEntry
+	var failures []string
 
 	for _, container := range c.containers {
-		logs, err := c.queryContainer(ctx, container, since)
+		logs, err := c.query(ctx, container, since)
 		if err != nil {
-			// Log warning but continue with other containers
+			failures = append(failures, boundText(err.Error(), maxContainerErrorBytes))
 			continue
 		}
 		allLogs = append(allLogs, logs...)
 	}
 
+	if len(c.containers) > 0 && len(failures) == len(c.containers) {
+		return nil, fmt.Errorf("docker logs failed for every container (%d): %s", len(failures), strings.Join(failures, "; "))
+	}
 	return allLogs, nil
+}
+
+// boundText trims s to at most limit bytes on a rune boundary.
+func boundText(s string, limit int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
 // QueryContainer fetches logs from a single container.

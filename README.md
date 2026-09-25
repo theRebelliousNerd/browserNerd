@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD
 created: 2026-01-31
-last_updated: 2026-07-23
+last_updated: 2026-09-25
 doc_type: readme
 subsystem: infra
 read_when: Orienting in this directory
@@ -18,6 +18,56 @@ Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent s
 [![Go](https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
 [![Tools](https://img.shields.io/badge/MCP_Tools-48-blue)](https://modelcontextprotocol.io)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange)](#whats-new-in-120)
+
+---
+
+## What's new in 1.2.0
+
+A release shaped by live agent runs against a real React application: every change below
+closes a failure an agent actually hit.
+
+**Acting**
+- `browser-act` finds elements by text, label, role or point, and `type`, `fill` and `select`
+  verify what the page holds afterwards. A batch is validated before it runs, every op is
+  bounded, and the response reports what the actions caused (navigations, dialogs, downloads,
+  failed requests), naming what broke by path.
+- Refs reach every control a page made clickable; a control React never attached a handler to,
+  or one on a page that never hydrated, is flagged dead instead of silently clicked. A widget
+  library's own DOM is not mistaken for a dead control.
+- `upload` sets a file input through CDP, confined to workspace files. Every dialog is answered,
+  and a download a click starts appears in the effects digest.
+
+**Observing**
+- `browser-observe` is small by default and drills down on request; action candidates collapse
+  repeats and are ranked for the next decision.
+- `mode: storage` says which token expired and where, without reading a value out.
+- Pages are captured from their first byte, so failures that leave a page empty are recorded.
+
+**Reasoning**
+- `browser-reason` returns a diagnosis, not a dump: network rows show what an API answered as
+  the shape of its body, a failed 4xx is one line judged by resource type, a body that fails
+  after its 200 reads as the network failure it is, and `why_failed` asks the backend about a
+  page that never loaded or a WebSocket that failed.
+- Backend log lines are matched to the one failed request; a dead Docker is reported as
+  unavailable, and log queries fail when every container fails instead of reporting an empty
+  success. `get-console-errors` groups near-identical messages.
+
+**Mangle engine**
+- The built-in schema ships inside the binary; project modules in `.browsernerd/schemas/` add
+  to it instead of replacing it. `browser-mangle` lists the schema and joins without a rule.
+- The engine keeps failure evidence under load, evaluates only what a read needs, rejects
+  queries that can never match, and no longer runs a quadratic rule that starved every insert.
+
+**Testing and operations**
+- `browser-test` fixtures take operations, refuse steps that test nothing, and stop before any
+  step whose `value_env` is unset or empty - credentials go from the environment to the browser
+  without passing through a transcript.
+- A wedged call answers within its deadline. `-doctor` names what is wrong with BrowserNERD
+  itself (stale binary, engine, workspace), `-version` prints the build, and `go run
+  ./cmd/rebuild` rebuilds beside a running MCP host.
+- Tool definitions an agent loads cost fewer tokens than before, despite documenting far more;
+  `go run ./cmd/smoke -mode list` prices every definition.
 
 ---
 
@@ -49,19 +99,32 @@ Hacker News front page:
   - get-interactive-elements: 20 elements in ~450 tokens
 ```
 
-### What Is New In v1.1.0
+### What an agent gets
 
+- **Small by default** - `browser-observe` sees a page in a few hundred
+  tokens: 400 identical buttons are one row with a count, a screenshot returns
+  a file path, and `mode: text` reads the page instead of a picture of it.
+- **Acts without a prior observe** - `browser-act` finds elements by `ref`,
+  visible `text`, form `label`, `role` + `name`, or a point; checks the whole
+  batch before running it; bounds every operation; verifies that typed and
+  selected values stuck; and reports what the batch caused (URL change,
+  failed requests with their body, console errors, toasts, dialogs,
+  downloads).
+- **A diagnosis, not a dump** - `browser-reason` answers "what broke" with a
+  one-line verdict, the failed request, the console error or toast it caused,
+  the backend log line behind it, and the one call worth making next.
+- **Capture from the first byte** - a tab starts recording before it
+  navigates, every JavaScript dialog is answered the moment it opens, and the
+  failures that leave a page empty (load failures, WebSocket errors, refused
+  requests) are facts.
 - **Security-first capture** - credential redaction, private traces, confined
   exports, trusted workspace authority, safe page arguments, and bounded Mangle
   execution.
 - **Multi-tab by default** - shared-context tabs, isolated forks, focus/close,
   browser inventory, and multiple managed Chrome instances.
-- **Configurable spec delivery** - named Markdown corpora and optional indexes,
-  with compact spec context attached to observe and act results.
-- **Correctness fixes** - complete query bodies, fresh-fact watches, correlated
-  network capture, strict since-navigation deltas, and working JPEG output.
-- **Modular core and CI** - production Go files stay below 1,500 lines, with
-  Windows and Linux verification.
+- **Never hangs** - every call has a deadline and answers with a structured
+  timeout; `browser-observe mode: doctor` (or `browsernerd -doctor`) says what
+  is wrong with BrowserNERD itself.
 
 ---
 
@@ -71,7 +134,7 @@ Hacker News front page:
 - **Structured JSON output** - Refs, labels, and actions - not HTML soup
 - **Semantic grouping** - Navigation links grouped by page area (nav, sidebar, main, footer)
 - **Action-ready refs** - Every element has a `ref` for direct interaction
-- **Batch automation** - `execute-plan` runs multiple actions in one call
+- **Batch automation** - `browser-act` runs a validated batch of operations in one call
 
 ### Dual Browser Modes
 - **Auto-launch** - BrowserNERD starts Chrome automatically via Rod
@@ -125,9 +188,12 @@ Hacker News front page:
 git clone https://github.com/theRebelliousNerd/browserNerd.git
 cd browserNerd/mcp-server
 
-# Build
+# Build, stamping the release version into the binary
 go mod tidy
-go build -o bin/browsernerd ./cmd/server
+go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.2.0" -o bin/browsernerd ./cmd/server
+
+# Confirm which build you are running (version, revision, build time)
+./bin/browsernerd -version
 
 # Run with a checked-in project workspace
 ./bin/browsernerd --workspace-dir /path/to/project
@@ -198,10 +264,10 @@ Create one MCP entry per project when you want different repo-trace defaults, sc
 BrowserNERD automatically launches and manages Chrome via Rod:
 
 ```
-launch-browser  ->  Chrome starts with CDP enabled
-create-session  ->  New tab opens
-navigate-url    ->  Automate away
-shutdown-browser -> Clean exit
+launch-browser                         ->  Chrome starts with CDP enabled
+browser-act {type: session_create, url} -> New tab, recording before it loads
+browser-observe / browser-act           ->  Automate away
+shutdown-browser                       ->  Clean exit
 ```
 
 ### Mode 2: Attach to Existing Browser
@@ -226,45 +292,66 @@ browser:
 
 ## Complete Tool Reference (48 Tools)
 
-### Session Management (11 tools)
+### Default surface (11 tools)
+
+With `mcp.progressive_only: true` (the default) these are the only tools an
+agent sees; each drills down through parameters instead of more tools.
 
 | Tool | Description |
 |------|-------------|
 | `launch-browser` | Start Chrome with CDP enabled (idempotent) |
 | `shutdown-browser` | Close Chrome and clean up all sessions |
+| `close-session` | Idempotently close one tab and its event streams |
+| `browser-observe` | See a page by `mode`: composite (default), text, interactive, screenshot, storage, sessions, doctor, and narrow slices |
+| `browser-act` | Run a validated, time-bounded batch of `operations`; report what it caused |
+| `browser-reason` | Diagnose by `topic`: why_failed, health, network, blocking_issue, next_best_action, what_changed_since |
+| `browser-audit` | Phased frontend-to-API contract audit with evidence handles |
+| `browser-mangle` | Schema listing, queries (atoms, conjunctions, rules), temporal reads, waits, flight export |
+| `browser-test` | Create, inspect, or run a declarative fixture of `browser-act` operations plus Mangle assertions |
+| `get-specs` | Deliver spec invariants governing a component, route, selector, or file line-range |
+| `check-specs` | Evaluate spec invariants against current state, report violations |
+
+### Focused tools (`mcp.progressive_only: false` adds 37)
+
+The progressive tools delegate to these, so the two surfaces share one
+implementation.
+
+#### Sessions (8 tools)
+
+| Tool | Description |
+|------|-------------|
 | `list-sessions` | List all active browser sessions |
 | `create-session` | Open new tab with optional starting URL |
 | `attach-session` | Attach to existing CDP target by ID |
 | `list-browsers` | List Chrome instances and tab counts |
 | `focus-session` | Activate one tracked tab |
-| `close-session` | Idempotently close one tab and its event streams |
 | `fork-session` | Clone session preserving auth state (cookies, localStorage) |
 | `reify-react` | Extract React Fiber tree as Mangle facts |
 | `snapshot-dom` | Capture DOM structure as Mangle facts |
 
-### Navigation & State (4 tools)
-
-| Tool | Tokens | Description |
-|------|--------|-------------|
-| `get-page-state` | ~50 | URL, title, loading state, scroll position, active element |
-| `get-navigation-links` | ~150-400 | All links grouped by page area (nav/side/main/footer) |
-| `get-interactive-elements` | ~300-600 | Buttons, inputs, links, selects with action refs |
-| `navigate-url` | ~50 | Navigate with wait options (load/networkidle/none) |
-
-### Browser Interaction (8 tools)
+#### Navigation & State (4 tools)
 
 | Tool | Description |
 |------|-------------|
-| `interact` | Click, type, select, toggle, clear elements by ref |
-| `fill-form` | Fill multiple form fields in one call (token efficient) |
-| `press-key` | Send keyboard input (Enter, Tab, Escape, characters) |
+| `get-page-state` | URL, title, loading state, scroll position, active element |
+| `get-navigation-links` | All links grouped by page area (nav/side/main/footer) |
+| `get-interactive-elements` | Controls with action refs; `group: true` collapses repeated controls into one row |
+| `navigate-url` | Navigate with wait options (load/networkidle/none) |
+
+#### Browser Interaction (8 tools)
+
+| Tool | Description |
+|------|-------------|
+| `interact` | Click, type, select, toggle, clear, hover by ref, text, label, role+name, or point |
+| `fill-form` | Fill several fields in one call, each value read back |
+| `press-key` | Send a key or chord (`Enter`, `Control+a`, `Shift+Tab`) |
 | `browser-history` | Navigate back, forward, or reload |
 | `discover-hidden-content` | Find elements hidden by CSS/JS |
 | `discover-grids` | Find virtualized grids and bounded row samples |
-| `screenshot` | Capture page/element to file (no base64 bloat) |
+| `screenshot` | Capture page/element to file; returns path and size only |
 | `evaluate-js` | Trusted-config, gated JavaScript escape hatch (disabled by default) |
 
-### Mangle-Driven Automation (4 tools)
+#### Mangle-Driven Automation (4 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -287,32 +374,19 @@ browser:
 | `await-fact` | Wait for a specific fact to appear |
 | `await-conditions` | Wait for multiple facts (AND logic) |
 
-### Progressive Disclosure (5 tools)
-
-| Tool | Description |
-|------|-------------|
-| `browser-observe` | Progressive-disclosure page observation (modes: state/nav/interactive/hidden/composite, views: summary/compact/full) |
-| `browser-act` | Progressive-disclosure action execution with intent presets |
-| `browser-reason` | Progressive-disclosure Mangle reasoning with causal analysis |
-| `browser-audit` | Progressive frontend-to-API contract auditing with evidence handles |
-| `browser-mangle` | Bounded queries, rules, temporal reads, and confined flight export |
-
-### Diagnostics (2 tools)
+#### Diagnostics (2 tools)
 
 | Tool | Description |
 |------|-------------|
 | `get-console-errors` | Console errors with root cause analysis + Docker correlation |
 | `get-toast-notifications` | Detect toast/snackbar overlays with API correlation |
 
-### Testing & Spec Delivery (5 tools)
+#### Testing (2 tools)
 
 | Tool | Description |
 |------|-------------|
-| `browser-test` | Progressive create, inspect, and run surface using `browser-act` operations and bounded Mangle assertions |
-| `run-test` | Run a declarative test: replay actions, evaluate Mangle assertions, return a causal chain on failure |
-| `generate-test` | Turn a recorded interaction (action facts) into a draft `run-test` spec |
-| `get-specs` | Deliver spec invariants governing a component, route, selector, or the file line-range you're editing |
-| `check-specs` | Evaluate spec invariants against current state, report violations with causal diagnosis |
+| `run-test` | Run a declarative test: replay operations, evaluate Mangle assertions, return a causal chain on failure |
+| `generate-test` | Turn a recorded interaction (action facts) into a draft fixture |
 
 ---
 
@@ -320,99 +394,123 @@ browser:
 
 ### Traditional Approach
 ```
-User: "Click the login button"
+User: "Save the form and tell me whether it worked"
 
 1. Get page HTML: 45,000 tokens
-2. AI parses HTML to find button
+2. AI parses HTML to find the button
 3. Execute click with selector
-4. Get updated HTML: 45,000 tokens
+4. Get updated HTML and the network log: 45,000+ tokens
 
 Total: ~90,000 tokens
 ```
 
 ### BrowserNERD Approach
 ```
-User: "Click the login button"
+User: "Save the form and tell me whether it worked"
 
-1. get-interactive-elements (filter: buttons): 400 tokens
-   Returns: [{ref: "login-btn", label: "Login", action: "click"}]
+1. browser-act {operations: [{type: "click", text: "Save"}]}
+   -> the click, plus an effects digest of what it caused:
+      failed_requests: ["POST /api/items 500: {\"detail\": \"name is required\"}"]
+      errors: ["Uncaught (in promise) Error: Request failed"]
+      toasts: ["error: Could not save"]
 
-2. interact(ref: "login-btn", action: "click"): 50 tokens
-
-3. get-page-state: 50 tokens
-
-Total: ~500 tokens (180x more efficient)
+Total: one call, a few hundred tokens, no follow-up observe
 ```
 
-### execute-plan: Ultimate Token Efficiency
+No observe was needed to find the button: `text`, `label` and `role` + `name`
+locate an element by what the user sees. When a ref is wanted,
+`browser-observe` returns the whole page's controls grouped, in a few hundred
+tokens. The live probe tests pin each default response's budget (composite
+observe <= 900 tokens, a screenshot result <= 150, `browser-reason` why_failed
+<= 600).
 
-Instead of individual tool calls:
-```
-1. type email: 50 tokens
-2. type password: 50 tokens
-3. click submit: 50 tokens
-4. wait for navigation: 50 tokens
-Total: 200 tokens + 4 round trips
-```
+### One batch, one round trip
 
-With execute-plan:
 ```
-execute-plan({
-  actions: [
-    {type: "type", ref: "email", value: "user@test.com"},
-    {type: "type", ref: "password", value: "secret"},
-    {type: "click", ref: "submit"},
-    {type: "wait", value: "1000"}
+browser-act({
+  session_id: "<session>",
+  operations: [
+    {type: "navigate", url: "http://localhost:3000/login"},
+    {type: "fill", fields: [
+      {label: "Email", value: "user@test.com"},
+      {label: "Password", value: "secret"}
+    ], submit_button: "Sign in"}
   ]
 })
-Total: ~100 tokens, 1 round trip
 ```
+
+The batch is checked before anything runs - a misspelled field rejects it with
+the fix named - every operation is time-bounded, each typed value is read back,
+and the result's `effects` say where the page went and what failed on the way.
 
 ---
 
 ## Progressive Disclosure: Right Detail at the Right Time
 
-v0.0.4 introduces **progressive disclosure tools** that let AI agents control exactly how much detail they receive. Instead of getting everything and filtering, agents request the precision level they need:
+Every progressive tool takes `view: summary | compact | full` (default
+`compact`) and returns `evidence_handles` to expand instead of repeating a
+call at `full`.
 
 ### browser-observe
 
-One tool replaces multiple observation calls with configurable modes and views:
-
 ```
-browser-observe(mode: "composite", view: "summary")
-  -> Page state + nav links + interactive elements in ~200 tokens
+browser-observe(session_id)
+  -> composite: title, headings and status text, health digest, controls
+     grouped (400 identical buttons = 1 row with count + refs), ranked
+     ready-to-send browser-act calls
 
-browser-observe(mode: "interactive", view: "full", filter: "button")
-  -> All buttons with full details for form automation
+browser-observe(session_id, mode: "text", text_query: "Revenue")
+  -> what the page says: outline, landmarks, live regions, matching blocks
 
-browser-observe(intent: "quick_status")
-  -> Minimal page state check in ~50 tokens
+browser-observe(session_id, mode: "screenshot", annotate: true)
+  -> {file_path, format, size_bytes, width, height} plus numbered controls in view
+
+browser-observe(mode: "doctor")
+  -> BrowserNERD's own health: stale binary, env, engine, wedged calls
 ```
 
-**Modes:** `state` | `nav` | `interactive` | `hidden` | `composite`
-**Views:** `summary` (minimal) | `compact` (practical) | `full` (diagnostic)
-**Intents:** `quick_status` | `find_actions` | `map_navigation` | `hidden_content` | `deep_audit`
+**Modes:** `composite` | `text` | `interactive` | `screenshot` | `storage` |
+`sessions` | `doctor` | `state` | `nav` | `hidden` | `grids` | `react` |
+`dom_snapshot`
+**Intents:** `quick_status` | `find_actions` | `map_navigation` |
+`hidden_content` | `deep_audit` | `check_sessions` | `visual_check` |
+`grid_hunt`
 
 ### browser-act
 
-Consolidated action execution with progressive feedback:
+```
+browser-act(session_id, operations: [
+  {type: "select", label: "Region", value: "EMEA"},
+  {type: "key", key: "Control+s"},
+  {type: "click", text: "Delete", dialog: "accept"}
+])
+  -> per-op results (select verified the widget shows EMEA), the confirm()
+     the delete opened answered, and an effects digest
+```
 
-```
-browser-act(operations: [{type: "interact", action: "click", ref: "submit"}], view: "compact")
-  -> Execute + return only what changed
-```
+Operations: `navigate`, `interact`, `fill`, `upload`, `key`, `history`,
+`sleep` (<= 60 s), `dialog`, `wait`, `await_stable`, `await_fact`,
+`await_conditions`, `session_create`, `session_attach`, `session_focus`,
+`session_close`, `session_fork`, `browser_launch`, `browser_close`, `js`
+(gated), `plan`. A `session_create` in a batch hands its new `session_id` to
+the operations after it.
 
 ### browser-reason
 
-Mangle-powered reasoning with adjustable depth:
-
 ```
-browser-reason(intent: "errors", view: "summary")
-  -> Quick error count and top issue
+browser-reason(session_id, topic: "why_failed", since_action: true)
+  -> verdict: "POST /api/items -> 500 ...; console error 40 ms later",
+     root_cause: the request and its body, the console error and toast it
+     caused, the backend log lines; next: the one call worth making
 
-browser-reason(intent: "performance", view: "full")
-  -> Full slow API analysis with correlation chains
+browser-reason(session_id, topic: "network", expand: "/api/items", body: true)
+  -> the calls to that URL and the shape of what they returned
+     (items: array[0] means it answered empty)
 ```
+
+**Topics:** `why_failed` | `health` (default) | `network` | `blocking_issue` |
+`next_best_action` | `what_changed_since`
+**Intents:** `triage` | `act_now` | `debug_failure` | `unblock`
 
 ### browser-audit
 
@@ -476,42 +574,61 @@ BrowserNERD exposes read-only MCP resources for context-aware integrations:
 
 BrowserNERD uses [TauCeti Mangle Go v0.5.0](https://codeberg.org/TauCeti/mangle-go) for declarative reasoning.
 
+The built-in schema is compiled into the binary; a project adds its own
+modules on top through `.browsernerd/schemas/*.mg` or `mangle.schema_path`.
+`browser-mangle` `operation: schema` lists every predicate with its argument
+names, module and fact count (`filter: "net_"` narrows it), and a query that
+names an unknown predicate or the wrong argument count is refused with the
+declared signature instead of returning zero rows.
+
 ### Built-in Predicates (60+)
+
+Every browser fact leads with `SessionId`, so tabs never contaminate each
+other.
 
 **React Fiber:**
 ```mangle
-react_component(FiberId, ComponentName, ParentId).
-react_prop(FiberId, Key, Value).
-react_state(FiberId, HookIndex, Value).
+react_component(SessionId, FiberId, ComponentName, ParentFiberId).
+react_prop(SessionId, FiberId, PropKey, PropValue).
+react_state(SessionId, FiberId, HookIndex, Value).
 ```
 
 **DOM & Navigation:**
 ```mangle
-dom_node(NodeId, Tag, Text, ParentId).
-dom_attr(NodeId, Key, Value).
+dom_node(SessionId, NodeId, Tag, Text, ParentId).
+dom_attr(SessionId, NodeId, Key, Value).
 navigation_event(SessionId, Url, Timestamp).
 current_url(SessionId, Url).
+page_load_failed(SessionId, Url, ErrorText, Timestamp).
 ```
 
 **Network (HAR-like):**
 ```mangle
-net_request(Id, Method, Url, InitiatorId, StartTime).
-net_response(Id, Status, Latency, Duration).
-net_header(Id, Kind, Key, Value).
+net_request(SessionId, Id, Method, Url, InitiatorId, StartTime).
+net_response(SessionId, Id, Status, Latency, Duration).
+net_header(SessionId, Id, Kind, Key, Value).
+net_http_error(SessionId, Id, Url, Status, ResourceType, Timestamp).
+net_loading_failed(SessionId, Id, ErrorText, Canceled, Timestamp).
+net_failure_body(SessionId, Id, Snippet).
+ws_event(SessionId, WsId, Url, Event, Detail, Timestamp).
 ```
 
 **Interactive Elements:**
 ```mangle
-interactive(Ref, Type, Label, Action).
-nav_link(Ref, Href, Area, Internal).
-user_click(Ref, Timestamp).
-user_type(Ref, Value, Timestamp).
+interactive(SessionId, Ref, Type, Label, Action).
+nav_link(SessionId, Ref, Href, Area, Internal).
+user_click(SessionId, Ref, Timestamp).
+user_type(SessionId, Ref, Value, Timestamp).
+dead_control(SessionId, Ref, Label).
 ```
 
 **Diagnostics:**
 ```mangle
-console_event(Level, Message, Timestamp).
-toast_notification(Text, Level, Source, Timestamp).
+console_event(SessionId, Level, Message, Timestamp).
+browser_log(SessionId, Source, Level, Text, Url, Timestamp).
+toast_notification(SessionId, Text, Level, Source, Timestamp).
+js_dialog(SessionId, Type, Message, Accepted, HandledBy, Timestamp).
+download(SessionId, Guid, Url, SuggestedName, State, Timestamp).
 docker_log(Container, Level, Tag, Message, Timestamp).
 ```
 
@@ -543,48 +660,50 @@ These let BrowserNERD reason about:
 
 ### Built-in Causal Reasoning Rules (20+)
 
-**API-Triggered Crash Detection:**
-```mangle
-caused_by(ConsoleErr, ReqId) :-
-    console_event("error", ConsoleErr, TError),
-    net_response(ReqId, Status, _, _),
-    net_request(ReqId, _, _, _, TNet),
-    Status >= 400,
-    TNet < TError,
-    fn:minus(TError, TNet) < 100.
-```
+- `failed_request(SessionId, RequestId, Url, Status)` - every 5xx, and every
+  4xx except a page asset's (image, font, stylesheet, media, manifest).
+- `network_failure(SessionId, RequestId, Url, ErrorText, Timestamp)` - a
+  request that got no response and was not canceled.
+- `caused_by(SessionId, ConsoleMessage, RequestId)` - a console error linked to
+  the nearest failure that completed within the 2 s before it;
+  `error_chain` carries it on to the URL and status.
+- `toast_after_api_failure(SessionId, ToastText, RequestId, Url, Status,
+  TimeDelta)` - an error toast linked to the nearest failed request within 5 s.
+- `full_stack_error(SessionId, ConsoleMsg, RequestId, Url, BackendMsg)` - the
+  console error, the failed call, and the backend log line behind it.
 
-**Slow API Detection (>1 second):**
+**Slow API Detection (>1 second from request to response headers):**
 ```mangle
-slow_api(ReqId, Url, Duration) :-
-    net_request(ReqId, _, Url, _, _),
-    net_response(ReqId, _, _, Duration),
-    Duration > 1000.
-```
-
-**Full-Stack Error Correlation:**
-```mangle
-full_stack_error(ConsoleMsg, ReqId, Url, BackendMsg) :-
-    caused_by(ConsoleMsg, ReqId),
-    net_request(ReqId, _, Url, _, _),
-    api_backend_correlation(ReqId, Url, _, BackendMsg, _).
+slow_api(SessionId, ReqId, Url, Duration) :-
+    net_response(SessionId, ReqId, _, _, Duration),
+    Duration > 1000,
+    net_request(SessionId, ReqId, _, Url, _, _).
 ```
 
 **Universal Login Detection:**
 ```mangle
 login_succeeded(SessionId) :-
-    url_changed_after_submit(SessionId, _, _, TNav),
     form_submitted(SessionId, _, TSubmit),
-    successful_post(_, _, TPost),
-    fn:minus(TNav, TSubmit) < 5000.
+    successful_post(SessionId, _, _, TPost),
+    TPost >= TSubmit,
+    url_changed_after_submit(SessionId, _, _, TNav),
+    TimeDelta = fn:minus(TNav, TSubmit),
+    TimeDelta < 5000.
 ```
 
-### Custom Rules
+### Queries and Custom Rules
 
-Submit rules at runtime:
+A query can join without a rule:
 ```
-submit-rule("ready() :- navigation_event(_, \"/dashboard\", _), dom_text(_, \"Welcome\").")
-wait-for-condition(predicate: "ready", timeout_ms: 10000)
+browser-mangle(operation: "query",
+  query: "net_request(S, R, M, U, I, T), net_response(S, R, 500, L, D).")
+```
+
+Submit rules at runtime and wait on them:
+```
+browser-mangle(operation: "submit_rule",
+  rule: "ready(S) :- current_url(S, \"http://localhost:3000/dashboard\"), dom_text(S, _, \"Welcome\").")
+browser-act(operations: [{type: "wait", predicate: "ready", timeout_ms: 10000}])
 ```
 
 ---
@@ -606,28 +725,21 @@ docker:
 - Queries backend container logs when errors occur
 - Correlates browser API failures with backend exceptions
 - Provides full chain: Browser console -> Failed API -> Backend error
-- Analyzes container health status
+- Asks the logs about a page that never loaded or a WebSocket that failed,
+  where every browser signal reads clean and the reason is only server-side
+- Reports Docker as unavailable in one line instead of failing the diagnosis
 
-**Example output from get-console-errors:**
+**Example output from `browser-reason` `topic: why_failed` (abridged):**
 ```json
 {
-  "errors": [{
-    "message": "TypeError: Cannot read property 'map' of undefined",
-    "caused_by": {
-      "request_id": "req-123",
-      "url": "/api/users",
-      "status": 500
-    }
-  }],
-  "backend_correlations": [{
-    "request_id": "req-123",
-    "container": "my-app-backend",
-    "backend_error": "KeyError: 'users'",
-    "time_delta_ms": 45
-  }],
-  "container_health": {
-    "my-app-backend": {"status": "degraded", "error_count": 3}
-  }
+  "topic": "why_failed",
+  "verdict": "GET /api/users -> 500 \"KeyError: 'users'\"; console error 45 ms later",
+  "root_cause": {
+    "request": {"method": "GET", "url": "/api/users", "status": 500, "body": "{\"detail\": \"KeyError: 'users'\"}"},
+    "effects": [{"kind": "console_error", "message": "TypeError: Cannot read properties of undefined (reading 'map')", "after_ms": 45}],
+    "backend_logs": ["my-app-backend 14:02:11.482 KeyError: 'users'"]
+  },
+  "next": {"tool": "browser-reason", "args": {"topic": "network", "expand": "/api/users"}}
 }
 ```
 
@@ -642,7 +754,7 @@ Projects can ship their own BrowserNERD configuration by adding a `.browsernerd/
 ```
 .browsernerd/
   config.yaml       # Project-specific config overrides (version-controlled)
-  schemas/           # Project-specific Mangle schemas (version-controlled)
+  schemas/           # Project Mangle modules, loaded on top of the built-in schema (version-controlled)
   data/              # Runtime data - sessions, logs (gitignored)
   .gitignore         # Ignores data/ directory
 ```
@@ -696,8 +808,8 @@ docker:
     - my-app-frontend
   log_window: "30s"
 
-mangle:
-  schema_path: ".browsernerd/schemas/project.mg"
+# .mg files in .browsernerd/schemas/ load on top of the built-in schema
+# without any setting; mangle.schema_path points somewhere else.
 
 browser:
   headless: false
@@ -738,9 +850,6 @@ browser:
     max_frontend_matches: 12
     max_backend_matches: 12
 
-mangle:
-  schema_path: ".browsernerd/schemas/project.mg"
-
 recorder:
   enabled: true
   trace_dir: ".browsernerd/data/traces"
@@ -761,7 +870,7 @@ docker:
 ```yaml
 server:
   name: "browsernerd-mcp"
-  version: "1.1.0"
+  version: "1.2.0"
   log_file: "data/browsernerd-mcp.log"
 
 browser:
@@ -773,6 +882,8 @@ browser:
   multi_tab_default: true
   max_tabs: 32
   max_browsers: 4
+  dialog_policy: dismiss     # answer for a JS dialog nobody armed: dismiss | accept
+  download_dir: ""           # default <data root>/downloads
   repo_trace:
     enabled: true
     root_dir: "."
@@ -787,12 +898,14 @@ browser:
     max_backend_matches: 12
 
 mcp:
-  progressive_only: true
+  progressive_only: true     # the 11 default tools; false adds the 37 focused ones
+  tool_timeout: 2m           # per-call deadline, plus the waits a call declares
 
 mangle:
   enable: true
-  schema_path: "schemas/browser.mg"
-  fact_buffer_limit: 2048
+  schema_path: ""            # PROJECT modules on top of the built-in schema
+  disable_builtin_rules: false
+  fact_buffer_limit: 16384
 
 docker:
   enabled: false             # Enable for full-stack correlation
@@ -840,7 +953,7 @@ GOOS=linux GOARCH=amd64 go build -o bin/browsernerd-linux-amd64 ./cmd/server
 | Causal analysis | 20+ built-in rules | None | None | None |
 | Docker correlation | Full-stack | None | None | None |
 | Toast detection | Native | Manual | Manual | No |
-| Batch automation | execute-plan | Individual calls | Individual calls | Limited |
+| Batch automation | Validated `browser-act` batches | Individual calls | Individual calls | Limited |
 | Fork with auth | Yes | No | No | No |
 
 ---
@@ -850,8 +963,9 @@ GOOS=linux GOARCH=amd64 go build -o bin/browsernerd-linux-amd64 ./cmd/server
 ```
 browserNerd/
 +-- mcp-server/                 # Go MCP server
-|   +-- cmd/server/             # MCP server entry point
-|   +-- cmd/smoke/              # Go-native stdio verifier
+|   +-- cmd/server/             # MCP server entry point (-version, -doctor)
+|   +-- cmd/rebuild/            # Build beside a running server
+|   +-- cmd/smoke/              # Go-native stdio verifier and probe tour
 |   +-- internal/
 |   |   +-- browser/            # Rod session management, CDP events
 |   |   +-- mcp/                # MCP server, 48 tool implementations
@@ -859,8 +973,9 @@ browserNerd/
 |   |   +-- config/             # YAML configuration
 |   |   +-- docker/             # Container log integration
 |   |   +-- correlation/        # Keyed cross-domain fact correlation
-|   +-- schemas/modules/        # Modular Mangle predicates and rules
+|   +-- schemas/                # Built-in Mangle schema, embedded in the binary
 |   +-- testdata/fixtures/      # Declarative browser-test examples
+|   +-- testdata/probe/         # The page live tests drive to pin behaviour and token budgets
 +-- eval/                       # Evaluation framework
 +-- LICENSE                     # Apache 2.0
 +-- NOTICE                      # Attribution
@@ -878,6 +993,12 @@ browserNerd/
 ```bash
 # Run tests
 cd mcp-server && go test ./...
+
+# Rebuild while an MCP host holds the binary, then reconnect the host
+go run ./cmd/rebuild
+
+# Which binary is running, is it stale, and what is wrong
+./bin/browsernerd -doctor --workspace-dir /path/to/project
 
 # Verbose logging
 ./bin/browsernerd --config config.yaml --verbose

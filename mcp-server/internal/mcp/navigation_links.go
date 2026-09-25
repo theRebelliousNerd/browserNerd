@@ -106,12 +106,14 @@ func (t *GetNavigationLinksTool) Execute(ctx context.Context, args map[string]in
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Ultra-efficient JavaScript extraction
-	js := fmt.Sprintf(`
-	() => {
-		const internalOnly = %v;
-		const maxPerArea = %d;
+	// Link refs come from elementRefScript, so a nav_link fact names a link by the same
+	// ref get-interactive-elements hands out and browser-act resolves.
+	js := `
+	(opts) => {` + elementRefScript + `
+		const internalOnly = !!opts.internalOnly;
+		const maxPerArea = opts.maxPerArea;
 		const origin = location.origin;
+		const refOf = new Map(__bnElementRefs().map((record) => [record.el, record.ref]));
 		const currentPath = location.pathname;
 
 		// Area detection - find which navigation region an element is in
@@ -145,15 +147,8 @@ func (t *GetNavigationLinksTool) Execute(ctx context.Context, args map[string]in
 			return 'main';
 		}
 
-		// Compact ref generator
 		function getRef(el, idx) {
-			if (el.id) return el.id;
-			if (el.name) return el.name;
-			// Use data-testid if available (common in React apps)
-			const testId = el.getAttribute('data-testid');
-			if (testId) return testId;
-			// Minimal fallback
-			return 'a' + idx;
+			return refOf.get(el) || el.id || 'a[' + idx + ']';
 		}
 
 		// Truncate text efficiently
@@ -225,10 +220,13 @@ func (t *GetNavigationLinksTool) Execute(ctx context.Context, args map[string]in
 			_refs: refs // Internal use for Mangle facts
 		};
 	}
-	`, internalOnly, maxPerArea)
+	`
 
 	var result map[string]interface{}
-	evalResult, err := page.Eval(js)
+	evalResult, err := page.Eval(js, map[string]interface{}{
+		"internalOnly": internalOnly,
+		"maxPerArea":   maxPerArea,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract navigation: %w", err)
 	}

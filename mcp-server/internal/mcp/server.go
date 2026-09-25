@@ -7,10 +7,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/buildinfo"
 	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/docker"
 	"browsernerd-mcp-server/internal/mangle"
@@ -32,6 +34,9 @@ type Server struct {
 	pathPolicy   *security.PathPolicy
 	tools        map[string]Tool
 	mcpServer    *mcpserver.MCPServer
+	calls        *callTracker
+	// staleWarning names source newer than this binary, computed once at start.
+	staleWarning string
 }
 
 // Tool describes the contract for MCP tool implementations.
@@ -44,9 +49,14 @@ type Tool interface {
 
 // NewServer constructs the BrowserNERD MCP server and registers all tools.
 func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mangle.Engine) (*Server, error) {
+	build := buildinfo.Read()
+	serverVersion := cfg.Server.Version
+	if build.Revision != "" {
+		serverVersion += "+" + build.Revision
+	}
 	mcpSrv := mcpserver.NewMCPServer(
 		cfg.Server.Name,
-		cfg.Server.Version,
+		serverVersion,
 		mcpserver.WithResourceCapabilities(true, true),
 		mcpserver.WithToolCapabilities(true),
 		mcpserver.WithLogging(),
@@ -100,6 +110,11 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 		pathPolicy:   pathPolicy,
 		tools:        make(map[string]Tool),
 		mcpServer:    mcpSrv,
+		calls:        newCallTracker(),
+	}
+	if stale, _ := buildinfo.StaleSource(buildinfo.SourceRootForBinary()); stale != "" {
+		server.staleWarning = fmt.Sprintf("this BrowserNERD binary is older than %s; rebuild with go run ./cmd/rebuild and reconnect the MCP server", filepath.Base(stale))
+		log.Printf("WARNING: %s", server.staleWarning)
 	}
 
 	server.registerAllTools()
@@ -175,15 +190,16 @@ func (s *Server) registerAllTools() {
 	s.registerTool(&CloseSessionTool{sessions: s.sessions})
 
 	// Always register progressive disclosure tools
-	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine, pathPolicy: s.pathPolicy, specsCfg: s.cfg.Specs})
+	s.registerTool(&BrowserObserveTool{sessions: s.sessions, engine: s.engine, pathPolicy: s.pathPolicy, specsCfg: s.cfg.Specs, doctor: s.doctorReport})
 	s.registerTool(&BrowserActTool{
 		sessions:                s.sessions,
 		engine:                  s.engine,
 		redactor:                s.redactor,
 		specsCfg:                s.cfg.Specs,
 		disableUnsafeJavaScript: disableUnsafeJavaScript,
+		pathPolicy:              s.pathPolicy,
 	})
-	s.registerTool(&BrowserReasonTool{engine: s.engine, dockerClient: s.dockerClient})
+	s.registerTool(&BrowserReasonTool{engine: s.engine, sessions: s.sessions, dockerClient: s.dockerClient})
 	s.registerTool(&BrowserAuditTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&GetSpecsTool{engine: s.engine, specsCfg: s.cfg.Specs})
 	s.registerTool(&CheckSpecsTool{engine: s.engine, specsCfg: s.cfg.Specs})
@@ -191,6 +207,8 @@ func (s *Server) registerAllTools() {
 		sessions:                s.sessions,
 		engine:                  s.engine,
 		disableUnsafeJavaScript: disableUnsafeJavaScript,
+		redactor:                s.redactor,
+		pathPolicy:              s.pathPolicy,
 	})
 	s.registerTool(&BrowserMangleTool{
 		engine:           s.engine,
@@ -269,6 +287,8 @@ func (s *Server) registerIndividualTools() {
 		sessions:                s.sessions,
 		engine:                  s.engine,
 		disableUnsafeJavaScript: disableUnsafeJavaScript,
+		redactor:                s.redactor,
+		pathPolicy:              s.pathPolicy,
 	})
 	s.registerTool(&GenerateTestTool{engine: s.engine})
 
@@ -304,7 +324,33 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 			})
 		}
 
-		result, err := tool.Execute(ctx, args)
+		detail := callDetail(args)
+		callID := s.calls.begin(tool.Name(), sessionID, detail)
+		timeout := s.cfg.MCP.GetToolTimeout() + declaredWaitBudget(args)
+		result, err, timedOut := s.executeWithDeadline(ctx, tool, args, timeout)
+		if timedOut {
+			s.calls.timedOut(callID)
+			log.Printf("tool %s (%s) exceeded %s on session %q; its work is still running", tool.Name(), detail, timeout, sessionID)
+			if s.recorder != nil {
+				s.recorder.Log("tool_result", sessionID, map[string]interface{}{
+					"tool":        tool.Name(),
+					"success":     false,
+					"timed_out":   true,
+					"duration_ms": time.Since(start).Milliseconds(),
+				})
+			}
+			payload := sanitizeToolPayload(marshalToolPayload(tool.Name(), timeoutResult(tool.Name(), detail, sessionID, timeout)), s.redactor)
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{mcp.NewTextContent(string(payload))},
+				IsError: true,
+			}, nil
+		}
+		s.calls.end(callID, err == nil && !resultReportsFailure(result), errorText(err, result))
+		if err == nil && tool.Name() == "launch-browser" && s.staleWarning != "" {
+			if resultMap, ok := result.(map[string]interface{}); ok {
+				resultMap["warning"] = s.staleWarning
+			}
+		}
 		if err != nil {
 			if s.recorder != nil {
 				s.recorder.Log("tool_result", sessionID, map[string]interface{}{

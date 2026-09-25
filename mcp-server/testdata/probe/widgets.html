@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Probe Widgets</title>
+</head>
+<body>
+<!--
+  Form controls in the shapes frameworks render them, each carrying the trap
+  it sets for automation:
+  - a React-style controlled input: the framework tracks the value on the
+    element, so a plain el.value write plus an input event never reaches its
+    state (#react-state stays stale).
+  - a Radix-style select: a combobox button that opens on pointerdown, a
+    listbox portaled into body whose options select on pointerup, and a hidden
+    1px native select that only mirrors the choice.
+  - date, email, textarea, contenteditable, a maxlength input, a masked phone
+    input, and a checkbox.
+-->
+<main>
+  <label for="react-qty">React quantity</label><input id="react-qty" type="number" value="42">
+  <span id="react-state">42</span>
+
+  <label for="when">When</label><input id="when" type="date">
+  <label for="mail">Email</label><input id="mail" type="email">
+  <label for="notes">Notes</label><textarea id="notes">old notes</textarea>
+  <div id="editor" contenteditable="true" aria-label="Editor">old text</div>
+  <label for="code">Code</label><input id="code" maxlength="3">
+  <label for="phone">Phone</label><input id="phone">
+  <label for="agree">Agree</label><input id="agree" type="checkbox">
+
+  <div class="field">
+    <label id="fruit-label">Fruit</label>
+    <button type="button" role="combobox" aria-controls="fruit-list" aria-expanded="false" aria-labelledby="fruit-label" id="fruit-trigger"><span>Select a fruit</span></button>
+    <select aria-hidden="true" tabindex="-1" name="fruit" style="position:absolute;border:0;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0)">
+      <option value=""></option>
+      <option value="apple">Apple</option>
+      <option value="banana">Banana</option>
+    </select>
+  </div>
+</main>
+<script>
+  (function () {
+    const el = document.getElementById('react-qty');
+    const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+    let tracked = el.value;
+    Object.defineProperty(el, 'value', {
+      configurable: true,
+      get() { return native.get.call(this); },
+      set(v) { tracked = String(v); native.set.call(this, v); },
+    });
+    el.addEventListener('input', function () {
+      const current = native.get.call(el);
+      if (current !== tracked) {
+        tracked = current;
+        document.getElementById('react-state').textContent = current;
+      }
+    });
+  })();
+
+  document.getElementById('phone').addEventListener('input', function () {
+    const d = this.value.replace(/\D/g, '').slice(0, 10);
+    let out = d;
+    if (d.length > 6) out = '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
+    else if (d.length > 3) out = '(' + d.slice(0, 3) + ') ' + d.slice(3);
+    this.value = out;
+  });
+
+  (function () {
+    const trigger = document.getElementById('fruit-trigger');
+    const native = trigger.parentElement.querySelector('select');
+    let list = null;
+    trigger.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0 || list) return;
+      e.preventDefault();
+      list = document.createElement('div');
+      list.id = 'fruit-list';
+      list.setAttribute('role', 'listbox');
+      list.style.cssText = 'position:fixed;top:60px;left:320px;background:#fff;border:1px solid #999;padding:4px';
+      Array.from(native.options).slice(1).forEach(function (opt) {
+        const item = document.createElement('div');
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', String(native.value === opt.value));
+        item.dataset.value = opt.value;
+        const span = document.createElement('span');
+        span.textContent = opt.text;
+        item.appendChild(span);
+        item.addEventListener('pointerup', function () {
+          native.value = opt.value;
+          trigger.firstElementChild.textContent = opt.text;
+          trigger.setAttribute('aria-expanded', 'false');
+          list.remove();
+          list = null;
+        });
+        list.appendChild(item);
+      });
+      document.body.appendChild(list);
+      trigger.setAttribute('aria-expanded', 'true');
+    });
+  })();
+</script>
+</body>
+</html>

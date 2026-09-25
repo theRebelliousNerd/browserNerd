@@ -30,27 +30,16 @@ type BrowserMangleTool struct {
 
 func (t *BrowserMangleTool) Name() string { return "browser-mangle" }
 func (t *BrowserMangleTool) Description() string {
-	return `Query and manipulate the Mangle fact engine directly.
-
-Use for raw fact access. Prefer browser-reason for high-level diagnostics.
-Mangle stores browser facts (network, console, DOM, navigation) and derives new facts via rules.
-
-Operations:
-  query:            Execute Mangle query. E.g. query:"current_url(S, U)."
-  read:             Read recent buffered facts (newest first, optional predicate_filter)
-  temporal:         Query facts in a time window (after_ms / before_ms, epoch ms)
-  evaluate:         Check if a derived predicate currently has matches
-  push:             Add facts to the engine
-  submit_rule:      Add a derivation rule (Datalog syntax)
-  subscribe:        Watch for a predicate match with timeout
-  await_fact:       Wait for a specific fact (predicate + args)
-  await_conditions: Wait for multiple facts simultaneously (AND logic)
-  export_flight:    Export raw JSONL evidence bundle (facts + optional Docker logs)
-
-Common built-in predicates: current_url, net_request, net_response, console_event,
-navigation_event, slow_api (derived), caused_by (derived), login_succeeded (derived).
-
-Views: summary (~100 tokens), compact (default ~500), full (all rows).`
+	return `Raw access to the browser fact store; prefer browser-reason for a diagnosis.
+  schema: predicates with argument names and module; filter:"net_" narrows. Start here.
+  query: an atom, a conjunction that joins without a rule
+    ("net_request(S,R,M,U,I,T), net_response(S,R,500,L,D)"), or head :- body.
+    A wrong argument count or unknown predicate is an error naming the signature.
+  read: recent facts, newest first (predicate_filter, limit). temporal: a predicate
+    between after_ms and before_ms. evaluate: does a derived predicate match now.
+  submit_rule / push: add a rule / facts. subscribe, await_fact, await_conditions:
+    wait for facts (timeout_ms). export_flight: JSONL evidence (include_server_logs).
+view: summary | compact (default) | full.`
 }
 
 func (t *BrowserMangleTool) InputSchema() map[string]interface{} {
@@ -59,88 +48,92 @@ func (t *BrowserMangleTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"operation": map[string]interface{}{
 				"type":        "string",
-				"description": "Mangle operation to perform",
-				"enum":        []string{"query", "temporal", "evaluate", "read", "submit_rule", "subscribe", "push", "await_fact", "await_conditions", "export_flight"},
+				"description": "Operation",
+				"enum":        []string{"schema", "query", "temporal", "evaluate", "read", "submit_rule", "subscribe", "push", "await_fact", "await_conditions", "export_flight"},
+			},
+			"filter": map[string]interface{}{
+				"type":        "string",
+				"description": "schema: name substring",
 			},
 			"session_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Target session (recommended for export_flight and scoped reads)",
+				"description": "Scope to this session",
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
-				"description": "Disclosure depth: summary|compact|full",
+				"description": "Default compact",
 				"enum":        []string{"summary", "compact", "full"},
 			},
 			"query": map[string]interface{}{
 				"type":        "string",
-				"description": "Mangle query string (for query operation)",
+				"description": "query: atom, conjunction, or head :- body",
 			},
 			"predicate": map[string]interface{}{
 				"type":        "string",
-				"description": "Predicate name (for temporal/evaluate/subscribe/await_fact)",
+				"description": "temporal/evaluate/subscribe/await_fact",
 			},
 			"predicate_filter": map[string]interface{}{
 				"type":        "string",
-				"description": "Filter by predicate (for read operation)",
+				"description": "read: only this predicate",
 			},
 			"rule": map[string]interface{}{
 				"type":        "string",
-				"description": "Mangle rule source (for submit_rule)",
+				"description": "submit_rule: rule source",
 			},
 			"facts": map[string]interface{}{
 				"type":        "array",
-				"description": "Facts to push (for push operation)",
+				"description": "push: facts",
 				"items":       map[string]interface{}{"type": "object"},
 			},
 			"args": map[string]interface{}{
 				"type":        "array",
-				"description": "Predicate arguments (for await_fact)",
+				"description": "await_fact: arguments",
 				"items":       map[string]interface{}{"type": "string"},
 			},
 			"conditions": map[string]interface{}{
 				"type":        "array",
-				"description": "Conditions to await (for await_conditions)",
+				"description": "await_conditions: facts to wait for",
 				"items":       map[string]interface{}{"type": "object"},
 			},
 			"after_ms": map[string]interface{}{
 				"type":        "integer",
-				"description": "Start of time window in epoch ms (for temporal)",
+				"description": "temporal: from (epoch ms)",
 			},
 			"before_ms": map[string]interface{}{
 				"type":        "integer",
-				"description": "End of time window in epoch ms (for temporal)",
+				"description": "temporal: to (epoch ms)",
 			},
 			"timeout_ms": map[string]interface{}{
 				"type":        "integer",
-				"description": "Timeout in milliseconds (for subscribe/await_fact/await_conditions)",
+				"description": "Waits: timeout",
 			},
 			"limit": map[string]interface{}{
 				"type":        "integer",
-				"description": "Max facts to return (for read)",
+				"description": "read: max facts",
 			},
 			"max_items": map[string]interface{}{
 				"type":        "integer",
-				"description": "Max items in response (default 20)",
+				"description": "Max rows (default 20)",
 			},
 			"path": map[string]interface{}{
 				"type":        "string",
-				"description": "Output path for export_flight (defaults to recorder trace_dir/flight-<ts>.jsonl)",
+				"description": "export_flight: file (default trace_dir)",
 			},
 			"include_server_logs": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Include Docker server logs in export_flight (default false)",
+				"description": "export_flight: add Docker log lines",
 			},
 			"since_ms": map[string]interface{}{
 				"type":        "integer",
-				"description": "Filter export_flight rows at/after this epoch ms (default now-log_window or now-5m)",
+				"description": "export_flight: from (epoch ms)",
 			},
 			"until_ms": map[string]interface{}{
 				"type":        "integer",
-				"description": "Filter export_flight rows at/before this epoch ms (default now)",
+				"description": "export_flight: to (epoch ms)",
 			},
 			"max_rows": map[string]interface{}{
 				"type":        "integer",
-				"description": "Max rows written by export_flight (default 2000, newest rows kept when truncated)",
+				"description": "export_flight: max rows (default 2000, newest kept)",
 			},
 		},
 		"required": []string{"operation"},
@@ -157,6 +150,9 @@ func (t *BrowserMangleTool) Execute(ctx context.Context, args map[string]interfa
 	}
 	if t.engine == nil {
 		return map[string]interface{}{"success": false, "error": "mangle engine is not available"}, nil
+	}
+	if operation == "schema" {
+		return mangleSchemaResponse(t.engine, getStringArg(args, "filter"), normalizeProgressiveView(getStringArg(args, "view"))), nil
 	}
 
 	view := normalizeProgressiveView(getStringArg(args, "view"))

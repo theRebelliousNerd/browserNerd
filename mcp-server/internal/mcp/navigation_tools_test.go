@@ -432,26 +432,32 @@ func TestNavigationToolSchemaDetails(t *testing.T) {
 		}
 	})
 
-	t.Run("InteractTool requires session_id and ref", func(t *testing.T) {
+	t.Run("InteractTool requires session_id and action and offers every locator", func(t *testing.T) {
 		tool := &InteractTool{}
 		schema := tool.InputSchema()
 
 		required := schema["required"].([]string)
 		foundSessionID := false
-		foundRef := false
+		foundAction := false
 		for _, r := range required {
 			if r == "session_id" {
 				foundSessionID = true
 			}
-			if r == "ref" {
-				foundRef = true
+			if r == "action" {
+				foundAction = true
 			}
 		}
 		if !foundSessionID {
 			t.Error("expected session_id in required fields")
 		}
-		if !foundRef {
-			t.Error("expected ref in required fields")
+		if !foundAction {
+			t.Error("expected action in required fields")
+		}
+		props := schema["properties"].(map[string]interface{})
+		for _, locator := range []string{"ref", "text", "label", "role", "name", "x", "y"} {
+			if _, ok := props[locator]; !ok {
+				t.Errorf("expected locator %q in properties", locator)
+			}
 		}
 	})
 

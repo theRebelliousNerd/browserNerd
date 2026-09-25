@@ -38,6 +38,8 @@ Decl user_click(SessionId, Ref, Timestamp).
 Decl user_type(SessionId, Ref, Value, Timestamp).
 Decl user_select(SessionId, Ref, Option, Timestamp).
 Decl user_toggle(SessionId, Ref, Timestamp).
+# Emitted by browser-act's upload op: FileCount files set on a file input.
+Decl user_upload(SessionId, Ref, FileCount, Timestamp).
 
 # =============================================================================
 # VECTOR 5b: HYPER-EFFICIENT NAVIGATION (get-navigation-links tool)
@@ -130,12 +132,17 @@ login_form_detected(SessionId) :-
     email_input(SessionId, _),
     password_input(SessionId, _).
 
-# Rule: Form ready for submission
+# Rule: Form ready for submission (two or more fields filled)
+Decl form_fill_count(SessionId, Count).
+form_fill_count(SessionId, Count) :-
+    form_field_filled(SessionId, _, _) |>
+    do fn:group_by(SessionId),
+    let Count = fn:count().
+
 Decl form_ready(SessionId).
 form_ready(SessionId) :-
-    form_field_filled(SessionId, _, T1),
-    form_field_filled(SessionId, _, T2),
-    T1 != T2.
+    form_fill_count(SessionId, Count),
+    Count > 1.
 
 # =============================================================================
 # UNIVERSAL LOGIN SUCCESS DETECTION
@@ -159,14 +166,36 @@ successful_post(SessionId, ReqId, Url, TReq) :-
     Status < 300.
 
 # --- Navigation change detection ---
-# Detects when URL changed after form submission (universal pattern)
-Decl url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav).
-url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav) :-
+# Detects when the URL changed within 5 s after a form submission (universal
+# pattern). Navigations join on a 5 s bucket, not on the whole session.
+Decl navigation_bucket(SessionId, Bucket, Url, Timestamp).
+navigation_bucket(SessionId, Bucket, Url, T) :-
+    navigation_event(SessionId, Url, T),
+    Bucket = fn:div(T, 5000).
+
+Decl submit_from_url(SessionId, UrlBefore, TSubmit, Bucket).
+submit_from_url(SessionId, UrlBefore, TSubmit, Bucket) :-
     form_submitted(SessionId, _, TSubmit),
     url_before_submit(SessionId, UrlBefore, TBefore),
     TSubmit > TBefore,
-    navigation_event(SessionId, UrlAfter, TNav),
+    Bucket = fn:div(TSubmit, 5000).
+
+Decl url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav).
+url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav) :-
+    submit_from_url(SessionId, UrlBefore, TSubmit, Bucket),
+    navigation_bucket(SessionId, Bucket, UrlAfter, TNav),
     TNav > TSubmit,
+    Delta = fn:minus(TNav, TSubmit),
+    Delta < 5000,
+    UrlBefore != UrlAfter.
+
+url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav) :-
+    submit_from_url(SessionId, UrlBefore, TSubmit, Bucket),
+    Next = fn:plus(Bucket, 1),
+    navigation_bucket(SessionId, Next, UrlAfter, TNav),
+    TNav > TSubmit,
+    Delta = fn:minus(TNav, TSubmit),
+    Delta < 5000,
     UrlBefore != UrlAfter.
 
 # --- Primary login success rule ---
@@ -205,13 +234,12 @@ login_failed_no_navigation(SessionId) :-
 
 Decl login_failed_api_error(SessionId, ReqId, Status).
 login_failed_api_error(SessionId, ReqId, Status) :-
+    failed_request_at(SessionId, ReqId, _, Status, TReq),
+    net_request(SessionId, ReqId, "POST", _, _, _),
     form_submitted(SessionId, _, TSubmit),
-    net_request(SessionId, ReqId, "POST", _, _, TReq),
     TReq >= TSubmit,
-    net_response(SessionId, ReqId, Status, _, _),
     TimeDelta = fn:minus(TReq, TSubmit),
-    TimeDelta < 2000,
-    Status >= 400.
+    TimeDelta < 2000.
 
 # --- Session state tracking for login context ---
 # Tracks that we're in a "login attempt" state (form submitted, awaiting result)
@@ -229,11 +257,9 @@ Decl authenticated_session(SessionId, Method, Timestamp).
 # Rule: Failed API call during automation
 Decl automation_error(SessionId, ReqId, Url).
 automation_error(SessionId, ReqId, Url) :-
+    failed_request_at(SessionId, ReqId, Url, _, TReq),
     plan_executed(SessionId, _, _, Failed, TPlan),
     Failed > 0,
-    net_request(SessionId, ReqId, _, Url, _, TReq),
-    net_response(SessionId, ReqId, Status, _, _),
-    Status >= 400,
     TReq > TPlan.
 
 # =============================================================================

@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Probe App</title>
+<style>
+  .card { border: 1px solid #ccc; padding: 8px; margin: 4px; cursor: pointer; }
+  #combo-list { display: none; }
+  .sticky { position: sticky; top: 0; background: #fff; }
+</style>
+</head>
+<body>
+<!--
+  The BrowserNERD probe page. Every block below reproduces a failure an agent
+  hit on the live Cross-Thread frontend, so a change can be proven against the
+  same shape it was measured on:
+  - 400 identical "Browse nodes" buttons (the /hygiene page): repeated
+    controls must collapse, not flood every list.
+  - a window.confirm Delete button: an unanswered dialog hung the tab 1800 s.
+  - a clickable div with no role: never entered the ref registry.
+  - a number input holding 42: fill appended instead of replacing.
+  - a custom combobox: select reported success with value <nil>.
+  - a background poll every 400 ms: evicted every useful fact within a minute.
+  - a 404 and a 500 with a JSON body, a console error and an error toast.
+  - a WebSocket to a closed port: its failure was invisible.
+  - a React root with one hydrated and one dead button: a control React never
+    attached to looks fine in every screenshot.
+  - long prose: page text had no cheap read.
+-->
+<header class="sticky">
+  <nav><a href="/index.html">Home</a> <a href="/second.html">Second</a> <a href="https://example.com/ext">External</a></nav>
+</header>
+<main>
+  <h1>Probe Dashboard</h1>
+  <p id="intro">This dashboard exercises BrowserNERD. Total revenue: <strong id="rev">$12,345</strong>. Status: <span id="status" role="status">loading</span>.</p>
+
+  <form id="f" onsubmit="event.preventDefault(); document.getElementById('status').textContent = 'saved ' + document.getElementById('qty').value;">
+    <label for="name">Name</label><input id="name" name="name" placeholder="Your name">
+    <label for="qty">Quantity</label><input id="qty" type="number" value="42">
+    <label for="nat">Native select</label>
+    <select id="nat"><option value="a">Alpha</option><option value="b">Beta</option></select>
+    <button type="submit" data-testid="save-btn">Save</button>
+  </form>
+
+  <div role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="combo-list" id="combo" tabindex="0"
+       onclick="document.getElementById('combo-list').style.display = 'block'; this.setAttribute('aria-expanded', 'true');">Pick a color</div>
+  <ul id="combo-list" role="listbox">
+    <li role="option" onclick="pickColor(this)">Red</li>
+    <li role="option" onclick="pickColor(this)">Green</li>
+  </ul>
+
+  <button id="del" onclick="document.getElementById('status').textContent = window.confirm('Delete everything?') ? 'deleted' : 'kept';">Delete</button>
+  <div class="card" id="card1" onclick="document.getElementById('status').textContent = 'card clicked';">Clickable card (div onclick, no role)</div>
+  <button id="failbtn" onclick="triggerFailure()">Trigger failure</button>
+  <a href="/download.csv" id="dl">Download report</a>
+  <div id="toast" role="alert" style="display: none"></div>
+
+  <section id="react-root">
+    <button id="hydrated-btn">Hydrated action</button>
+    <button id="dead-btn">Dead action</button>
+  </section>
+
+  <section id="many"></section>
+  <section id="long"></section>
+</main>
+<script>
+  function pickColor(li) {
+    const combo = document.getElementById('combo');
+    combo.textContent = li.textContent;
+    combo.setAttribute('aria-expanded', 'false');
+    li.parentNode.style.display = 'none';
+  }
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.style.display = 'block';
+  }
+  function triggerFailure() {
+    fetch('/api/fail').then(function (r) {
+      if (!r.ok) {
+        console.error('Save failed with status ' + r.status);
+        showToast('Could not save: server error');
+      }
+    });
+  }
+
+  // React leaves these expandos on the DOM it owns. The root carries a
+  // container key; an element React attached handlers to carries props and a
+  // fiber. The dead button sits inside the root with neither.
+  const root = document.getElementById('react-root');
+  root['__reactContainer$probe'] = {};
+  const hydrated = document.getElementById('hydrated-btn');
+  hydrated['__reactFiber$probe'] = {};
+  hydrated['__reactProps$probe'] = { onClick: function () { document.getElementById('status').textContent = 'hydrated clicked'; } };
+  hydrated.addEventListener('click', hydrated['__reactProps$probe'].onClick);
+
+  const many = document.getElementById('many');
+  for (let i = 0; i < 400; i++) {
+    const b = document.createElement('button');
+    b.textContent = 'Browse nodes';
+    b.className = 'browse';
+    many.appendChild(b);
+  }
+  const long = document.getElementById('long');
+  for (let i = 0; i < 60; i++) {
+    const p = document.createElement('p');
+    p.textContent = 'Paragraph ' + i + ': Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.';
+    long.appendChild(p);
+  }
+
+  setInterval(function () { fetch('/api/poll?x=1'); }, 400);
+  fetch('/api/missing');
+  fetch('/api/slow');
+  console.warn('Deprecated prop used');
+  try {
+    const ws = new WebSocket('ws://127.0.0.1:1/hmr');
+    ws.onerror = function () { console.log('ws error'); };
+  } catch (e) {}
+  document.getElementById('status').textContent = 'ready';
+</script>
+</body>
+</html>

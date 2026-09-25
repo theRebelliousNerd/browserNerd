@@ -196,6 +196,8 @@ type SessionManager struct {
 	browsers         map[string]*browserRecord
 	defaultBrowserID string
 	reaperCancel     context.CancelFunc
+	dialogs          dialogBook
+	downloads        downloadBook
 }
 
 // EngineSink defines the minimal interface we need from the logic layer.
@@ -285,6 +287,12 @@ func (m *SessionManager) Start(_ context.Context) error {
 		controlURL: controlURL,
 	}
 	m.mu.Unlock()
+	if m.cfg.DebuggerURL == "" {
+		// Only a browser this server launched is redirected to the download
+		// directory; an attached everyday Chrome keeps its own behavior.
+		m.enableDownloads(browser, "")
+		m.listenForDownloads(browser)
+	}
 	m.startIdleReaper()
 	log.Printf("Browser connected at %s", controlURL)
 	return nil
@@ -679,17 +687,6 @@ func (m *SessionManager) ForkSession(ctx context.Context, sessionID, url string)
 		}
 	}
 
-	dest, err := m.CreateTab(ctx, srcMeta.BrowserID, targetURL, true)
-	if err != nil {
-		return nil, fmt.Errorf("create forked session: %w", err)
-	}
-
-	destPage, ok := m.Page(dest.ID)
-	if !ok {
-		return dest, nil
-	}
-
-	// Restore cookies into the new context.
 	params := make([]*proto.NetworkCookieParam, 0, len(cookiesRes.Cookies))
 	for _, c := range cookiesRes.Cookies {
 		params = append(params, &proto.NetworkCookieParam{
@@ -704,12 +701,29 @@ func (m *SessionManager) ForkSession(ctx context.Context, sessionID, url string)
 			Priority: c.Priority,
 		})
 	}
-	if len(params) > 0 {
-		_ = destPage.SetCookies(params)
-	}
 
-	// Restore local/session storage (best-effort).
-	restoreStorage(destPage, localJSON, sessionJSON)
+	// The fork's first page load must already carry the source's cookies and
+	// storage, so both are in place before it navigates: cookies set on the
+	// fresh context, storage written by a script that runs before the
+	// document's own scripts on the source's origin.
+	var restoreScript proto.PageScriptIdentifier
+	prepare := func(page *rod.Page) {
+		if len(params) > 0 {
+			_ = page.SetCookies(params)
+		}
+		if script := storageRestoreScript(srcMeta.URL, localJSON, sessionJSON); script != "" {
+			if res, err := (proto.PageAddScriptToEvaluateOnNewDocument{Source: script}).Call(page); err == nil {
+				restoreScript = res.Identifier
+			}
+		}
+	}
+	dest, err := m.openTab(ctx, srcMeta.BrowserID, targetURL, true, prepare)
+	if err != nil {
+		return nil, fmt.Errorf("create forked session: %w", err)
+	}
+	if destPage, ok := m.Page(dest.ID); ok && restoreScript != "" {
+		_ = proto.PageRemoveScriptToEvaluateOnNewDocument{Identifier: restoreScript}.Call(destPage)
+	}
 	dest.Status = "forked"
 	m.UpdateMetadata(dest.ID, func(s Session) Session {
 		s.Status = "forked"

@@ -8,6 +8,7 @@ import (
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,6 +19,10 @@ type BrowserTestTool struct {
 	sessions                *browser.SessionManager
 	engine                  *mangle.Engine
 	disableUnsafeJavaScript bool
+	// redactor and pathPolicy are handed to the replay, so a fixture's steps
+	// meet the same redaction and upload confinement as browser-act's.
+	redactor   *security.Redactor
+	pathPolicy *security.PathPolicy
 }
 
 func (t *BrowserTestTool) Name() string { return "browser-test" }
@@ -25,13 +30,17 @@ func (t *BrowserTestTool) Name() string { return "browser-test" }
 func (t *BrowserTestTool) Description() string {
 	return `Create, inspect, or run declarative browser tests without a Python harness.
 
-Fixtures use the same operations accepted by browser-act plus bounded Mangle
-assertions. Create can capture privacy-safe actions from a session or normalize
-an inline test. Run replays operations, evaluates fresh facts by default, and
-returns compact causal diagnosis on failure.
+A fixture is {name, session_id, operations[], assertions[]}: operations are
+browser-act operations (actions[] is read as the same list) and assertions are
+{name, query, expect: present|absent, scope}. Unknown keys, invalid operations
+and a fixture with neither operations nor assertions are refused before
+anything runs. Create captures privacy-safe steps from a session or normalizes
+an inline test. Run replays the operations, evaluates fresh facts by default,
+and returns compact causal diagnosis on failure.
 
-Credential fields use value_env, which is resolved only while running and is
-not written back into the portable fixture.
+Credential fields use value_env, resolved only while running and never written
+back into the fixture; an unset or empty variable stops the run before the
+first step, naming the variable.
 
 Operations:
   create  capture a session or normalize test/test_yaml
@@ -54,7 +63,7 @@ func (t *BrowserTestTool) InputSchema() map[string]interface{} {
 			"name":       map[string]interface{}{"type": "string"},
 			"test": map[string]interface{}{
 				"type":        "object",
-				"description": "Declarative fixture with browser-act operations and Mangle assertions",
+				"description": "Fixture {name, session_id, operations[], assertions[]}",
 			},
 			"test_yaml": map[string]interface{}{"type": "string"},
 			"include_assertions": map[string]interface{}{
@@ -100,26 +109,39 @@ func (t *BrowserTestTool) create(ctx context.Context, args map[string]interface{
 		result := generated.(map[string]interface{})
 		result["success"] = true
 		result["operation"] = "create"
-		result["summary"] = fmt.Sprintf("Created declarative fixture with %v browser-act operation(s)", result["actions_count"])
+		result["summary"] = fmt.Sprintf("Created declarative fixture with %v browser-act operation(s)", result["operation_count"])
 		return result, nil
 	}
 	spec, err := parseTestSpec(args)
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error()}, nil
 	}
+	operations, issues := validateTestOperations(spec.Operations)
+	if len(issues) > 0 {
+		return map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("fixture operations are invalid: op %d %s: %s", issues[0].Index, issues[0].Type, issues[0].Message),
+			"issues":  issues,
+		}, nil
+	}
+	spec.Operations = operations
 	encoded, err := yaml.Marshal(spec)
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("encode test: %v", err)}, nil
 	}
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"success":         true,
 		"operation":       "create",
-		"summary":         fmt.Sprintf("Normalized %d operation(s) and %d assertion(s)", len(spec.Actions), len(spec.Assertions)),
+		"summary":         fmt.Sprintf("Normalized %d operation(s) and %d assertion(s)", len(spec.Operations), len(spec.Assertions)),
 		"test":            spec,
 		"test_yaml":       string(encoded),
-		"action_count":    len(spec.Actions),
+		"operation_count": len(spec.Operations),
 		"assertion_count": len(spec.Assertions),
-	}, nil
+	}
+	if len(spec.Assertions) == 0 {
+		result["warning"] = "run needs at least one assertion; add {name, query, expect}"
+	}
+	return result, nil
 }
 
 func (t *BrowserTestTool) inspect(args map[string]interface{}) (interface{}, error) {
@@ -127,16 +149,25 @@ func (t *BrowserTestTool) inspect(args map[string]interface{}) (interface{}, err
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error()}, nil
 	}
-	return map[string]interface{}{
-		"success":         true,
+	_, issues := validateTestOperations(spec.Operations)
+	result := map[string]interface{}{
+		"success":         len(issues) == 0,
 		"operation":       "inspect",
 		"name":            spec.Name,
 		"session_id":      spec.SessionID,
-		"action_count":    len(spec.Actions),
+		"operation_count": len(spec.Operations),
 		"assertion_count": len(spec.Assertions),
-		"actions":         spec.Actions,
+		"operations":      spec.Operations,
 		"assertions":      spec.Assertions,
-	}, nil
+	}
+	if len(issues) > 0 {
+		result["error"] = fmt.Sprintf("op %d %s: %s", issues[0].Index, issues[0].Type, issues[0].Message)
+		result["issues"] = issues
+	}
+	if len(spec.Assertions) == 0 {
+		result["warning"] = "run needs at least one assertion; add {name, query, expect}"
+	}
+	return result, nil
 }
 
 func (t *BrowserTestTool) run(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -144,6 +175,8 @@ func (t *BrowserTestTool) run(ctx context.Context, args map[string]interface{}) 
 		sessions:                t.sessions,
 		engine:                  t.engine,
 		disableUnsafeJavaScript: t.disableUnsafeJavaScript,
+		redactor:                t.redactor,
+		pathPolicy:              t.pathPolicy,
 	}).Execute(ctx, args)
 	if err != nil {
 		return nil, err
@@ -154,7 +187,7 @@ func (t *BrowserTestTool) run(ctx context.Context, args map[string]interface{}) 
 	resultMap["success"] = passed
 	resultMap["status"] = ternaryStatus(passed, "passed", "failed")
 	resultMap["summary"] = fmt.Sprintf("Declarative test %s", resultMap["status"])
-	sessionID := getStringArg(args, "session_id")
+	sessionID, _ := resultMap["session_id"].(string)
 	handle := fmt.Sprintf("test:%s:%d", sessionID, time.Now().UnixMilli())
 	resultMap["evidence_handles"] = []string{handle}
 	emitDisclosureFacts(ctx, t.engine, sessionID, []string{handle}, "test")

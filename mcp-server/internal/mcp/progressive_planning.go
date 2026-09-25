@@ -478,65 +478,18 @@ func rowTimestampMs(row map[string]interface{}, timestampFields []string) (int64
 	return 0, false
 }
 
-func buildReasonChangeFeed(
-	rootCauses []map[string]interface{},
-	failedReqs []map[string]interface{},
-	slowApis []map[string]interface{},
-	userVisibleErrors []map[string]interface{},
-	blockingIssues []map[string]interface{},
-	maxItems int,
-) []map[string]interface{} {
-	changes := make([]map[string]interface{}, 0, len(failedReqs)+len(slowApis)+len(userVisibleErrors)+len(blockingIssues)+len(rootCauses))
-
-	for _, row := range failedReqs {
-		changes = append(changes, map[string]interface{}{
-			"type":      "failed_request",
-			"key":       fmt.Sprintf("%v", row["ReqId"]),
-			"detail":    fmt.Sprintf("%v (%v)", row["Url"], row["Status"]),
-			"timestamp": asInt64(row["ReqTs"]),
-		})
-	}
-	for _, row := range slowApis {
-		changes = append(changes, map[string]interface{}{
-			"type":      "slow_api",
-			"key":       fmt.Sprintf("%v", row["ReqId"]),
-			"detail":    fmt.Sprintf("%v (%vms)", row["Url"], row["Duration"]),
-			"timestamp": asInt64(row["ReqTs"]),
-		})
-	}
-	for _, row := range userVisibleErrors {
-		changes = append(changes, map[string]interface{}{
-			"type":      "user_visible_error",
-			"key":       fmt.Sprintf("%v", row["Source"]),
-			"detail":    fmt.Sprintf("%v", row["Message"]),
-			"timestamp": asInt64(row["Timestamp"]),
-		})
-	}
-	for _, row := range blockingIssues {
-		changes = append(changes, map[string]interface{}{
-			"type":      "blocking_issue",
-			"key":       fmt.Sprintf("%v", row["SessionId"]),
-			"detail":    fmt.Sprintf("%v", row["Reason"]),
-			"timestamp": 0,
-		})
-	}
-	for _, row := range rootCauses {
-		changes = append(changes, map[string]interface{}{
-			"type":      "root_cause",
-			"key":       fmt.Sprintf("%v", row["Source"]),
-			"detail":    fmt.Sprintf("%v", row["Cause"]),
-			"timestamp": asInt64(row["Ts"]),
-		})
-	}
-
-	sort.SliceStable(changes, func(i, j int) bool {
-		return asInt64(changes[i]["timestamp"]) > asInt64(changes[j]["timestamp"])
-	})
-
-	return limitMapSlice(changes, maxItems)
+// queryActionCandidates returns the session's action candidates ranked for the next
+// decision: one row per (action, label), repeated and dead controls pushed down or out.
+// Repeat counts and dead controls come from the facts get-interactive-elements emitted.
+func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID string, maxItems int) []map[string]interface{} {
+	raw := queryActionCandidatesRaw(ctx, engine, sessionID, maxInt(maxItems*4, 300))
+	annotateCandidatesFromFacts(engine, sessionID, raw)
+	return limitMapSlice(rankActionCandidates(groupActionCandidates(raw)), maxItems)
 }
 
-func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID string, maxItems int) []map[string]interface{} {
+// queryActionCandidatesRaw returns every Mangle action candidate for the session, one
+// per ref, keeping the highest priority a ref earned.
+func queryActionCandidatesRaw(ctx context.Context, engine *mangle.Engine, sessionID string, maxItems int) []map[string]interface{} {
 	if engine == nil || strings.TrimSpace(sessionID) == "" {
 		return []map[string]interface{}{}
 	}
@@ -547,7 +500,6 @@ func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID
 		Label    string
 		Priority int
 		Reason   string
-		Source   string
 	}
 
 	best := make(map[string]candidate)
@@ -589,7 +541,7 @@ func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID
 		}
 	}
 
-	upsert := func(isGlobal bool, action, ref, label string, priority int, reason, source string) {
+	upsert := func(isGlobal bool, action, ref, label string, priority int, reason string) {
 		key := dedupKey(isGlobal, action, ref, label)
 		c := candidate{
 			Action:   action,
@@ -597,7 +549,6 @@ func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID
 			Label:    label,
 			Priority: priority,
 			Reason:   reason,
-			Source:   source,
 		}
 		if prev, ok := best[key]; ok {
 			// Keep the highest-priority candidate for the same semantic action.
@@ -616,7 +567,6 @@ func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID
 			fmt.Sprintf("%v", row["Label"]),
 			asInt(row["Priority"]),
 			fmt.Sprintf("%v", row["Reason"]),
-			"mangle",
 		)
 	}
 
@@ -628,7 +578,6 @@ func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID
 			"",
 			asInt(row["Priority"]),
 			fmt.Sprintf("%v", row["Reason"]),
-			"mangle",
 		)
 	}
 
@@ -669,25 +618,166 @@ func queryActionCandidates(ctx context.Context, engine *mangle.Engine, sessionID
 			"label":    c.Label,
 			"priority": c.Priority,
 			"reason":   c.Reason,
-			"source":   c.Source,
 		})
 	}
 
 	return limitMapSlice(out, maxItems)
 }
 
+// annotateCandidatesFromFacts marks each candidate with what the interactive facts
+// know about its ref: the size of the repeated group it heads (group_count) and
+// whether it is a dead control.
+func annotateCandidatesFromFacts(engine *mangle.Engine, sessionID string, candidates []map[string]interface{}) {
+	if engine == nil || len(candidates) == 0 {
+		return
+	}
+	counts := map[string]int{}
+	for _, f := range engine.FactsByPredicate("elem_attr") {
+		if len(f.Args) >= 4 && fmt.Sprintf("%v", f.Args[0]) == sessionID && fmt.Sprintf("%v", f.Args[2]) == "group_count" {
+			counts[fmt.Sprintf("%v", f.Args[1])] = asInt(f.Args[3])
+		}
+	}
+	dead := map[string]bool{}
+	for _, f := range engine.FactsByPredicate("dead_control") {
+		if len(f.Args) >= 2 && fmt.Sprintf("%v", f.Args[0]) == sessionID {
+			dead[fmt.Sprintf("%v", f.Args[1])] = true
+		}
+	}
+	for _, c := range candidates {
+		ref := fmt.Sprintf("%v", c["ref"])
+		if n := counts[ref]; n > 1 {
+			c["count"] = n
+		}
+		if dead[ref] {
+			c["dead"] = true
+		}
+	}
+}
+
+// candidateGroupKey names the choice a candidate offers an agent. Controls with the
+// same action and label are one choice however many rows repeat them; a navigation is
+// named by its target, and a global action by itself.
+func candidateGroupKey(c map[string]interface{}) string {
+	action := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", c["action"])))
+	ref := strings.TrimSpace(fmt.Sprintf("%v", c["ref"]))
+	label := strings.ToLower(strings.TrimSpace(fmt.Sprintf("%v", c["label"])))
+	if ref == "" && label == "" {
+		return "global|" + action
+	}
+	if label == "" {
+		return action + "|ref|" + strings.ToLower(ref)
+	}
+	return action + "|" + label
+}
+
+// groupActionCandidates collapses candidates offering the same choice into the one
+// with the highest priority, carrying how many controls offer it as count.
+func groupActionCandidates(candidates []map[string]interface{}) []map[string]interface{} {
+	type grouped struct {
+		best    map[string]interface{}
+		refs    map[string]bool
+		maxSeen int
+	}
+	order := make([]string, 0, len(candidates))
+	groups := map[string]*grouped{}
+	for _, c := range candidates {
+		key := candidateGroupKey(c)
+		g, ok := groups[key]
+		if !ok {
+			g = &grouped{refs: map[string]bool{}}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.refs[fmt.Sprintf("%v", c["ref"])] = true
+		if n := asInt(c["count"]); n > g.maxSeen {
+			g.maxSeen = n
+		}
+		if g.best == nil || asInt(c["priority"]) > asInt(g.best["priority"]) {
+			g.best = c
+		}
+	}
+	out := make([]map[string]interface{}, 0, len(order))
+	for _, key := range order {
+		g := groups[key]
+		row := make(map[string]interface{}, len(g.best)+1)
+		for k, v := range g.best {
+			row[k] = v
+		}
+		count := maxInt(g.maxSeen, len(g.refs))
+		if count > 1 {
+			row["count"] = count
+		} else {
+			delete(row, "count")
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+var destructiveLabelWords = []string{"delete", "remove", "reset", "discard", "destroy", "log out", "logout", "sign out", "signout", "clear all", "unsubscribe"}
+
+// candidateScore ranks a candidate for the next decision. The Mangle priority leads;
+// a control repeated down a list is rarely the next step, a destructive one should not
+// be suggested unprompted, and a ref named by a stable attribute survives re-renders
+// better than one counted by position.
+func candidateScore(c map[string]interface{}) int {
+	score := asInt(c["priority"])
+	if asInt(c["count"]) > 1 {
+		score -= 25
+	}
+	label := strings.ToLower(fmt.Sprintf("%v", c["label"]))
+	for _, word := range destructiveLabelWords {
+		if strings.Contains(label, word) {
+			score -= 15
+			break
+		}
+	}
+	ref := fmt.Sprintf("%v", c["ref"])
+	switch {
+	case strings.HasPrefix(ref, "testid:") || strings.HasPrefix(ref, "aria:"):
+		score += 3
+	case strings.Contains(ref, "[") || strings.Contains(ref, "."):
+		score -= 3
+	}
+	return score
+}
+
+// rankActionCandidates drops dead controls and orders the rest by candidateScore,
+// keeping the incoming order between equals.
+func rankActionCandidates(candidates []map[string]interface{}) []map[string]interface{} {
+	live := make([]map[string]interface{}, 0, len(candidates))
+	for _, c := range candidates {
+		if dead, ok := c["dead"].(bool); ok && dead {
+			continue
+		}
+		live = append(live, c)
+	}
+	sort.SliceStable(live, func(i, j int) bool {
+		return candidateScore(live[i]) > candidateScore(live[j])
+	})
+	return live
+}
+
+// buildActionPlanRecommendations turns ranked candidates into ready-to-send browser-act
+// calls: the one operation, and a short reason naming the control. Candidates offering
+// the same choice yield one recommendation.
 func buildActionPlanRecommendations(candidates []map[string]interface{}, max int, sessionID, baseOrigin string) []map[string]interface{} {
 	if len(candidates) == 0 {
 		return nil
 	}
 	recs := make([]map[string]interface{}, 0, len(candidates))
+	seen := map[string]bool{}
 
 	for _, candidate := range candidates {
 		action := strings.ToLower(fmt.Sprintf("%v", candidate["action"]))
 		ref := fmt.Sprintf("%v", candidate["ref"])
 		label := fmt.Sprintf("%v", candidate["label"])
 		reason := fmt.Sprintf("%v", candidate["reason"])
-		priority := asInt(candidate["priority"])
+		if key := candidateGroupKey(candidate); seen[key] {
+			continue
+		} else {
+			seen[key] = true
+		}
 
 		var ops []map[string]interface{}
 		requiresUserInput := false
@@ -744,23 +834,25 @@ func buildActionPlanRecommendations(candidates []map[string]interface{}, max int
 			continue
 		}
 
-		recs = append(recs, map[string]interface{}{
-			"tool": "browser-act",
-			"reason": fmt.Sprintf(
-				"Candidate action from Mangle (priority=%d, reason=%s, label=%s).",
-				priority,
-				reason,
-				label,
-			),
+		why := reason
+		if strings.TrimSpace(label) != "" {
+			why = reason + ": " + label
+		}
+		if count := asInt(candidate["count"]); count > 1 {
+			why += fmt.Sprintf(" (1 of %d alike)", count)
+		}
+		rec := map[string]interface{}{
+			"tool":   "browser-act",
+			"reason": why,
 			"args": map[string]interface{}{
-				"session_id":    sessionID,
-				"operations":    ops,
-				"stop_on_error": true,
-				"view":          "compact",
+				"session_id": sessionID,
+				"operations": ops,
 			},
-			"candidate":           candidate,
-			"requires_user_input": requiresUserInput,
-		})
+		}
+		if requiresUserInput {
+			rec["requires_user_input"] = true
+		}
+		recs = append(recs, rec)
 	}
 
 	return limitMapSlice(recs, max)
@@ -878,15 +970,19 @@ func filterInteractiveData(data map[string]interface{}, filter string) map[strin
 	allowed := map[string]bool{}
 	switch filter {
 	case "buttons":
-		allowed["button"] = true
+		for _, typ := range []string{"button", "clickable", "tab", "menuitem", "option", "row"} {
+			allowed[typ] = true
+		}
 	case "inputs":
-		allowed["input"] = true
-		allowed["checkbox"] = true
-		allowed["radio"] = true
+		for _, typ := range []string{"input", "checkbox", "radio", "combobox"} {
+			allowed[typ] = true
+		}
 	case "links":
 		allowed["link"] = true
 	case "selects":
-		allowed["select"] = true
+		for _, typ := range []string{"select", "combobox", "listbox", "option"} {
+			allowed[typ] = true
+		}
 	default:
 		return data
 	}
@@ -899,6 +995,7 @@ func filterInteractiveData(data map[string]interface{}, filter string) map[strin
 	filtered := make([]interface{}, 0, len(elems))
 	typeCount := map[string]int{}
 	disabledCount := 0
+	total := 0
 
 	for _, e := range elems {
 		elem, ok := e.(map[string]interface{})
@@ -910,16 +1007,20 @@ func filterInteractiveData(data map[string]interface{}, filter string) map[strin
 			continue
 		}
 
+		// A grouped row stands for count controls.
+		members := maxInt(asInt(elem["count"]), 1)
 		filtered = append(filtered, elem)
-		typeCount[typ]++
+		typeCount[typ] += members
+		total += members
 		if disabled, ok := elem["disabled"].(bool); ok && disabled {
-			disabledCount++
+			disabledCount += members
 		}
 	}
 
 	summary := map[string]interface{}{
-		"total": len(filtered),
-		"types": map[string]interface{}{},
+		"total":    total,
+		"returned": len(filtered),
+		"types":    map[string]interface{}{},
 	}
 	typesOut := summary["types"].(map[string]interface{})
 	for k, v := range typeCount {
@@ -927,6 +1028,16 @@ func filterInteractiveData(data map[string]interface{}, filter string) map[strin
 	}
 	if disabledCount > 0 {
 		summary["disabled"] = disabledCount
+	}
+	if source, ok := data["summary"].(map[string]interface{}); ok {
+		if _, grouped := source["groups"]; grouped {
+			summary["groups"] = len(filtered)
+		}
+		// Counting only the rows the page returned undercounts a page with more
+		// controls than the extraction limit; say so rather than present it as whole.
+		if asInt(source["returned"]) < asInt(source["groups"]) || (source["groups"] == nil && asInt(source["returned"]) < asInt(source["total"])) {
+			summary["partial"] = true
+		}
 	}
 
 	out := map[string]interface{}{}

@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Security and Privacy
 created: 2026-07-23
-last_updated: 2026-07-23
+last_updated: 2026-09-24
 doc_type: security-spec
 subsystem: browsernerd
 read_when: Changing capture, persistence, workspace config, JavaScript evaluation, Mangle, or file exports
@@ -24,6 +24,24 @@ local authority into queryable or persisted data.
   `[REDACTED]`.
 - Console, toast, DOM, request, response, and session metadata pass through the
   same redactor before persistence or export.
+- A failed response's body snippet (`net_failure_body`, at most 1 KB of a
+  text or JSON body) is redacted before it becomes a fact.
+- WebSocket frame payloads are never captured; `ws_event` records the
+  lifecycle only.
+- `browser-reason` `network` with `body: true` returns a response body's
+  shape - keys, array lengths, clipped and redacted scalar samples - never
+  the body, and never the value of a key that names a token, password, key or
+  cookie.
+- `browser-observe` `mode: storage` returns cookie and web-storage names,
+  sizes, flags and expiry, and only the `exp` and `iat` claims of a JWT-shaped
+  value; no stored value, and no other claim, leaves the page.
+- The doctor reports whether each `value_env` credential variable is set,
+  never its value or length, as names listed under `credentials.set` and
+  `credentials.unset`: a variable name used as a key would itself be blanked
+  by the redactor.
+- Every tool result crosses the redactor after the tool returns, so a test of
+  what an agent receives reads the result through it
+  (`throughServerRedactor` in `internal/mcp/server_calls_test.go`).
 - Request and response lifecycle facts remain correlated; sampling cannot
   independently drop one side.
 
@@ -54,13 +72,20 @@ can read credential-bearing DOM and application state. An operator must enable
 progressive disclosure gate still applies, and returned structures are
 redacted again.
 Screenshot and export targets must remain under configured writable roots,
-including after traversal and symlink resolution. User-submitted Mangle work
+including after traversal and symlink resolution. A file handed to a page by
+`browser-act`'s `upload` op is read through `PathPolicy.ResolveForUpload`: it
+must resolve, symlinks included, inside the workspace root; no path component
+under that root may start with a dot (`.env`, `.git`, `.credentials`,
+`.mcp.json`); a name carrying `secret`, `credential`, `password`, `token`,
+`private_key` or `id_rsa`, or a `.pem`, `.key`, `.p12`, `.pfx` or `.kdbx`
+extension, is refused; and it must be a regular file of at most 50 MB.
+User-submitted Mangle work
 has byte, clause, premise, rule, fact, result, and time limits, and is evaluated
 on isolated state before commit.
 
 ## Verification
 
 Regression tests cover recursive redaction, sensitive inputs, private
-permissions, path traversal and symlinks, workspace launch requests, JavaScript
+permissions, path traversal and symlinks, upload path refusals, workspace launch requests, JavaScript
 injection attempts, disabled unsafe JavaScript, private audit persistence,
 Mangle limits, and result bounds.

@@ -25,8 +25,10 @@ func (t *GenerateTestTool) Description() string {
 	return `Turn a recorded interaction into a draft run-test spec.
 
 Reads the session's action facts (navigation_event, input_event, click_event)
-in timestamp order and emits them as a replayable actions[] list, plus a couple
-of safe health assertions (no visible errors, no failed requests) to edit.
+in timestamp order and emits them as a replayable operations[] list, plus a
+couple of safe health assertions (no visible errors, no failed requests) to edit.
+Keystrokes into one field collapse to the field's final value; a click on an
+element with no id or name cannot be replayed and is counted, not emitted.
 
 TOKEN COST: Low. Emits a compact YAML test, not a transcript.
 
@@ -35,7 +37,7 @@ WORKFLOW:
 2. generate-test to get a draft spec.
 3. Edit the assertions to describe success, then feed it to run-test.
 
-Returns: {name, actions_count, test, test_yaml}.`
+Returns: {name, operation_count, test, test_yaml}.`
 }
 
 func (t *GenerateTestTool) InputSchema() map[string]interface{} {
@@ -83,23 +85,36 @@ func (t *GenerateTestTool) Execute(_ context.Context, args map[string]interface{
 			timed = append(timed, timedAction{f.Timestamp, action})
 		}
 	}
+	skippedClicks := 0
 	for _, f := range t.engine.FactsByPredicate("click_event") {
 		if node, ok := stringArgAt(f, 1, sessionID); ok {
+			if strings.TrimSpace(node) == "" {
+				skippedClicks++
+				continue
+			}
 			timed = append(timed, timedAction{f.Timestamp, map[string]interface{}{"type": "interact", "action": "click", "ref": node}})
 		}
 	}
 
 	sort.SliceStable(timed, func(i, j int) bool { return timed[i].ts.Before(timed[j].ts) })
 
-	actions := make([]map[string]interface{}, 0, len(timed))
+	operations := make([]map[string]interface{}, 0, len(timed))
 	for _, ta := range timed {
-		actions = append(actions, ta.action)
+		// Each keystroke records the field's value so far; keep the last.
+		if n := len(operations); n > 0 && ta.action["action"] == "type" {
+			prev := operations[n-1]
+			if prev["action"] == "type" && prev["ref"] == ta.action["ref"] {
+				operations[n-1] = ta.action
+				continue
+			}
+		}
+		operations = append(operations, ta.action)
 	}
 
 	spec := TestSpec{
-		Name:      name,
-		SessionID: sessionID,
-		Actions:   actions,
+		Name:       name,
+		SessionID:  sessionID,
+		Operations: operations,
 	}
 	if getBoolArg(args, "include_assertions", true) {
 		spec.Assertions = []TestAssertion{
@@ -113,13 +128,18 @@ func (t *GenerateTestTool) Execute(_ context.Context, args map[string]interface{
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("encode test: %v", err)}, nil
 	}
 
-	return map[string]interface{}{
-		"name":          name,
-		"actions_count": len(actions),
-		"test":          spec,
-		"test_yaml":     string(yamlBytes),
-		"note":          "draft - edit the assertions to describe success before running",
-	}, nil
+	result := map[string]interface{}{
+		"name":            name,
+		"operation_count": len(operations),
+		"test":            spec,
+		"test_yaml":       string(yamlBytes),
+		"note":            "draft - edit the assertions to describe success before running",
+	}
+	if skippedClicks > 0 {
+		result["skipped_clicks"] = skippedClicks
+		result["note"] = fmt.Sprintf("draft - %d click(s) on elements without an id or name were not captured; add them with text or label locators, and edit the assertions to describe success", skippedClicks)
+	}
+	return result, nil
 }
 
 // stringArgAt returns the string value of arg index i, honoring an optional

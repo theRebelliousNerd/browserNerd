@@ -16,6 +16,13 @@ invariants:
   - name: no-visible-errors
     query: "user_visible_error(S, _, _, _)"
     expect: absent
+title: Login form
+created: 2026-08-01
+last_updated: 2026-08-01
+doc_type: spec
+subsystem: infra
+read_when: Working on infra features this spec covers
+indexes: []
 ---
 
 # Login form

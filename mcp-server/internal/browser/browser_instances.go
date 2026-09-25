@@ -66,14 +66,38 @@ func (m *SessionManager) LaunchAdditional(_ context.Context) (*BrowserInstance, 
 	m.mu.Lock()
 	m.browsers[meta.ID] = &browserRecord{meta: meta, browser: browser, controlURL: controlURL}
 	m.mu.Unlock()
+	m.enableDownloads(browser, "")
+	m.listenForDownloads(browser)
 	return &meta, nil
+}
+
+// openTabCountLocked counts the sessions that hold an open page - the tabs the
+// max_tabs bound exists to limit. A detached session (reloaded from the session
+// store after a restart, or left behind when its browser went away) owns no
+// tab, so it never blocks opening one; counting it let a long-lived workspace
+// reach the limit with no browser running at all. Callers hold m.mu.
+func (m *SessionManager) openTabCountLocked() int {
+	open := 0
+	for _, record := range m.sessions {
+		if record.page != nil {
+			open++
+		}
+	}
+	return open
 }
 
 // CreateTab opens a tab in a selected browser. Shared-context tabs are the
 // default; isolated=true creates a fresh incognito context.
-func (m *SessionManager) CreateTab(_ context.Context, browserID, rawURL string, isolated bool) (*Session, error) {
+func (m *SessionManager) CreateTab(ctx context.Context, browserID, rawURL string, isolated bool) (*Session, error) {
+	return m.openTab(ctx, browserID, rawURL, isolated, nil)
+}
+
+// openTab opens the tab at about:blank, starts capture, runs prepare (cookies,
+// storage) and only then navigates, so the page load is captured from its
+// first request and runs with the prepared state.
+func (m *SessionManager) openTab(_ context.Context, browserID, rawURL string, isolated bool, prepare func(*rod.Page)) (*Session, error) {
 	m.mu.RLock()
-	if len(m.sessions) >= m.cfg.GetMaxTabs() {
+	if m.openTabCountLocked() >= m.cfg.GetMaxTabs() {
 		m.mu.RUnlock()
 		return nil, fmt.Errorf("tab limit reached (%d)", m.cfg.GetMaxTabs())
 	}
@@ -95,8 +119,11 @@ func (m *SessionManager) CreateTab(_ context.Context, browserID, rawURL string, 
 			return nil, fmt.Errorf("create isolated browser context: %w", err)
 		}
 		isolatedBrowser = targetBrowser
+		// An incognito context is this server's own, even in an attached browser.
+		m.enableDownloads(record.browser, targetBrowser.BrowserContextID)
+		m.listenForDownloads(record.browser)
 	}
-	page, err := targetBrowser.Page(proto.TargetCreateTarget{URL: rawURL})
+	page, err := targetBrowser.Page(proto.TargetCreateTarget{URL: "about:blank"})
 	if err != nil {
 		return nil, fmt.Errorf("create tab: %w", err)
 	}
@@ -108,7 +135,6 @@ func (m *SessionManager) CreateTab(_ context.Context, browserID, rawURL string, 
 	}).Call(page); err != nil {
 		log.Printf("warning: failed to set viewport: %v", err)
 	}
-	_ = page.Timeout(m.cfg.NavigationTimeout()).Navigate(rawURL)
 
 	now := time.Now()
 	meta := Session{
@@ -136,6 +162,15 @@ func (m *SessionManager) CreateTab(_ context.Context, browserID, rawURL string, 
 	}
 	m.mu.Unlock()
 	m.startEventStream(streamCtx, meta.ID, page)
+	if prepare != nil {
+		prepare(page)
+	}
+	if rawURL != "about:blank" {
+		// A failed load still leaves an open tab; page_load_failed and
+		// net_loading_failed carry why.
+		_ = page.Timeout(m.cfg.NavigationTimeout()).Navigate(rawURL)
+		waitDocumentParsed(page, m.cfg.NavigationTimeout())
+	}
 	_ = m.persistSessions()
 	return &meta, nil
 }
@@ -143,7 +178,7 @@ func (m *SessionManager) CreateTab(_ context.Context, browserID, rawURL string, 
 // AttachToBrowser binds a target in a selected browser instance.
 func (m *SessionManager) AttachToBrowser(_ context.Context, browserID, targetID string) (*Session, error) {
 	m.mu.RLock()
-	if len(m.sessions) >= m.cfg.GetMaxTabs() {
+	if m.openTabCountLocked() >= m.cfg.GetMaxTabs() {
 		m.mu.RUnlock()
 		return nil, fmt.Errorf("tab limit reached (%d)", m.cfg.GetMaxTabs())
 	}
@@ -176,6 +211,10 @@ func (m *SessionManager) AttachToBrowser(_ context.Context, browserID, targetID 
 	}
 	m.mu.Unlock()
 	m.startEventStream(streamCtx, meta.ID, page)
+	if m.engine != nil && m.cfg.EnableDOMIngestion && !strings.EqualFold(m.cfg.EventLoggingLevel, "minimal") {
+		// An attached tab has already loaded: snapshot the DOM it shows now.
+		_ = m.captureDOMFacts(streamCtx, meta.ID, page)
+	}
 	_ = m.persistSessions()
 	return &meta, nil
 }
@@ -277,8 +316,17 @@ func (m *SessionManager) browserRecordLocked(browserID string) (*browserRecord, 
 	return nil, browserID
 }
 
+// newLauncher builds a Chrome launcher without Rod's leakless guard. Leakless
+// execs a helper binary it drops in %TEMP%, and Windows Defender quarantines
+// that helper as potentially unwanted software, so every launch fails with
+// "the file contains a virus". The guard only kills Chrome if this server dies;
+// shutdown-browser and session teardown already own the browser's lifetime.
+func (m *SessionManager) newLauncher() *launcher.Launcher {
+	return launcher.New().Headless(m.cfg.IsHeadless()).Leakless(false)
+}
+
 func (m *SessionManager) launchChrome() (string, error) {
-	launch := launcher.New().Headless(m.cfg.IsHeadless())
+	launch := m.newLauncher()
 	flagStart := 0
 	if len(m.cfg.Launch) > 0 {
 		launch = launch.Bin(m.cfg.Launch[0])
@@ -297,7 +345,7 @@ func (m *SessionManager) launchChrome() (string, error) {
 	if err == nil {
 		return controlURL, nil
 	}
-	fallback := launcher.New().Headless(m.cfg.IsHeadless())
+	fallback := m.newLauncher()
 	if len(m.cfg.Launch) > 0 {
 		fallback = fallback.Bin(m.cfg.Launch[0])
 	}

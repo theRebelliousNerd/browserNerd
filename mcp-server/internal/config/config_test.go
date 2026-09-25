@@ -14,8 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Name != "browsernerd-mcp" {
 		t.Errorf("expected server name 'browsernerd-mcp', got %q", cfg.Server.Name)
 	}
-	if cfg.Server.Version != "1.1.0" {
-		t.Errorf("expected server version '1.1.0', got %q", cfg.Server.Version)
+	if cfg.Server.Version != "1.2.0" {
+		t.Errorf("expected server version '1.2.0', got %q", cfg.Server.Version)
 	}
 	if cfg.Server.LogFile != filepath.Join(defaultDataRoot(), "browsernerd-mcp.log") {
 		t.Errorf("unexpected default log file %q", cfg.Server.LogFile)
@@ -87,11 +87,12 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.Mangle.Enable {
 		t.Error("expected Mangle.Enable to be true")
 	}
-	if cfg.Mangle.SchemaPath != "schemas/browser.mg" {
-		t.Errorf("expected schema path 'schemas/browser.mg', got %q", cfg.Mangle.SchemaPath)
+	// The built-in schema is compiled in; the default adds no project modules.
+	if cfg.Mangle.SchemaPath != "" || cfg.Mangle.DisableBuiltin {
+		t.Errorf("expected built-in schema only (no schema_path, builtin enabled), got %+v", cfg.Mangle)
 	}
-	if cfg.Mangle.FactBufferLimit != 2048 {
-		t.Errorf("expected fact buffer limit 2048, got %d", cfg.Mangle.FactBufferLimit)
+	if cfg.Mangle.FactBufferLimit != 16384 {
+		t.Errorf("expected fact buffer limit 16384, got %d", cfg.Mangle.FactBufferLimit)
 	}
 	if cfg.Mangle.GetMaxCreatedFacts() != 10000 || cfg.Mangle.GetMaxQueryResults() != 1000 {
 		t.Errorf("unexpected Mangle safety defaults: %+v", cfg.Mangle)

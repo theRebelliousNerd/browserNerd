@@ -10,8 +10,17 @@ Decl slow_api(SessionId, RequestId, Url, Duration).
 Decl cascading_failure(SessionId, ChildReqId, ParentReqId).
 Decl race_condition_detected(SessionId).
 Decl test_passed(SessionId).
+# A failed app request: any 5xx, or a 4xx that is not a page asset (a missing
+# favicon, image, font or stylesheet is noise, not a broken feature).
 Decl failed_request(SessionId, RequestId, Url, Status).
 Decl failed_request_at(SessionId, RequestId, Url, Status, RequestTimestamp).
+# The same failure stamped when its response arrived (net_http_error).
+Decl failed_request_done(SessionId, RequestId, Url, Status, DoneTimestamp).
+# A request that failed below HTTP (refused, DNS, CORS), not an abort.
+Decl network_failure(SessionId, RequestId, Url, ErrorText, Timestamp).
+# CDP resource types of page assets.
+Decl asset_resource_type(ResourceType).
+Decl asset_http_error(SessionId, RequestId).
 Decl slow_api_at(SessionId, RequestId, Url, Duration, RequestTimestamp).
 Decl error_chain(SessionId, ConsoleErr, RequestId, Url, Status).
 Decl root_cause_at(SessionId, ConsoleMsg, Source, Cause, Timestamp).
@@ -25,22 +34,11 @@ Decl toast_error_chain(SessionId, ToastText, RequestId, Url, Status).
 # =============================================================================
 # DATALOG_MTL TEMPORAL MACROS (Temporal Ext)
 # =============================================================================
+# The engine mirrors a base fact as mt_<predicate> at its timestamp only for
+# the mt_ predicates declared here.
 Decl mt_click_event(SessionId, NodeId, Timestamp) temporal.
 Decl mt_dom_node(SessionId, NodeId, Tag, Text, ParentId) temporal.
-Decl mt_net_request(SessionId, ReqId, Context, Url, ParentId, Duration, Ts) temporal.
-Decl mt_net_response(SessionId, ReqId, Status, Source, Duration, Ts) temporal.
 Decl page_stable() temporal.
-
-# DatalogMTL Rule: Network API has failed in recent temporal window
-Decl recently_failed_api(SessionId, Url).
-recently_failed_api(SessionId, Url) :-
-   mt_net_request(SessionId, ReqId, _, Url, _, _, _)@[TReq],
-   mt_net_response(SessionId, ReqId, Status, _, _, _)@[TRes],
-   Status >= 400,
-   :time:ge(TRes, TReq),
-   Diff = fn:time:sub(TRes, TReq),
-   Limit = fn:duration:parse('30s'),
-   :duration:le(Diff, Limit).
 
 # =============================================================================
 # PREDICTIVE ASSERTIONS (Contract Engine)
@@ -68,36 +66,72 @@ Decl my_distance(X1, Y1, X2, Y2, Dist)
   ]
   bound [ /number, /number, /number, /number, /number ].
 
-# Detect if elements are far apart
-Decl elements_far_apart(SessionId, NodeId1, NodeId2, Dist).
-elements_far_apart(SessionId, NodeId1, NodeId2, Dist) :-
-    dom_layout(SessionId, NodeId1, X1, Y1, _, _, _),
-    dom_layout(SessionId, NodeId2, X2, Y2, _, _, _),
-    my_distance(X1, Y1, X2, Y2, Dist),
-    Dist > 100.0.
+# my_distance is for queries that bind both points first. No schema rule joins
+# dom_layout with itself: a page's element pairs grow with the square of its
+# element count, passed the derived fact ceiling on a login page, and starved
+# every later fact insertion (internal/mangle/layout_scaling_test.go).
 
 # =============================================================================
 # CAUSAL REASONING RULES (PRD Section 3.4)
 # =============================================================================
 
-# Rule 1: API-Triggered Crash Detection
-# A console error is caused by a request if:
-#   1. The request failed (Status >= 400)
-#   2. The request finished BEFORE the error appeared
-#   3. The time difference is less than 100ms (temporal proximity)
-caused_by(SessionId, ConsoleErr, ReqId) :-
-    console_event(SessionId, "error", ConsoleErr, TError),
-    failed_request_at(SessionId, ReqId, _, _, TNet),
-    TNet < TError,
-    TDiff = fn:minus(TError, TNet),
-    TDiff < 100.
+# Time-window correlations join on a time bucket as well as the session, so
+# a join only meets events in the same or the previous bucket. Joining two
+# event streams on the session alone and filtering by time afterwards builds
+# their cross product first: under a failing poll that passed the created-fact
+# limit within minutes and aborted every evaluation.
 
-# Rule 2: Slow API Detection (>1 second duration)
+# Rule 1: API-Triggered Crash Detection
+# A console error is caused by the LAST request that failed (an HTTP error or
+# a network failure) before it, at most 2 s before. Under a failing poll
+# several failures fall inside the window; only the nearest one is the cause.
+Decl console_error_bucket(SessionId, Bucket, Message, Timestamp).
+console_error_bucket(SessionId, Bucket, Msg, T) :-
+    console_event(SessionId, "error", Msg, T),
+    Bucket = fn:div(T, 2000).
+
+Decl request_failure_bucket(SessionId, Bucket, RequestId, Timestamp).
+request_failure_bucket(SessionId, Bucket, ReqId, T) :-
+    failed_request_done(SessionId, ReqId, _, _, T),
+    Bucket = fn:div(T, 2000).
+request_failure_bucket(SessionId, Bucket, ReqId, T) :-
+    network_failure(SessionId, ReqId, _, _, T),
+    Bucket = fn:div(T, 2000).
+
+# The engine indexes the first two arguments, so helper predicates put their
+# join key (session plus bucket or timestamp) there.
+Decl caused_by_candidate(SessionId, ErrorTimestamp, ConsoleErr, RequestId, FailTimestamp).
+caused_by_candidate(SessionId, TError, ConsoleErr, ReqId, TFail) :-
+    console_error_bucket(SessionId, Bucket, ConsoleErr, TError),
+    request_failure_bucket(SessionId, Bucket, ReqId, TFail),
+    TFail <= TError,
+    TDiff = fn:minus(TError, TFail),
+    TDiff < 2000.
+
+caused_by_candidate(SessionId, TError, ConsoleErr, ReqId, TFail) :-
+    console_error_bucket(SessionId, Bucket, ConsoleErr, TError),
+    Previous = fn:minus(Bucket, 1),
+    request_failure_bucket(SessionId, Previous, ReqId, TFail),
+    TFail <= TError,
+    TDiff = fn:minus(TError, TFail),
+    TDiff < 2000.
+
+Decl caused_by_nearest(SessionId, ErrorTimestamp, ConsoleErr, FailTimestamp).
+caused_by_nearest(SessionId, TError, ConsoleErr, Nearest) :-
+    caused_by_candidate(SessionId, TError, ConsoleErr, _, TFail) |>
+    do fn:group_by(SessionId, TError, ConsoleErr),
+    let Nearest = fn:max(TFail).
+
+caused_by(SessionId, ConsoleErr, ReqId) :-
+    caused_by_nearest(SessionId, TError, ConsoleErr, TFail),
+    caused_by_candidate(SessionId, TError, ConsoleErr, ReqId, TFail).
+
+# Rule 2: Slow API Detection (>1 second from request to response headers)
 # Flags API calls exceeding performance SLA
 slow_api(SessionId, ReqId, Url, Duration) :-
-    net_request(SessionId, ReqId, _, Url, _, _),
     net_response(SessionId, ReqId, _, _, Duration),
-    Duration > 1000.
+    Duration > 1000,
+    net_request(SessionId, ReqId, _, Url, _, _).
 
 # Rule 3: Cascading Failure Detection
 # A child request fails because its parent (initiator) also failed
@@ -119,16 +153,48 @@ race_condition_detected(SessionId) :-
     TimeClick < TimeReady.
 
 # Rule 5: Failed Request Summary
-# Convenience predicate for listing all failed requests
+# Every 5xx, and every 4xx except a page asset's.
+asset_resource_type("Image").
+asset_resource_type("Font").
+asset_resource_type("Stylesheet").
+asset_resource_type("Media").
+asset_resource_type("Manifest").
+asset_resource_type("TextTrack").
+asset_resource_type("Other").
+
+asset_http_error(SessionId, ReqId) :-
+    net_http_error(SessionId, ReqId, _, _, Type, _),
+    asset_resource_type(Type).
+
+# Responses first: the status filter leaves only failures to join.
 failed_request(SessionId, ReqId, Url, Status) :-
-    net_request(SessionId, ReqId, _, Url, _, _),
     net_response(SessionId, ReqId, Status, _, _),
-    Status >= 400.
+    Status >= 500,
+    net_request(SessionId, ReqId, _, Url, _, _).
+
+failed_request(SessionId, ReqId, Url, Status) :-
+    net_response(SessionId, ReqId, Status, _, _),
+    Status >= 400,
+    Status < 500,
+    net_request(SessionId, ReqId, _, Url, _, _),
+    !asset_http_error(SessionId, ReqId).
 
 failed_request_at(SessionId, ReqId, Url, Status, ReqTs) :-
     net_request(SessionId, ReqId, _, Url, _, ReqTs),
-    net_response(SessionId, ReqId, Status, _, _),
-    Status >= 400.
+    failed_request(SessionId, ReqId, Url, Status).
+
+failed_request_done(SessionId, ReqId, Url, Status, DoneTs) :-
+    net_http_error(SessionId, ReqId, Url, Status, _, DoneTs),
+    Status >= 500.
+
+failed_request_done(SessionId, ReqId, Url, Status, DoneTs) :-
+    net_http_error(SessionId, ReqId, Url, Status, Type, DoneTs),
+    Status < 500,
+    !asset_resource_type(Type).
+
+network_failure(SessionId, ReqId, Url, ErrorText, T) :-
+    net_loading_failed(SessionId, ReqId, ErrorText, "false", T),
+    net_request(SessionId, ReqId, _, Url, _, _).
 
 # Rule 6: Full Error Chain
 # Links console errors to their causal network requests with full context
@@ -144,14 +210,56 @@ error_chain(SessionId, ConsoleErr, ReqId, Url, Status) :-
 # which appear before console errors and provide better UX correlation.
 
 # Rule 7: Toast Appeared After API Failure
-# Correlates error toasts with failed API requests within 5 seconds
-# This detects when the UI shows an error message due to a backend failure
+# Correlates an error toast with the app request that failed nearest to it,
+# at most 5 s earlier. Toast times come from the page clock and response
+# times from the CDP event, so the toast may read up to 500 ms before the
+# response; nearness is the squared difference.
+Decl error_toast_bucket(SessionId, Bucket, Text, Timestamp).
+error_toast_bucket(SessionId, Bucket, Text, T) :-
+    error_toast(SessionId, Text, _, T),
+    Bucket = fn:div(T, 5000).
+
+Decl failed_request_bucket(SessionId, Bucket, RequestId, Url, Status, Timestamp).
+failed_request_bucket(SessionId, Bucket, ReqId, Url, Status, T) :-
+    failed_request_done(SessionId, ReqId, Url, Status, T),
+    Bucket = fn:div(T, 5000).
+
+Decl toast_failure_candidate(SessionId, ToastTimestamp, Text, RequestId, Url, Status, TimeDelta, Distance).
+toast_failure_candidate(SessionId, TToast, ToastText, ReqId, Url, Status, TimeDelta, Distance) :-
+    error_toast_bucket(SessionId, Bucket, ToastText, TToast),
+    failed_request_bucket(SessionId, Bucket, ReqId, Url, Status, TFail),
+    TimeDelta = fn:minus(TToast, TFail),
+    TimeDelta > -500,
+    TimeDelta < 5000,
+    Distance = fn:mult(TimeDelta, TimeDelta).
+
+toast_failure_candidate(SessionId, TToast, ToastText, ReqId, Url, Status, TimeDelta, Distance) :-
+    error_toast_bucket(SessionId, Bucket, ToastText, TToast),
+    Previous = fn:minus(Bucket, 1),
+    failed_request_bucket(SessionId, Previous, ReqId, Url, Status, TFail),
+    TimeDelta = fn:minus(TToast, TFail),
+    TimeDelta > -500,
+    TimeDelta < 5000,
+    Distance = fn:mult(TimeDelta, TimeDelta).
+
+toast_failure_candidate(SessionId, TToast, ToastText, ReqId, Url, Status, TimeDelta, Distance) :-
+    error_toast_bucket(SessionId, Bucket, ToastText, TToast),
+    Next = fn:plus(Bucket, 1),
+    failed_request_bucket(SessionId, Next, ReqId, Url, Status, TFail),
+    TimeDelta = fn:minus(TToast, TFail),
+    TimeDelta > -500,
+    TimeDelta < 5000,
+    Distance = fn:mult(TimeDelta, TimeDelta).
+
+Decl toast_failure_nearest(SessionId, ToastTimestamp, Text, Distance).
+toast_failure_nearest(SessionId, TToast, ToastText, Nearest) :-
+    toast_failure_candidate(SessionId, TToast, ToastText, _, _, _, _, Distance) |>
+    do fn:group_by(SessionId, TToast, ToastText),
+    let Nearest = fn:min(Distance).
+
 toast_after_api_failure(SessionId, ToastText, ReqId, Url, Status, TimeDelta) :-
-    error_toast(SessionId, ToastText, _, TToast),
-    failed_request_at(SessionId, ReqId, Url, Status, TReq),
-    TToast > TReq,
-    TimeDelta = fn:minus(TToast, TReq),
-    TimeDelta < 5000.
+    toast_failure_nearest(SessionId, TToast, ToastText, Nearest),
+    toast_failure_candidate(SessionId, TToast, ToastText, ReqId, Url, Status, TimeDelta, Nearest).
 
 # Rule 8: User Visible Errors (unified view)
 # Aggregates all user-visible errors from different sources
@@ -162,11 +270,17 @@ user_visible_error(SessionId, "console", Msg, Ts) :-
     console_event(SessionId, "error", Msg, Ts).
 
 # Rule 9: Repeated Toast Errors
-# Detects when the same error toast appears multiple times (systemic issue)
+# The same error toast more than once (a systemic issue). Counted, not
+# self-joined: a toast repeated k times would otherwise build k*k pairs.
+Decl error_toast_count(SessionId, Message, Count).
+error_toast_count(SessionId, Msg, Count) :-
+    error_toast(SessionId, Msg, _, _) |>
+    do fn:group_by(SessionId, Msg),
+    let Count = fn:count().
+
 repeated_toast_error(SessionId, Msg) :-
-    error_toast(SessionId, Msg, _, T1),
-    error_toast(SessionId, Msg, _, T2),
-    T1 != T2.
+    error_toast_count(SessionId, Msg, Count),
+    Count > 1.
 
 # Rule 10: Toast Error Chain
 # Full chain: Error toast -> Failed API -> URL and status

@@ -87,6 +87,12 @@ type BrowserConfig struct {
 	IdleTabTimeout string `yaml:"idle_tab_timeout"`
 	// RepoTrace controls bounded repo/code tracing from current browser context.
 	RepoTrace RepoTraceConfig `yaml:"repo_trace"`
+	// DialogPolicy answers a JavaScript alert/confirm/prompt nobody armed a
+	// response for: "dismiss" (default) or "accept". A dialog is never left
+	// open, because an open dialog blocks the renderer and every later call.
+	DialogPolicy string `yaml:"dialog_policy"`
+	// DownloadDir receives files a page downloads (default <data root>/downloads).
+	DownloadDir string `yaml:"download_dir"`
 }
 
 // RepoTraceConfig configures on-demand repo/code tracing without a prebuilt index.
@@ -138,12 +144,22 @@ type MCPConfig struct {
 	// observe/act/reason/audit/mangle, spec delivery/conformance, and tests.
 	// When false, all individual tools are also registered (48 total).
 	ProgressiveOnly *bool `yaml:"progressive_only"`
+	// ToolTimeout bounds one tool call (e.g. "120s"). A call that exceeds it
+	// returns a structured timeout instead of holding the client for its own
+	// much longer transport timeout.
+	ToolTimeout string `yaml:"tool_timeout"`
 }
 
 // MangleConfig controls the embedded deductive engine.
 type MangleConfig struct {
-	Enable            bool   `yaml:"enable"`
-	SchemaPath        string `yaml:"schema_path"`
+	Enable bool `yaml:"enable"`
+	// SchemaPath names PROJECT modules - a .mg file, a directory of modules, or
+	// a manifest of "# @include" directives - loaded on top of the built-in
+	// schema compiled into the binary. A project module may add rules to a
+	// built-in predicate but may not redeclare one. Empty means built-in only.
+	SchemaPath string `yaml:"schema_path"`
+	// DisableBuiltin drops the built-in schema, leaving SchemaPath as the whole
+	// program. Browser capture then emits facts no rule or Decl describes.
 	DisableBuiltin    bool   `yaml:"disable_builtin_rules"`
 	FactBufferLimit   int    `yaml:"fact_buffer_limit"`
 	MaxRuleBytes      int    `yaml:"max_rule_bytes"`
@@ -212,7 +228,7 @@ func DefaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
 			Name:    "browsernerd-mcp",
-			Version: "1.1.0",
+			Version: "1.2.0",
 			LogFile: filepath.Join(dataRoot, "browsernerd-mcp.log"),
 		},
 		Browser: BrowserConfig{
@@ -249,8 +265,7 @@ func DefaultConfig() Config {
 		},
 		Mangle: MangleConfig{
 			Enable:            true,
-			SchemaPath:        "schemas/browser.mg",
-			FactBufferLimit:   2048,
+			FactBufferLimit:   16384,
 			MaxRuleBytes:      64 << 10,
 			MaxQueryBytes:     32 << 10,
 			MaxRuleClauses:    16,
@@ -364,16 +379,12 @@ func LoadWithWorkspace(explicitConfig string, opts WorkspaceOptions) (Config, st
 		}
 
 		if wsDir != "" {
-			// The built-in default schema path ("schemas/browser.mg") is relative to
-			// the server's own directory, not to a workspace root. InitWorkspace
-			// provisions the schema inside .browsernerd/, so anchor the default there
-			// before any layer is applied -- otherwise it resolves to
-			// <wsDir>/schemas/browser.mg, which no workspace ever creates, and the
-			// mangle engine fails to initialize. A schema_path set by either layer
-			// still overrides this.
-			wsSchema := filepath.Join(wsDir, WorkspaceDirName, "schemas", "browser.mg")
-			if _, statErr := os.Stat(wsSchema); statErr == nil {
-				cfg.Mangle.SchemaPath = wsSchema
+			// The built-in schema is compiled into the binary. A workspace adds
+			// project modules by dropping .mg files into .browsernerd/schemas/,
+			// which InitWorkspace creates; they load on top of the built-in
+			// modules. A schema_path set by either layer overrides this.
+			if wsSchemas := filepath.Join(wsDir, WorkspaceDirName, "schemas"); dirHasSchemaModules(wsSchemas) {
+				cfg.Mangle.SchemaPath = wsSchemas
 			}
 
 			wsConfigPath := filepath.Join(wsDir, WorkspaceDirName, WorkspaceConfigFile)
@@ -451,8 +462,12 @@ func InitWorkspace(root string) error {
 #     - my-app-frontend
 #   log_window: "30s"
 
+# The built-in Mangle schema is compiled into the server. Project modules
+# (.mg files in .browsernerd/schemas/) load on top of it automatically; point
+# schema_path elsewhere to load a different project module set instead.
 # mangle:
-#   schema_path: ".browsernerd/schemas/project.mg"
+#   schema_path: ".browsernerd/schemas"
+#   fact_buffer_limit: 16384
 #
 # specs:
 #   enabled: true
@@ -741,6 +756,20 @@ func configBaseDir(wsDir string) (string, error) {
 	return filepath.Abs(cwd)
 }
 
+// dirHasSchemaModules reports whether dir directly holds at least one .mg file.
+func dirHasSchemaModules(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.EqualFold(filepath.Ext(entry.Name()), ".mg") {
+			return true
+		}
+	}
+	return false
+}
+
 func defaultDataRoot() string {
 	if cacheDir, err := os.UserCacheDir(); err == nil && cacheDir != "" {
 		return filepath.Join(cacheDir, "BrowserNERD")
@@ -816,6 +845,34 @@ func (b BrowserConfig) GetMaxBrowsers() int {
 		return 4
 	}
 	return b.MaxBrowsers
+}
+
+// GetDialogPolicy returns "accept" or "dismiss" (the default).
+func (b BrowserConfig) GetDialogPolicy() string {
+	if strings.EqualFold(strings.TrimSpace(b.DialogPolicy), "accept") {
+		return "accept"
+	}
+	return "dismiss"
+}
+
+// GetDownloadDir returns the directory page downloads land in.
+func (b BrowserConfig) GetDownloadDir() string {
+	if strings.TrimSpace(b.DownloadDir) != "" {
+		return b.DownloadDir
+	}
+	return filepath.Join(defaultDataRoot(), "downloads")
+}
+
+// GetToolTimeout returns the per-call deadline (default 120s, floor 5s).
+func (m MCPConfig) GetToolTimeout() time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(m.ToolTimeout))
+	if err != nil || d <= 0 {
+		return 120 * time.Second
+	}
+	if d < 5*time.Second {
+		return 5 * time.Second
+	}
+	return d
 }
 
 func (b BrowserConfig) GetIdleTabTimeout() time.Duration {

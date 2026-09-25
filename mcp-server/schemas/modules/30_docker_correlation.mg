@@ -71,9 +71,9 @@ python_traceback(Container, Msg, Ts) :-
 # Links frontend API failures to backend exceptions using shared correlation keys.
 Decl failed_api_request(SessionId, ReqId, Url, Status, ReqTs).
 failed_api_request(SessionId, ReqId, Url, Status, ReqTs) :-
-    net_request(SessionId, ReqId, _, Url, _, ReqTs),
     net_response(SessionId, ReqId, Status, _, _),
-    Status >= 400.
+    Status >= 400,
+    net_request(SessionId, ReqId, _, Url, _, ReqTs).
 
 Decl failed_api_with_key(SessionId, ReqId, Url, Status, ReqTs, KeyType, KeyValue).
 failed_api_with_key(SessionId, ReqId, Url, Status, ReqTs, KeyType, KeyValue) :-
@@ -147,11 +147,16 @@ slow_backend_correlation(SessionId, ReqId, Url, Duration, BackendMsg) :-
 
 # Rule: Repeated errors (same message, multiple occurrences)
 # Indicates systemic issues vs one-off failures
+Decl backend_error_count(Message, Count).
+backend_error_count(Msg, Count) :-
+    backend_error(Msg, _) |>
+    do fn:group_by(Msg),
+    let Count = fn:count().
+
 Decl repeated_backend_error(Message).
 repeated_backend_error(Msg) :-
-    backend_error(Msg, T1),
-    backend_error(Msg, T2),
-    T1 != T2.
+    backend_error_count(Msg, Count),
+    Count > 1.
 
 # Rule: Auth-related errors (common pattern)
 Decl auth_error_detected(Source, Message, Timestamp).

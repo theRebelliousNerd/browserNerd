@@ -247,8 +247,9 @@ func TestBrowserActAttachesConfiguredSpecContext(t *testing.T) {
 		specsCfg: cfg,
 	}
 	res, err := tool.Execute(context.Background(), map[string]interface{}{
-		"operations": []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 0}},
-		"spec_terms": []interface{}{"checkout", "payment"},
+		"operations":    []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 0}},
+		"include_specs": true,
+		"spec_terms":    []interface{}{"checkout", "payment"},
 	})
 	if err != nil {
 		t.Fatal(err)

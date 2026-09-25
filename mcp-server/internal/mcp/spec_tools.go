@@ -234,41 +234,26 @@ type GetSpecsTool struct {
 func (t *GetSpecsTool) Name() string { return "get-specs" }
 
 func (t *GetSpecsTool) Description() string {
-	return `Deliver frontend spec invariants relevant to what you're working on.
-
-TOKEN COST: Low. Returns only the invariants that govern your target, as
-compact facts - not whole documents.
-
-FILTER BY (any combination):
-- file + from/to (or line): invariants whose code line-range overlaps yours.
-  This is "I'm editing these lines, what governs them?"
-- component: invariants on a spec bound to that React component.
-- route: invariants on a spec bound to that route/path.
-- selector: invariants on a spec bound to that selector.
-
-With no filter, returns a summary of all specs.
-
-Specs are Markdown docs with YAML frontmatter + inline
-<!-- browsernerd:invariant ... --> tags, loaded from "dir" (default
-.browsernerd/specs).
-
-Returns: {dir, specs_loaded, invariants[]} or {dir, specs[]} for the summary.`
+	return `The spec invariants that govern what you are working on, as compact facts, not whole
+documents. Filter by file + from/to (or line) for "what governs these lines", or by
+component, route or selector; no filter summarizes every spec. Specs are Markdown with
+<!-- browsernerd:invariant ... --> tags under dir (default .browsernerd/specs).`
 }
 
 func (t *GetSpecsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"dir":        map[string]interface{}{"type": "string", "description": "Specs directory (default .browsernerd/specs)."},
-			"file":       map[string]interface{}{"type": "string", "description": "Source file you're working in."},
-			"from":       map[string]interface{}{"type": "integer", "description": "Start line of the region you're working on."},
-			"to":         map[string]interface{}{"type": "integer", "description": "End line of the region you're working on."},
-			"line":       map[string]interface{}{"type": "integer", "description": "A single line, shorthand for from==to."},
-			"component":  map[string]interface{}{"type": "string", "description": "React component name to match a spec binding."},
-			"route":      map[string]interface{}{"type": "string", "description": "Route/path to match a spec binding."},
-			"selector":   map[string]interface{}{"type": "string", "description": "Selector to match a spec binding."},
-			"session_id": map[string]interface{}{"type": "string", "description": "Resolve bindings against this live session (component->fiber->DOM, route, selector)."},
-			"terms":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Additional feature, subsystem, or requirement terms for generic corpus matching."},
+			"dir":        map[string]interface{}{"type": "string", "description": "Default .browsernerd/specs"},
+			"file":       map[string]interface{}{"type": "string", "description": "Source file"},
+			"from":       map[string]interface{}{"type": "integer", "description": "From line"},
+			"to":         map[string]interface{}{"type": "integer", "description": "To line"},
+			"line":       map[string]interface{}{"type": "integer", "description": "One line"},
+			"component":  map[string]interface{}{"type": "string", "description": "React component"},
+			"route":      map[string]interface{}{"type": "string", "description": "Route"},
+			"selector":   map[string]interface{}{"type": "string", "description": "CSS selector"},
+			"session_id": map[string]interface{}{"type": "string", "description": "Resolve bindings in this session"},
+			"terms":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Extra terms to match docs"},
 		},
 	}
 }
@@ -359,33 +344,25 @@ type CheckSpecsTool struct {
 func (t *CheckSpecsTool) Name() string { return "check-specs" }
 
 func (t *CheckSpecsTool) Description() string {
-	return `Check frontend spec invariants against the current browser state.
-
-Evaluates each invariant's Mangle query (scored present/absent, like run-test)
-and reports violations. On any violation, attaches a compact causal diagnosis
-(error_chain, failed_request, slow_api, ...) so a broken spec returns a root
-cause, not a trace dump.
-
-Scope with the same filters as get-specs (file/from/to, component, route,
-selector), or omit to check every loaded invariant.
-
-Returns: {dir, checked, passed, violations[], diagnosis?}.`
+	return `Check spec invariants against the live page: each invariant's Mangle query is scored
+present/absent, and a violation comes with its causal diagnosis (failed request, error
+chain, slow API). Same filters as get-specs; none checks every invariant.`
 }
 
 func (t *CheckSpecsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"dir":                 map[string]interface{}{"type": "string", "description": "Specs directory (default .browsernerd/specs)."},
-			"file":                map[string]interface{}{"type": "string", "description": "Scope to invariants governing this file."},
-			"from":                map[string]interface{}{"type": "integer", "description": "Start line of the region to scope to."},
-			"to":                  map[string]interface{}{"type": "integer", "description": "End line of the region to scope to."},
-			"line":                map[string]interface{}{"type": "integer", "description": "Single line, shorthand for from==to."},
-			"component":           map[string]interface{}{"type": "string", "description": "Scope to specs bound to this component."},
-			"route":               map[string]interface{}{"type": "string", "description": "Scope to specs bound to this route."},
-			"selector":            map[string]interface{}{"type": "string", "description": "Scope to specs bound to this selector."},
-			"session_id":          map[string]interface{}{"type": "string", "description": "Resolve each violated spec's bindings against this live session."},
-			"diagnose_on_failure": map[string]interface{}{"type": "boolean", "description": "Attach causal facts on violation (default true)."},
+			"dir":                 map[string]interface{}{"type": "string", "description": "Default .browsernerd/specs"},
+			"file":                map[string]interface{}{"type": "string", "description": "Source file"},
+			"from":                map[string]interface{}{"type": "integer", "description": "From line"},
+			"to":                  map[string]interface{}{"type": "integer", "description": "To line"},
+			"line":                map[string]interface{}{"type": "integer", "description": "One line"},
+			"component":           map[string]interface{}{"type": "string", "description": "React component"},
+			"route":               map[string]interface{}{"type": "string", "description": "Route"},
+			"selector":            map[string]interface{}{"type": "string", "description": "CSS selector"},
+			"session_id":          map[string]interface{}{"type": "string", "description": "Resolve bindings in this session"},
+			"diagnose_on_failure": map[string]interface{}{"type": "boolean", "description": "Diagnose violations (default true)"},
 		},
 	}
 }
@@ -431,7 +408,7 @@ func (t *CheckSpecsTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	if len(violations) > 0 && getBoolArg(args, "diagnose_on_failure", true) {
-		if diag := causalDiagnosis(ctx, t.engine); len(diag) > 0 {
+		if diag := causalDiagnosis(ctx, t.engine, sessionID, 0); len(diag) > 0 {
 			result["diagnosis"] = diag
 		}
 	}

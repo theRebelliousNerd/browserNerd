@@ -102,6 +102,79 @@ func (p *PathPolicy) ResolveForWrite(requested, defaultRoot, defaultName string)
 	return "", fmt.Errorf("output path %q is outside security.writable_roots", target)
 }
 
+// MaxUploadBytes bounds one file handed to a page's file input.
+const MaxUploadBytes int64 = 50 << 20
+
+// uploadSecretMarkers refuse a file whose name says it holds a credential.
+var uploadSecretMarkers = []string{"secret", "credential", "password", "token", "private_key", "id_rsa"}
+
+// uploadSecretExtensions refuse key and certificate stores outright.
+var uploadSecretExtensions = map[string]bool{".pem": true, ".key": true, ".p12": true, ".pfx": true, ".kdbx": true}
+
+// ResolveForUpload resolves a file a page may receive through its file input.
+//
+// Uploading hands a local file to whatever page is open, so the file must sit
+// inside the workspace root (symlinks resolved), no path component under that
+// root may start with a dot (.env, .git, .credentials, .mcp.json), its name must
+// not mark it as a credential, and it must be a regular file no larger than
+// MaxUploadBytes. A relative path resolves against the workspace root.
+func (p *PathPolicy) ResolveForUpload(requested string) (string, error) {
+	if p == nil {
+		return "", errors.New("upload path policy is not configured")
+	}
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return "", errors.New("upload path is empty")
+	}
+	if !filepath.IsAbs(requested) {
+		requested = filepath.Join(p.baseDir, requested)
+	}
+	target, err := filepath.Abs(requested)
+	if err != nil {
+		return "", fmt.Errorf("resolve upload path: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(target))
+	if err != nil {
+		return "", fmt.Errorf("upload file %q cannot be read: %w", target, err)
+	}
+	base, err := filepath.EvalSymlinks(p.baseDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	if !pathWithin(base, resolved) {
+		return "", fmt.Errorf("upload file %q is outside the workspace root %q", resolved, base)
+	}
+	rel, err := filepath.Rel(base, resolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve upload path under workspace: %w", err)
+	}
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		if strings.HasPrefix(part, ".") {
+			return "", fmt.Errorf("upload file %q is refused: %q is a dot path", resolved, part)
+		}
+	}
+	name := strings.ToLower(filepath.Base(resolved))
+	if uploadSecretExtensions[filepath.Ext(name)] {
+		return "", fmt.Errorf("upload file %q is refused: key and certificate files are never uploaded", resolved)
+	}
+	for _, marker := range uploadSecretMarkers {
+		if strings.Contains(name, marker) {
+			return "", fmt.Errorf("upload file %q is refused: its name marks it as a credential", resolved)
+		}
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect upload file %q: %w", resolved, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("upload file %q is not a regular file", resolved)
+	}
+	if info.Size() > MaxUploadBytes {
+		return "", fmt.Errorf("upload file %q is %d bytes, over the %d-byte limit", resolved, info.Size(), MaxUploadBytes)
+	}
+	return resolved, nil
+}
+
 // EnsurePrivateDir creates a directory that is accessible only to the current
 // user on permission-aware platforms.
 func EnsurePrivateDir(path string) error {

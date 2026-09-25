@@ -2,12 +2,15 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"browsernerd-mcp-server/internal/mangle"
+
+	"gopkg.in/yaml.v3"
 )
 
 func addNetFacts(t *testing.T, engine *mangle.Engine, reqID, url string, status, duration int64) {
@@ -234,9 +237,9 @@ func TestBrowserTestToolMalformedFixtureReturnsStructuredError(t *testing.T) {
 	}
 }
 
-func TestResolveTestActionsUsesEnvironmentWithoutMutatingFixture(t *testing.T) {
+func TestResolveTestOperationsUsesEnvironmentWithoutMutatingFixture(t *testing.T) {
 	t.Setenv("BROWSERNERD_TEST_PASSWORD", "runtime-secret")
-	actions := []map[string]interface{}{
+	operations := []map[string]interface{}{
 		{
 			"type":      "interact",
 			"action":    "type",
@@ -244,28 +247,125 @@ func TestResolveTestActionsUsesEnvironmentWithoutMutatingFixture(t *testing.T) {
 			"value_env": "BROWSERNERD_TEST_PASSWORD",
 		},
 	}
-	resolved, err := resolveTestActions(actions)
+	resolved, secrets, err := resolveTestOperations(operations)
 	if err != nil {
 		t.Fatalf("resolve failed: %v", err)
 	}
 	if resolved[0]["value"] != "runtime-secret" {
 		t.Fatalf("expected runtime value, got %+v", resolved)
 	}
+	if !secrets["runtime-secret"] {
+		t.Fatalf("resolved value was not recorded as a secret to scrub")
+	}
 	if resolved[0]["value_env"] != nil {
 		t.Fatalf("resolved operation should not retain value_env: %+v", resolved)
 	}
-	if actions[0]["value_env"] != "BROWSERNERD_TEST_PASSWORD" || actions[0]["value"] != nil {
-		t.Fatalf("portable fixture was mutated: %+v", actions)
+	if operations[0]["value_env"] != "BROWSERNERD_TEST_PASSWORD" || operations[0]["value"] != nil {
+		t.Fatalf("portable fixture was mutated: %+v", operations)
 	}
 }
 
-func TestResolveTestActionsRequiresDeclaredEnvironment(t *testing.T) {
-	_, err := resolveTestActions([]map[string]interface{}{{
-		"type":      "interact",
-		"value_env": "BROWSERNERD_MISSING_TEST_SECRET",
-	}})
-	if err == nil || !strings.Contains(err.Error(), "requires environment variable") {
-		t.Fatalf("expected explicit missing environment error, got %v", err)
+func TestResolveTestOperationsRefusesUnsetAndEmptyEnvironment(t *testing.T) {
+	t.Setenv("BROWSERNERD_EMPTY_TEST_SECRET", "   ")
+	for _, name := range []string{"BROWSERNERD_MISSING_TEST_SECRET", "BROWSERNERD_EMPTY_TEST_SECRET"} {
+		_, _, err := resolveTestOperations([]map[string]interface{}{{
+			"type":   "fill",
+			"fields": []interface{}{map[string]interface{}{"label": "Password", "value_env": name}},
+		}})
+		if err == nil || !strings.Contains(err.Error(), "requires environment variable "+name) {
+			t.Fatalf("expected an error naming %s, got %v", name, err)
+		}
+	}
+}
+
+// A fixture whose value_env is empty must fail before its first step: typing
+// an empty password leaves the page on /login, which reads as a wrong password.
+func TestRunTestStopsBeforeAnyStepOnEmptyValueEnv(t *testing.T) {
+	t.Setenv("BROWSERNERD_EMPTY_TEST_SECRET", "")
+	engine := setupTestEngine(t)
+	res, err := (&BrowserTestTool{engine: engine}).Execute(context.Background(), map[string]interface{}{
+		"operation": "run",
+		"test": map[string]interface{}{
+			"name":       "login",
+			"session_id": "never-used",
+			"operations": []interface{}{
+				map[string]interface{}{"type": "fill", "fields": []interface{}{
+					map[string]interface{}{"label": "Password", "value_env": "BROWSERNERD_EMPTY_TEST_SECRET"},
+				}},
+			},
+			"assertions": []interface{}{map[string]interface{}{"name": "no errors", "query": "user_visible_error(S, _, _, _)", "expect": "absent"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]interface{})
+	if m["success"] != false || m["replay"] != nil {
+		t.Fatalf("an empty value_env must fail the run before replay: %+v", m)
+	}
+	msg := fmt.Sprint(m["error"])
+	if !strings.Contains(msg, "BROWSERNERD_EMPTY_TEST_SECRET") || !strings.Contains(msg, "nothing ran") {
+		t.Fatalf("error should name the variable and say nothing ran: %q", msg)
+	}
+}
+
+func TestParseTestSpecReadsOperationsAndActionsAsTheSameSteps(t *testing.T) {
+	assertion := []interface{}{map[string]interface{}{"name": "a", "query": "current_url(S, U)"}}
+	for _, key := range []string{"operations", "actions"} {
+		spec, err := parseTestSpec(map[string]interface{}{"test": map[string]interface{}{
+			"name":       "steps",
+			key:          []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 1}},
+			"assertions": assertion,
+		}})
+		if err != nil {
+			t.Fatalf("%s: %v", key, err)
+		}
+		if len(spec.Operations) != 1 || len(spec.Actions) != 0 {
+			t.Fatalf("%s: steps should land in Operations only: %+v", key, spec)
+		}
+	}
+	encoded, err := yaml.Marshal(TestSpec{Name: "x", Operations: []map[string]interface{}{{"type": "sleep"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), "operations:") || strings.Contains(string(encoded), "actions:") {
+		t.Fatalf("a written fixture should carry operations only:\n%s", encoded)
+	}
+}
+
+func TestParseTestSpecRefusesFixturesThatTestNothingOrMisspellKeys(t *testing.T) {
+	cases := map[string]map[string]interface{}{
+		"no operations and no assertions": {"name": "empty"},
+		"both step keys": {
+			"operations": []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 1}},
+			"actions":    []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 1}},
+		},
+		"steps":                     {"steps": []interface{}{map[string]interface{}{"type": "sleep"}}},
+		"misspelled assertion key":  {"assertions": []interface{}{map[string]interface{}{"query": "x(S)", "expected": "absent"}}},
+		"assertion without a query": {"assertions": []interface{}{map[string]interface{}{"name": "x"}}},
+		"bad expect":                {"assertions": []interface{}{map[string]interface{}{"query": "x(S)", "expect": "none"}}},
+	}
+	for name, fixture := range cases {
+		if _, err := parseTestSpec(map[string]interface{}{"test": fixture}); err == nil {
+			t.Fatalf("%s: expected the fixture to be refused", name)
+		}
+	}
+}
+
+func TestRunTestRefusesInvalidOperationsBeforeRunning(t *testing.T) {
+	res, err := (&RunTestTool{engine: setupTestEngine(t)}).Execute(context.Background(), map[string]interface{}{
+		"test": map[string]interface{}{
+			"session_id": "never-used",
+			"operations": []interface{}{map[string]interface{}{"type": "interact", "action": "click", "selector": "#save"}},
+			"assertions": []interface{}{map[string]interface{}{"query": "current_url(S, U)"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]interface{})
+	if m["success"] != false || m["replay"] != nil || !strings.Contains(fmt.Sprint(m["error"]), "selector") {
+		t.Fatalf("invalid fixture operations must be refused before replay: %+v", m)
 	}
 }
 
@@ -278,8 +378,11 @@ func TestExampleLoginFixtureParsesAndCompilesAssertions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse example fixture: %v", err)
 	}
-	if len(spec.Actions) != 3 || len(spec.Assertions) != 3 {
+	if len(spec.Operations) != 3 || len(spec.Assertions) != 3 {
 		t.Fatalf("unexpected fixture shape: %+v", spec)
+	}
+	if _, issues := validateTestOperations(spec.Operations); len(issues) > 0 {
+		t.Fatalf("example fixture operations are invalid: %+v", issues)
 	}
 	engine := setupTestEngine(t)
 	for _, assertion := range spec.Assertions {

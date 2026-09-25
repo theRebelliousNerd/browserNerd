@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,15 +23,19 @@ type options struct {
 	configPath string
 	url        string
 	timeout    time.Duration
+	verbose    bool
+	workspace  string
 }
 
 func main() {
 	var opts options
-	flag.StringVar(&opts.mode, "mode", "smoke", "verification mode: list or smoke")
+	flag.StringVar(&opts.mode, "mode", "smoke", "verification mode: list, smoke, or probe (drive testdata/probe and report each call's token cost)")
 	flag.StringVar(&opts.serverPath, "server", defaultServerPath(), "BrowserNERD server binary")
 	flag.StringVar(&opts.configPath, "config", "config.yaml", "BrowserNERD configuration")
 	flag.StringVar(&opts.url, "url", "https://example.com/", "URL for smoke mode")
 	flag.DurationVar(&opts.timeout, "timeout", 90*time.Second, "overall timeout")
+	flag.BoolVar(&opts.verbose, "verbose", false, "probe mode: print every payload to stderr")
+	flag.StringVar(&opts.workspace, "workspace-dir", "", "run the server against this workspace instead of -config")
 	flag.Parse()
 
 	if err := run(opts); err != nil {
@@ -54,11 +59,20 @@ func run(opts options) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
-	client, err := mcpclient.NewStdioMCPClient(serverPath, os.Environ(), "--config", configPath)
+	serverArgs := []string{"--config", configPath}
+	if opts.workspace != "" {
+		serverArgs = []string{"--workspace-dir", opts.workspace}
+	}
+	client, err := mcpclient.NewStdioMCPClient(serverPath, os.Environ(), serverArgs...)
 	if err != nil {
 		return fmt.Errorf("create MCP client: %w", err)
 	}
 	defer client.Close()
+	// Chrome inherits the server's stderr. Once an unread pipe fills, Chrome
+	// blocks on its next write and every CDP call hangs, so drain it always.
+	if stderr, ok := mcpclient.GetStderr(client); ok {
+		go func() { _, _ = io.Copy(io.Discard, stderr) }()
+	}
 	if err := client.Start(ctx); err != nil {
 		return fmt.Errorf("start MCP client: %w", err)
 	}
@@ -77,8 +91,10 @@ func run(opts options) error {
 		return listTools(ctx, client)
 	case "smoke":
 		return smoke(ctx, client, opts.url)
+	case "probe":
+		return probe(ctx, client, opts.verbose)
 	default:
-		return fmt.Errorf("mode must be list or smoke")
+		return fmt.Errorf("mode must be list, smoke or probe")
 	}
 }
 
@@ -87,11 +103,17 @@ func listTools(ctx context.Context, client *mcpclient.Client) error {
 	if err != nil {
 		return fmt.Errorf("list tools: %w", err)
 	}
-	names := make([]string, 0, len(result.Tools))
+	// Each tool's definition is loaded into an agent's context; its cost is
+	// the JSON of name, description and input schema, over four.
+	tools := make([]map[string]interface{}, 0, len(result.Tools))
+	total := 0
 	for _, tool := range result.Tools {
-		names = append(names, tool.Name)
+		raw, _ := json.Marshal(tool)
+		tokens := len(raw) / 4
+		total += tokens
+		tools = append(tools, map[string]interface{}{"name": tool.Name, "tokens": tokens})
 	}
-	return writeJSON(map[string]interface{}{"tool_count": len(names), "tools": names})
+	return writeJSON(map[string]interface{}{"tool_count": len(tools), "tools": tools, "definition_tokens": total})
 }
 
 func smoke(ctx context.Context, client *mcpclient.Client, targetURL string) error {

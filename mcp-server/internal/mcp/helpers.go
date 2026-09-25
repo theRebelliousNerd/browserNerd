@@ -46,34 +46,27 @@ func findElementByRef(page *rod.Page, ref string) (*rod.Element, error) {
 	return findElementByRefWithRegistry(page, ref, nil)
 }
 
-func selectOption(element *rod.Element, value string) error {
-	result, err := element.Timeout(5*time.Second).Eval(`value => {
-		const option = Array.from(this.options || []).find(item => item.value === value);
-		if (!option) return false;
-		this.value = value;
-		this.dispatchEvent(new Event("input", { bubbles: true }));
-		this.dispatchEvent(new Event("change", { bubbles: true }));
-		return true;
-	}`, value)
-	if err != nil {
-		return err
-	}
-	if result.Value.Bool() {
-		return nil
-	}
-	return element.Timeout(5*time.Second).Select([]string{value}, true, "text")
-}
-
 // findElementByRefWithRegistry finds an element using multi-strategy search with fingerprint support.
 // Search order prioritizes stable identifiers:
-// 1. Prefixed refs (testid:X, aria:X, row:X, rowkey:X) - parsed and used directly
-// 2. data-testid attribute from fingerprint
-// 3. aria-label attribute from fingerprint
-// 4. ID attribute (from ref or fingerprint)
-// 5. name attribute (from ref or fingerprint)
-// 6. Original ref as CSS selector
+//  0. The element carrying ref when elementRefScript runs now, unless the fingerprint
+//     registered for that exact ref says the name has moved to a different element
+//  1. Prefixed refs (testid:X, aria:X, row:X, rowkey:X) - parsed and used directly
+//  2. data-testid attribute from fingerprint
+//  3. aria-label attribute from fingerprint
+//  4. ID attribute (from ref or fingerprint)
+//  5. name attribute (from ref or fingerprint)
+//  6. Original ref as CSS selector
 func findElementByRefWithRegistry(page *rod.Page, ref string, registry *browser.ElementRegistry) (*rod.Element, error) {
 	timeout := 2 * time.Second
+
+	var registered *browser.ElementFingerprint
+	if registry != nil {
+		registered = registry.Get(ref)
+	}
+	if element, ok := resolveGeneratedRef(page, ref, timeout); ok && refStillNamesFingerprint(element, registered) {
+		return element, nil
+	}
+
 	baseRef, duplicateIndex, hasDuplicateSuffix := splitDuplicateSuffix(ref)
 
 	// Strategy 1: Handle prefixed refs (testid:X, aria:X, row:X)
@@ -150,13 +143,9 @@ func findElementByRefWithRegistry(page *rod.Page, ref string, registry *browser.
 	}
 
 	// Strategy 2-5: Use fingerprint data if available from registry
-	var fp *browser.ElementFingerprint
-	if registry != nil {
-		fp = registry.Get(ref)
-		if fp == nil && baseRef != ref {
-			fp = registry.Get(baseRef)
-		}
-	}
+	// Only the fingerprint registered for this exact ref describes its element. The base
+	// ref's fingerprint belongs to the first duplicate, which is a different element.
+	fp := registered
 
 	if fp != nil {
 		// Try data-testid from fingerprint
@@ -711,17 +700,24 @@ func selectBestElementCandidate(elements []*rod.Element, fp *browser.ElementFing
 		return nil
 	}
 
-	if hasDuplicateSuffix && duplicateIndex >= 0 && duplicateIndex < len(elements) {
-		return elements[duplicateIndex]
-	}
-
-	if fp == nil || len(elements) == 1 {
+	// A duplicate suffix numbers an element among the candidates of the observation that
+	// named it, which is not the population this selector matched. Resolution only reaches
+	// a selector once elementRefScript has failed to find the ref, so the element it named
+	// is gone or changed: a fingerprint can still identify it, but without one a positional
+	// guess clicks whatever happens to sit at that index.
+	if fp == nil {
+		if hasDuplicateSuffix {
+			return nil
+		}
 		return elements[0]
 	}
 
-	best := elements[0]
+	var best *rod.Element
 	bestScore := -1.0
 	for _, element := range elements {
+		if !refStillNamesFingerprint(element, fp) {
+			continue
+		}
 		score := validateFingerprint(element, fp).Score
 		if score > bestScore {
 			best = element

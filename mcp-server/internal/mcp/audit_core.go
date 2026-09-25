@@ -87,22 +87,12 @@ type auditDiscoverSnapshot struct {
 func (t *BrowserAuditTool) Name() string { return "browser-audit" }
 
 func (t *BrowserAuditTool) Description() string {
-	return `Audit frontend-to-API contracts for the current browser session.
-
-Use when a page is failing and you need to trace the active route to failing API calls,
-backend correlation signals, and likely frontend source files under repo_root.
-
-Phases:
-  discover: Passive only. Builds a deterministic audit plan skeleton, hazard list, and evidence handles.
-  execute:  Executes the discovered plan, skipping gated/risky steps unless explicitly allowed.
-  report:   Runs the full audit, including repo matching and scoped contract synthesis.
-  resume:   Continue from prior handles with focused sections instead of dumping the full audit again.
-
-Views: summary (counts + page facts), compact (default, ranked findings + evidence),
-full (all gathered facts, repo matches, and trace sections).
-
-Results include evidence handles for progressive drill-down. Prefer browser-reason for
-general triage and browser-mangle for raw ad-hoc queries.`
+	return `Trace a failing page to the API calls it made and the frontend source files that made
+them (repo_root: the frontend repo). For "what broke" ask browser-reason first.
+  discover: passive plan, hazards, evidence handles.   execute: run the plan; gated steps
+  need allow_navigation / allow_mutating / allow_destructive / allow_risky.
+  report: full audit with repo matches.                resume: focused follow-up by handle.
+view: summary | compact (default, ranked findings) | full.`
 }
 
 func (t *BrowserAuditTool) InputSchema() map[string]interface{} {
@@ -111,24 +101,24 @@ func (t *BrowserAuditTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"session_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Target browser session to audit",
+				"description": "Session to audit",
 			},
 			"repo_root": map[string]interface{}{
 				"type":        "string",
-				"description": "Frontend repository root to scan for contract references",
+				"description": "Frontend repo root to scan",
 			},
 			"phase": map[string]interface{}{
 				"type":        "string",
-				"description": "Audit phase: discover plans safely, execute allowed plan steps, report executes the contract trace, resume narrows follow-up sections",
+				"description": "Default report",
 				"enum":        []string{"discover", "execute", "report", "resume"},
 			},
 			"audit_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Optional caller-provided audit label echoed back in responses",
+				"description": "Label echoed back",
 			},
 			"resume_handle": map[string]interface{}{
 				"type":        "string",
-				"description": "Preferred browser-audit evidence handle to prioritize when phase=resume",
+				"description": "resume: handle to lead with",
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
@@ -141,44 +131,44 @@ func (t *BrowserAuditTool) InputSchema() map[string]interface{} {
 			},
 			"expand_handles": map[string]interface{}{
 				"type":        "array",
-				"description": "Only expand matching evidence handles; especially useful with phase=resume",
+				"description": "Only these evidence handles",
 				"items":       map[string]interface{}{"type": "string"},
 			},
 			"time_window_ms": map[string]interface{}{
 				"type":        "integer",
-				"description": "Only include evidence newer than now-window (default 300000; set 0 for all history)",
+				"description": "Evidence window ms (default 300000; 0 = all)",
 			},
 			"since_navigation": map[string]interface{}{
 				"type":        "boolean",
-				"description": "When true, scope request/error evidence to events after the latest navigation_event",
+				"description": "Only evidence since the latest navigation",
 			},
 			"include_repo_matches": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Scan repo_root for likely frontend contract references (default true)",
+				"description": "Scan repo_root (default true)",
 			},
 			"include_live_observe": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Run a live composite browser-observe pass before the report phase refreshes evidence (default true for report, false otherwise)",
+				"description": "Observe the page first (default true for report)",
 			},
 			"allow_risky": map[string]interface{}{
 				"type":        "boolean",
-				"description": "When phase=execute, allow steps marked risky by the plan (default false)",
+				"description": "execute: run risky steps",
 			},
 			"allow_navigation": map[string]interface{}{
 				"type":        "boolean",
-				"description": "When phase=execute, allow gated non-mutating navigation steps like navigate_page_route (default false)",
+				"description": "execute: run navigation steps",
 			},
 			"allow_mutating": map[string]interface{}{
 				"type":        "boolean",
-				"description": "When phase=execute, allow mutating write-like actions such as click/type/submit or save-like steps (default false)",
+				"description": "execute: run clicks, typing, submits",
 			},
 			"allow_destructive": map[string]interface{}{
 				"type":        "boolean",
-				"description": "When phase=execute, allow destructive delete/remove/purge actions (default false)",
+				"description": "execute: run delete/remove/purge",
 			},
 			"max_repo_matches": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum repo match rows to return (default 12)",
+				"description": "Repo match rows (default 12)",
 			},
 		},
 		"required": []string{"session_id", "repo_root"},

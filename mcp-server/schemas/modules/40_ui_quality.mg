@@ -124,24 +124,49 @@ repeated_action_on_element(SessionId, Ref, Count) :-
     let Count = fn:count().
 
 # --- Derived: Click followed by type (common form pattern) ---
+# Clicks join later events on a 5 s bucket, never on the whole session.
+Decl user_click_bucket(SessionId, Bucket, Ref, Timestamp).
+user_click_bucket(SessionId, Bucket, Ref, T) :-
+    user_click(SessionId, Ref, T),
+    Bucket = fn:div(T, 5000).
+
+Decl user_type_bucket(SessionId, Bucket, Ref, Timestamp).
+user_type_bucket(SessionId, Bucket, Ref, T) :-
+    user_type(SessionId, Ref, _, T),
+    Bucket = fn:div(T, 5000).
+
 Decl click_then_type(SessionId, ClickRef, TypeRef, TimeDelta).
 click_then_type(SessionId, ClickRef, TypeRef, Delta) :-
-    user_click(SessionId, ClickRef, TClick),
-    user_type(SessionId, TypeRef, _, TType),
+    user_click_bucket(SessionId, Bucket, ClickRef, TClick),
+    user_type_bucket(SessionId, Bucket, TypeRef, TType),
     TType > TClick,
     Delta = fn:minus(TType, TClick),
     Delta < 5000.
 
-# --- Derived: Navigation after button click ---
-Decl click_triggered_navigation(SessionId, Ref, FromUrl, ToUrl, TimeDelta).
-click_triggered_navigation(SessionId, Ref, FromUrl, ToUrl, Delta) :-
-    user_click(SessionId, Ref, TClick),
-    navigation_event(SessionId, ToUrl, TNav),
+click_then_type(SessionId, ClickRef, TypeRef, Delta) :-
+    user_click_bucket(SessionId, Bucket, ClickRef, TClick),
+    Next = fn:plus(Bucket, 1),
+    user_type_bucket(SessionId, Next, TypeRef, TType),
+    TType > TClick,
+    Delta = fn:minus(TType, TClick),
+    Delta < 5000.
+
+# --- Derived: Navigation within 5 s after a click ---
+Decl click_triggered_navigation(SessionId, Ref, ToUrl, TimeDelta).
+click_triggered_navigation(SessionId, Ref, ToUrl, Delta) :-
+    user_click_bucket(SessionId, Bucket, Ref, TClick),
+    navigation_bucket(SessionId, Bucket, ToUrl, TNav),
     TNav > TClick,
-    fn:minus(TNav, TClick) < 5000,
-    current_url(SessionId, FromUrl),
-    FromUrl != ToUrl,
-    Delta = fn:minus(TNav, TClick).
+    Delta = fn:minus(TNav, TClick),
+    Delta < 5000.
+
+click_triggered_navigation(SessionId, Ref, ToUrl, Delta) :-
+    user_click_bucket(SessionId, Bucket, Ref, TClick),
+    Next = fn:plus(Bucket, 1),
+    navigation_bucket(SessionId, Next, ToUrl, TNav),
+    TNav > TClick,
+    Delta = fn:minus(TNav, TClick),
+    Delta < 5000.
 
 # =============================================================================
 # VECTOR 13: TEST ASSERTION HELPERS

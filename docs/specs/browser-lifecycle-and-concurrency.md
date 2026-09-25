@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Browser Lifecycle and Concurrency
 created: 2026-07-23
-last_updated: 2026-07-23
+last_updated: 2026-09-24
 doc_type: feature-spec
 subsystem: browsernerd
 read_when: Changing browser launch, sessions, tabs, contexts, or concurrency limits
@@ -45,9 +45,47 @@ Closing is idempotent and cancels event ingestion, closes the page and isolated
 context, removes metadata, and updates persistence.
 
 `max_tabs`, `max_browsers`, and optional `idle_tab_timeout` prevent unbounded
-resource growth. Pollers back off and terminate after repeated failure.
+resource growth. `max_tabs` counts OPEN tabs - sessions holding a page. A
+detached session (reloaded from the session store after a restart, or left
+when its browser went away) owns no tab and never counts toward the limit
+(`internal/browser/browser_instances.go` `openTabCountLocked`). Pollers back off and terminate after repeated failure.
 Shutdown detaches resources under the manager lock, then closes pages and
 browsers outside the lock.
+
+## Opening a tab
+
+Creating or forking a session opens the tab at `about:blank`, sets the
+viewport, starts the event stream - every CDP domain enabled, every
+subscription made, the page hooks registered for each new document - applies
+any prepared state (a fork's cookies and storage), and only then navigates to
+the requested URL. The page load is therefore captured from its first request
+and runs with the prepared state ([browser fact model](browser-fact-model.md)).
+Creation returns once the document is parsed (`readyState` interactive or
+complete, bounded by `default_navigation_timeout`), so an operation that follows
+in the same batch acts on a page whose handlers exist; the load event is not
+awaited, since a page that long-polls never fires it.
+A load that fails still leaves an open tab, and `page_load_failed` and
+`net_loading_failed` say why. Attaching to an existing target starts the same
+event stream against the page as it stands.
+
+## Dialogs
+
+A JavaScript `alert`, `confirm`, `prompt` or `beforeunload` is answered the
+moment it opens, on its own event subscription, so no capture work can delay
+the answer and no dialog is ever left blocking the renderer. The answer is the
+one armed for that session - by `browser-act`'s `dialog` field or `dialog`
+operation, consumed by one dialog - and otherwise `browser.dialog_policy`
+(`dismiss`, the default, or `accept`). Dialogs are answered even when the
+fact engine is off. Each one is recorded in the session's dialog history (the
+last 50) and as `js_dialog`.
+
+## Downloads
+
+In a browser BrowserNERD launched, and in an incognito context it created,
+downloads are allowed and saved to `browser.download_dir` (default
+`<data root>/downloads`) under their GUID, and download progress events become
+`download` facts on the session whose tab started the download. An attached
+browser's default context keeps its own download behaviour.
 
 ## Live-development workflow
 

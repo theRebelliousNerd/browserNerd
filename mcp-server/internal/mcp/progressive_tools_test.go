@@ -320,7 +320,7 @@ func TestBrowserReasonEmitsGateFacts(t *testing.T) {
 	}
 }
 
-func TestBrowserReasonIncludesTopErrorsAndInvestigationItems(t *testing.T) {
+func TestBrowserReasonWhyFailedLeadsWithOneVerdict(t *testing.T) {
 	engine := testMangleEngineForProgressive(t)
 	tool := &BrowserReasonTool{engine: engine}
 	ctx := context.Background()
@@ -349,62 +349,45 @@ func TestBrowserReasonIncludesTopErrorsAndInvestigationItems(t *testing.T) {
 	}
 
 	resultMap := result.(map[string]interface{})
-	topErrors, ok := resultMap["top_errors"].([]map[string]interface{})
-	if !ok {
-		topErrorsAny, okAny := resultMap["top_errors"].([]interface{})
-		if !okAny || len(topErrorsAny) == 0 {
-			t.Fatalf("expected top_errors in response, got %v", resultMap["top_errors"])
-		}
-	} else if len(topErrors) == 0 {
-		t.Fatalf("expected non-empty top_errors")
+	verdict := fmt.Sprintf("%v", resultMap["verdict"])
+	if !strings.Contains(verdict, "build_failure") {
+		t.Fatalf("the backend-confirmed root cause outranks the bare 500 and must lead the verdict, got %q", verdict)
 	}
-
-	investigationItems, ok := resultMap["investigation_items"].([]map[string]interface{})
-	if !ok {
-		itemsAny, okAny := resultMap["investigation_items"].([]interface{})
-		if !okAny || len(itemsAny) == 0 {
-			t.Fatalf("expected investigation_items in response, got %v", resultMap["investigation_items"])
+	issues := toStringSlice(resultMap["issues"])
+	if len(issues) != 1 || !strings.Contains(issues[0], "/api/calendar -> 500") {
+		t.Fatalf("the 500 must be the one other issue, got %v", issues)
+	}
+	for _, dup := range []string{"top_errors", "investigation_items", "recommendations", "action_candidates", "data"} {
+		if _, ok := resultMap[dup]; ok {
+			t.Fatalf("compact why_failed must not carry %q", dup)
 		}
-	} else if len(investigationItems) == 0 {
-		t.Fatalf("expected non-empty investigation_items")
 	}
 }
 
-func TestBuildReasonTopErrorsPrioritizesCompilerErrorsAndDedupes(t *testing.T) {
-	userVisible := []map[string]interface{}{
-		{
-			"Source":    "toast",
-			"Message":   "At risk",
-			"Timestamp": int64(1000),
+func TestDiagnosisRanksCompilerErrorsFirstAndGroupsRepeats(t *testing.T) {
+	ev := &browserEvidence{
+		scope: reasonScope{sessionID: "s-compile"},
+		console: []consoleRecord{
+			{level: "error", message: "./src/components/calendar/FullCalendarView.tsx:4:1 Module not found: Can't resolve '@fullcalendar/daygrid'", ts: 2000},
+			{level: "error", message: " ./src/components/calendar/FullCalendarView.tsx:4:1   Module not found: Can't resolve '@fullcalendar/daygrid' ", ts: 3000},
 		},
-		{
-			"Source":    "console",
-			"Message":   "./src/components/calendar/FullCalendarView.tsx:4:1 Module not found: Can't resolve '@fullcalendar/daygrid'",
-			"Timestamp": int64(2000),
-		},
-		{
-			"Source":    "console",
-			"Message":   " ./src/components/calendar/FullCalendarView.tsx:4:1   Module not found: Can't resolve '@fullcalendar/daygrid' ",
-			"Timestamp": int64(3000),
-		},
+		toasts: []toastRecord{{text: "At risk", level: "error", ts: 1000}},
 	}
-
-	topErrors := buildReasonTopErrors("s-compile", nil, nil, userVisible, nil, nil, 10)
-	if len(topErrors) == 0 {
-		t.Fatal("expected non-empty top errors")
+	d := diagnose(ev)
+	if p := d.primary(); p == nil || p.kind != "compiler_error" {
+		t.Fatalf("expected the compiler error to lead, got %+v", p)
 	}
-	if got := topErrors[0]["kind"]; got != "compiler_error" {
-		t.Fatalf("expected first top error kind=compiler_error, got %v", got)
-	}
-
-	compilerCount := 0
-	for _, row := range topErrors {
-		if row["kind"] == "compiler_error" {
-			compilerCount++
+	compiler := 0
+	for _, is := range d.issues {
+		if is.kind == "compiler_error" {
+			compiler++
+			if !strings.Contains(is.line, "x2") {
+				t.Fatalf("the two copies must fold into one line with a count, got %q", is.line)
+			}
 		}
 	}
-	if compilerCount != 1 {
-		t.Fatalf("expected deduped compiler error count=1, got %d", compilerCount)
+	if compiler != 1 {
+		t.Fatalf("expected one compiler issue, got %d", compiler)
 	}
 }
 
@@ -532,15 +515,15 @@ func TestBrowserReasonSinceNavigationFiltersOlderErrors(t *testing.T) {
 	if len(failedReqs) != 1 {
 		t.Fatalf("expected 1 failed request after navigation scope, got %d", len(failedReqs))
 	}
-	if reqID := strings.TrimSpace(fmt.Sprintf("%v", failedReqs[0]["ReqId"])); reqID != "req-new" {
+	if reqID := strings.TrimSpace(fmt.Sprintf("%v", failedReqs[0]["id"])); reqID != "req-new" {
 		t.Fatalf("expected req-new after navigation scope, got %q", reqID)
 	}
 
-	userVisible := toMapSlice(data["user_visible_errors"])
+	userVisible := toMapSlice(data["console"])
 	if len(userVisible) != 1 {
-		t.Fatalf("expected 1 user-visible error after navigation scope, got %d", len(userVisible))
+		t.Fatalf("expected 1 console error after navigation scope, got %d", len(userVisible))
 	}
-	msg := strings.TrimSpace(fmt.Sprintf("%v", userVisible[0]["Message"]))
+	msg := strings.TrimSpace(fmt.Sprintf("%v", userVisible[0]["message"]))
 	if !strings.Contains(msg, "New console error") {
 		t.Fatalf("expected only new console error after navigation scope, got %q", msg)
 	}
@@ -1197,23 +1180,5 @@ func TestActUnknownOp(t *testing.T) {
 	resultMap := result.(map[string]interface{})
 	if resultMap["success"].(bool) {
 		t.Fatal("expected success=false for unknown operation type")
-	}
-}
-
-func TestBuildReasonChangeFeedSortsNewestFirst(t *testing.T) {
-	changes := buildReasonChangeFeed(
-		[]map[string]interface{}{{"Source": "backend", "Cause": "traceback", "Ts": int64(2000)}},
-		[]map[string]interface{}{{"ReqId": "r1", "Url": "/api/a", "Status": 500, "ReqTs": int64(1000)}},
-		[]map[string]interface{}{{"ReqId": "r2", "Url": "/api/b", "Duration": 2200, "ReqTs": int64(3000)}},
-		[]map[string]interface{}{{"Source": "toast", "Message": "Failed save", "Timestamp": int64(2500)}},
-		nil,
-		10,
-	)
-	if len(changes) < 3 {
-		t.Fatalf("expected multiple change events, got %d", len(changes))
-	}
-	firstType := changes[0]["type"]
-	if firstType != "slow_api" {
-		t.Fatalf("expected newest change to be slow_api, got %v", firstType)
 	}
 }

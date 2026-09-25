@@ -4,91 +4,95 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
+	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/docker"
 	"browsernerd-mcp-server/internal/mangle"
 )
 
-// BrowserReasonTool performs Mangle-first reasoning with progressive disclosure.
+// BrowserReasonTool turns what the browser recorded into a diagnosis: a
+// one-line verdict, the causal chain behind it, and one pointer to the next
+// call worth making.
 type BrowserReasonTool struct {
 	engine       *mangle.Engine
+	sessions     *browser.SessionManager // the tab whose response bodies network+body reads
 	dockerClient *docker.Client
+	backendLogs  backendLogSource
+	backend      backendCorrelator
 }
+
+var reasonTopics = []string{"why_failed", "health", "network", "blocking_issue", "next_best_action", "what_changed_since"}
 
 func (t *BrowserReasonTool) Name() string { return "browser-reason" }
 func (t *BrowserReasonTool) Description() string {
-	return `Diagnose browser problems -- health checks, root cause analysis, blocking issues.
-
-Use when something goes wrong or you need guidance on what to do next.
-Analyzes Mangle facts (network, console, DOM) with optional Docker log correlation.
-
-Topics:
-  health:             Page health score with error/warning counts
-  next_best_action:   Ranked recommendations for what to do next
-  blocking_issue:     What prevents progress (modals, auth walls, errors)
-  why_failed:         Root cause analysis with causal chains
-  what_changed_since: Diff facts since a timestamp (pass time_window_ms)
-
-Intents (presets that apply topic + view defaults): triage, act_now, debug_failure, unblock
-
-Views: summary (verdict + counts), compact (default, verdict + key evidence), full (all evidence).
-
-Results include evidence handles for drill-down -- pass them back via expand_handles to dig deeper.
-Use browser-mangle instead for raw Mangle queries; use browser-observe to re-check page state.
-
-Use since_navigation=true to scope results to new errors after the latest navigation event
-for the current route.`
+	return `Diagnose the page from what the browser recorded. Pick the topic by the question:
+  why_failed: what broke, or what did my click break -> verdict, the failed request (status, body), the console error/toast/alert it caused, backend log lines, other issues
+  health: is anything wrong -> scorecard (failed 5xx/4xx/network, console errors, storms, ws failures, dialogs, page load failures) and the top issue
+  network: is something looping, which calls fail -> requests grouped by method+URL with counts, statuses, storms; expand=<url> lists that URL's calls; add body=true to see what the latest ones returned (JSON shape: items: array[0] means it answered empty)
+  blocking_issue: why is the page empty or stuck -> load failure, dismissed dialog, overlay, login wall, failed data call
+  next_best_action: what can I do here -> deduped action candidates
+  what_changed_since: issues inside time_window_ms, newest first
+Scope: since_action=true (since your last click/input), since_navigation=true (current route), time_window_ms (default 300000). view: summary|compact(default)|full. next names the one call worth making next.`
 }
 
 func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"session_id": map[string]interface{}{
+			"session_id": map[string]interface{}{"type": "string"},
+			"topic": map[string]interface{}{
 				"type":        "string",
-				"description": "Session context for gating and handles",
+				"description": "Question to answer (default health)",
+				"enum":        reasonTopics,
+			},
+			"view": map[string]interface{}{
+				"type": "string",
+				"enum": []string{"summary", "compact", "full"},
 			},
 			"intent": map[string]interface{}{
 				"type":        "string",
-				"description": "Reasoning preset that applies topic/view defaults when explicit knobs are omitted",
+				"description": "Preset: triage=health, act_now=next_best_action, debug_failure=why_failed full, unblock=blocking_issue",
 				"enum":        []string{"triage", "act_now", "debug_failure", "unblock"},
 			},
-			"topic": map[string]interface{}{
-				"type":        "string",
-				"description": "Reasoning topic",
-				"enum":        []string{"health", "next_best_action", "blocking_issue", "why_failed", "what_changed_since"},
+			"since_action": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Only evidence since your last click, input, key or submit",
 			},
-			"view": map[string]interface{}{
+			"since_navigation": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Only evidence since the latest navigation",
+			},
+			"time_window_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "Only evidence newer than now minus this (default 300000; 0 = all)",
+			},
+			"expand": map[string]interface{}{
 				"type":        "string",
-				"description": "summary|compact|full",
-				"enum":        []string{"summary", "compact", "full"},
+				"description": "network: list the individual calls of groups whose URL contains this",
+			},
+			"body": map[string]interface{}{
+				"type":        "boolean",
+				"description": "network with expand: fetch the latest matching responses (up to 3) and return each body's shape",
+			},
+			"expand_handles": map[string]interface{}{
+				"type":        "array",
+				"description": "Evidence sections to return in data, e.g. reason:console",
+				"items":       map[string]interface{}{"type": "string"},
 			},
 			"max_items": map[string]interface{}{
 				"type":        "integer",
 				"description": "Max rows per section (default 20)",
 			},
-			"expand_handles": map[string]interface{}{
-				"type":        "array",
-				"description": "Only expand matching evidence handles",
-				"items":       map[string]interface{}{"type": "string"},
-			},
 			"include_action_plan": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Include Mangle-derived browser-act operation recommendations (default true)",
+				"description": "next_best_action: include ready browser-act operations (default true)",
 			},
 			"max_recommendations": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum recommendation rows to return (default 4)",
-			},
-			"time_window_ms": map[string]interface{}{
-				"type":        "integer",
-				"description": "Only include evidence newer than now-window (default 300000; set 0 for all history)",
-			},
-			"since_navigation": map[string]interface{}{
-				"type":        "boolean",
-				"description": "When true, scope errors to events after latest navigation_event(SessionId, Url, Timestamp)",
+				"description": "next_best_action: max actions (default 4)",
 			},
 		},
 		"required": []string{"session_id"},
@@ -99,7 +103,6 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	if t.engine == nil {
 		return map[string]interface{}{"success": false, "error": "mangle engine is not available"}, nil
 	}
-
 	sessionID := getStringArg(args, "session_id")
 	if sessionID == "" {
 		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
@@ -107,7 +110,7 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 
 	intent := normalizeReasonIntent(getStringArg(args, "intent"))
 	intentCfg, hasIntent := resolveReasonIntentDefaults(intent)
-	topic := strings.ToLower(getStringArg(args, "topic"))
+	topic := strings.ToLower(strings.TrimSpace(getStringArg(args, "topic")))
 	view := normalizeProgressiveView(getStringArg(args, "view"))
 	if hasIntent {
 		if !argHasNonEmptyString(args, "topic") && intentCfg.topic != "" {
@@ -120,11 +123,19 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	if topic == "" {
 		topic = "health"
 	}
+	known := false
+	for _, name := range reasonTopics {
+		if topic == name {
+			known = true
+		}
+	}
+	if !known {
+		return map[string]interface{}{"success": false, "error": fmt.Sprintf("unknown topic %q; use one of %s", topic, strings.Join(reasonTopics, ", "))}, nil
+	}
 	maxItems := getIntArg(args, "max_items", defaultProgressiveMaxItems)
 	if maxItems <= 0 {
 		maxItems = defaultProgressiveMaxItems
 	}
-	includeActionPlan := getBoolArg(args, "include_action_plan", true)
 	maxRecommendations := getIntArg(args, "max_recommendations", defaultReasonMaxRecs)
 	if maxRecommendations <= 0 {
 		maxRecommendations = defaultReasonMaxRecs
@@ -137,162 +148,498 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		timeWindowMs = 86400000
 	}
 	sinceNavigation := getBoolArg(args, "since_navigation", false)
+	sinceAction := getBoolArg(args, "since_action", false)
 	_, hasExplicitTimeWindow := args["time_window_ms"]
-	strictTimeScope := sinceNavigation || hasExplicitTimeWindow || topic == "what_changed_since"
-	sinceMs := int64(0)
+
+	effectiveSinceMs := int64(0)
 	if timeWindowMs > 0 {
-		sinceMs = time.Now().UnixMilli() - int64(timeWindowMs)
+		effectiveSinceMs = time.Now().UnixMilli() - int64(timeWindowMs)
 	}
 	navigationSinceMs := int64(0)
 	if sinceNavigation {
 		navigationSinceMs = latestNavigationTimestamp(ctx, t.engine, sessionID)
-	}
-	effectiveSinceMs := sinceMs
-	if navigationSinceMs > effectiveSinceMs {
-		effectiveSinceMs = navigationSinceMs
-	}
-
-	rootCauses := queryToRows(ctx, t.engine, fmt.Sprintf("root_cause_at(%q, ConsoleMsg, Source, Cause, Ts).", sessionID))
-	if len(rootCauses) == 0 {
-		rootCauses = queryToRows(ctx, t.engine, fmt.Sprintf("root_cause(%q, ConsoleMsg, Source, Cause).", sessionID))
-	}
-	failedReqs := queryToRows(ctx, t.engine, fmt.Sprintf("failed_request_at(%q, ReqId, Url, Status, ReqTs).", sessionID))
-	if len(failedReqs) == 0 {
-		failedReqs = queryToRows(ctx, t.engine, fmt.Sprintf("failed_request(%q, ReqId, Url, Status).", sessionID))
-	}
-	slowApis := queryToRows(ctx, t.engine, fmt.Sprintf("slow_api_at(%q, ReqId, Url, Duration, ReqTs).", sessionID))
-	if len(slowApis) == 0 {
-		slowApis = queryToRows(ctx, t.engine, fmt.Sprintf("slow_api(%q, ReqId, Url, Duration).", sessionID))
-	}
-	blockingIssues := filterRowsByField(queryToRows(ctx, t.engine, "interaction_blocked(SessionId, Reason)."), "SessionId", sessionID)
-	userVisibleErrors := queryToRows(ctx, t.engine, fmt.Sprintf("user_visible_error(%q, Source, Message, Timestamp).", sessionID))
-	actionCandidates := queryActionCandidates(ctx, t.engine, sessionID, maxItems)
-
-	if effectiveSinceMs > 0 {
-		rootCauses = filterRowsSinceScoped(rootCauses, []string{"Ts", "Timestamp"}, effectiveSinceMs, strictTimeScope)
-		failedReqs = filterRowsSinceScoped(failedReqs, []string{"ReqTs", "Timestamp"}, effectiveSinceMs, strictTimeScope)
-		slowApis = filterRowsSinceScoped(slowApis, []string{"ReqTs", "Timestamp"}, effectiveSinceMs, strictTimeScope)
-		userVisibleErrors = filterRowsSinceScoped(userVisibleErrors, []string{"Timestamp", "Ts"}, effectiveSinceMs, strictTimeScope)
-	}
-	userVisibleErrors = dedupeUserVisibleErrors(userVisibleErrors)
-
-	contradictions := detectContradictions(ctx, t.engine, sessionID)
-
-	confidence := computeReasonConfidence(len(rootCauses), len(failedReqs), len(slowApis), len(contradictions), topic)
-	status := "ok"
-	if len(failedReqs) > 0 || len(contradictions) > 0 || len(rootCauses) > 0 {
-		status = "error"
-	} else if len(slowApis) > 0 || len(blockingIssues) > 0 {
-		status = "warning"
-	}
-
-	baseOrigin := originFromURL(resolveCurrentURL(ctx, t.engine, sessionID))
-	recommendations := recommendNextActions(sessionID, topic, status, len(failedReqs), len(rootCauses), len(contradictions), confidence)
-	if includeActionPlan {
-		recommendations = append(buildActionPlanRecommendations(actionCandidates, maxRecommendations, sessionID, baseOrigin), recommendations...)
-	}
-	recommendations = limitMapSlice(recommendations, maxRecommendations)
-	topErrors := buildReasonTopErrors(sessionID, failedReqs, rootCauses, userVisibleErrors, blockingIssues, slowApis, maxInt(6, minInt(maxItems, 20)))
-	investigationItems := buildInvestigationItems(sessionID, topErrors, minInt(maxItems, 10))
-
-	data := map[string]interface{}{
-		"top_errors":          topErrors,
-		"investigation_items": investigationItems,
-		"failed_requests":     failedReqs,
-		"root_causes":         rootCauses,
-		"slow_apis":           slowApis,
-		"blocking_issues":     blockingIssues,
-		"user_visible_errors": userVisibleErrors,
-		"contradictions":      contradictions,
-		"action_candidates":   actionCandidates,
-		"recommendations":     recommendations,
-	}
-	if topic == "what_changed_since" {
-		data["changes"] = buildReasonChangeFeed(rootCauses, failedReqs, slowApis, userVisibleErrors, blockingIssues, maxItems)
-	}
-
-	handles := []string{
-		"reason:" + sessionID + ":top_errors",
-		"reason:" + sessionID + ":investigation_items",
-		"reason:" + sessionID + ":failed_requests",
-		"reason:" + sessionID + ":root_causes",
-		"reason:" + sessionID + ":slow_apis",
-		"reason:" + sessionID + ":blocking_issues",
-		"reason:" + sessionID + ":user_visible_errors",
-		"reason:" + sessionID + ":contradictions",
-		"reason:" + sessionID + ":action_candidates",
-		"reason:" + sessionID + ":recommendations",
-	}
-	if topic == "what_changed_since" {
-		handles = append(handles, "reason:"+sessionID+":changes")
-	}
-	selectedData := applyHandleFilter(data, args["expand_handles"])
-
-	emitFacts := []mangle.Fact{
-		{
-			Predicate: "confidence_score",
-			Args:      []interface{}{sessionID, topic, int(math.Round(confidence * 100.0)), time.Now().UnixMilli()},
-			Timestamp: time.Now(),
-		},
-	}
-	if confidence < 0.70 {
-		emitFacts = append(emitFacts, mangle.Fact{
-			Predicate: "js_gate_open",
-			Args:      []interface{}{sessionID, "low_confidence", time.Now().UnixMilli()},
-			Timestamp: time.Now(),
-		})
-	}
-	if len(contradictions) > 0 {
-		emitFacts = append(emitFacts, mangle.Fact{
-			Predicate: "js_gate_open",
-			Args:      []interface{}{sessionID, "contradiction_detected", time.Now().UnixMilli()},
-			Timestamp: time.Now(),
-		})
-	}
-	if len(recommendations) == 0 {
-		emitFacts = append(emitFacts, mangle.Fact{
-			Predicate: "js_gate_open",
-			Args:      []interface{}{sessionID, "no_matching_tool", time.Now().UnixMilli()},
-			Timestamp: time.Now(),
-		})
-	}
-	if len(emitFacts) > 0 {
-		_ = t.engine.AddFacts(ctx, emitFacts)
-	}
-	emitDisclosureFacts(ctx, t.engine, sessionID, handles, "reason")
-
-	response := map[string]interface{}{
-		"success":             true,
-		"intent":              ternaryStatus(hasIntent, intent, "custom"),
-		"topic":               topic,
-		"status":              status,
-		"confidence":          confidence,
-		"summary":             buildReasonSummary(status, confidence, len(rootCauses), len(failedReqs), len(slowApis), len(contradictions)),
-		"top_errors":          limitMapSlice(topErrors, minInt(5, maxItems)),
-		"investigation_items": limitMapSlice(investigationItems, minInt(5, maxItems)),
-		"evidence_handles":    handles,
-		"expansion_suggested": confidence < 0.70 || len(contradictions) > 0,
-		"view":                view,
-		"time_window_ms":      timeWindowMs,
-		"since_navigation":    sinceNavigation,
-		"navigation_since_ms": navigationSinceMs,
-		"effective_since_ms":  effectiveSinceMs,
-	}
-
-	switch view {
-	case "summary":
-		response["counts"] = map[string]interface{}{
-			"root_causes":     len(rootCauses),
-			"failed_requests": len(failedReqs),
-			"slow_apis":       len(slowApis),
-			"blocking_issues": len(blockingIssues),
-			"contradictions":  len(contradictions),
+		if navigationSinceMs > effectiveSinceMs {
+			effectiveSinceMs = navigationSinceMs
 		}
-	case "compact":
-		response["data"] = truncateReasonData(selectedData, maxItems)
+	}
+	actionSinceMs := int64(0)
+	if sinceAction {
+		if ts := latestActionMs(t.engine, sessionID); ts > 0 {
+			actionSinceMs = ts - actionScopeSlackMs
+			if actionSinceMs > effectiveSinceMs {
+				effectiveSinceMs = actionSinceMs
+			}
+		}
+	}
+	scope := reasonScope{
+		sessionID: sessionID,
+		sinceMs:   effectiveSinceMs,
+		strict:    sinceNavigation || sinceAction || hasExplicitTimeWindow || topic == "what_changed_since",
+	}
+	label := reasonScopeLabel(sinceAction && actionSinceMs > 0, sinceNavigation && navigationSinceMs > 0, timeWindowMs)
+
+	ev := collectBrowserEvidence(ctx, t.engine, scope)
+	d := diagnose(ev)
+
+	var response map[string]interface{}
+	switch topic {
+	case "network":
+		response = renderNetwork(d, view, getStringArg(args, "expand"), maxItems)
+		if getBoolArg(args, "body", false) && getStringArg(args, "expand") != "" {
+			attachBodies(ctx, t.sessions, sessionID, response)
+		}
+	case "health":
+		response = renderHealth(d, view, label)
+	case "blocking_issue":
+		response = renderBlocking(d, view, label, maxItems)
+	case "next_best_action":
+		response = t.renderNextBestAction(ctx, d, view, label, sessionID, getBoolArg(args, "include_action_plan", true), maxRecommendations)
+	case "what_changed_since":
+		response = renderChanges(d, label, maxItems)
 	default:
-		response["data"] = selectedData
+		response = t.renderWhyFailed(ctx, d, view, label, maxItems)
+	}
+	response["success"] = true
+	response["topic"] = topic
+	if hasIntent {
+		response["intent"] = intent
+	}
+	if sinceNavigation {
+		response["navigation_since_ms"] = navigationSinceMs
+	}
+	if sinceAction {
+		response["action_since_ms"] = actionSinceMs
 	}
 
+	causal := len(ev.backendRootCauses)
+	failed := 0
+	for _, fg := range d.failures {
+		failed += len(fg.calls)
+		if len(fg.effects) > 0 {
+			causal++
+		}
+	}
+	confidence := computeReasonConfidence(causal, failed, d.score.slow, len(ev.contradictions), topic)
+	if topic != "network" {
+		response["confidence"] = math.Round(confidence*100) / 100
+	}
+	if confidence < 0.70 || len(ev.contradictions) > 0 {
+		response["expansion_suggested"] = true
+	}
+
+	handles := make([]string, 0, 8)
+	for _, name := range reasonEvidenceSections {
+		if d.section(name, 1) != nil {
+			handles = append(handles, "reason:"+name)
+		}
+	}
+	if view != "summary" && len(handles) > 0 {
+		response["evidence_handles"] = handles
+	}
+	if selected := selectedReasonSections(args["expand_handles"]); len(selected) > 0 {
+		data := make(map[string]interface{}, len(selected))
+		for _, name := range selected {
+			if name == "backend_logs" {
+				if logs, ok := response["backend_logs"]; ok {
+					data[name] = logs
+				}
+				continue
+			}
+			if rows := d.section(name, maxItems); rows != nil {
+				data[name] = rows
+			}
+		}
+		response["data"] = data
+	}
+
+	now := time.Now()
+	emitFacts := []mangle.Fact{{
+		Predicate: "confidence_score",
+		Args:      []interface{}{sessionID, topic, int(math.Round(confidence * 100.0)), now.UnixMilli()},
+		Timestamp: now,
+	}}
+	if confidence < 0.70 {
+		emitFacts = append(emitFacts, mangle.Fact{Predicate: "js_gate_open", Args: []interface{}{sessionID, "low_confidence", now.UnixMilli()}, Timestamp: now})
+	}
+	if len(ev.contradictions) > 0 {
+		emitFacts = append(emitFacts, mangle.Fact{Predicate: "js_gate_open", Args: []interface{}{sessionID, "contradiction_detected", now.UnixMilli()}, Timestamp: now})
+	}
+	if response["next"] == nil {
+		emitFacts = append(emitFacts, mangle.Fact{Predicate: "js_gate_open", Args: []interface{}{sessionID, "no_matching_tool", now.UnixMilli()}, Timestamp: now})
+	}
+	_ = t.engine.AddFacts(ctx, emitFacts)
+	emitDisclosureFacts(ctx, t.engine, sessionID, handles, "reason")
 	return response, nil
+}
+
+func reasonScopeLabel(sinceAction, sinceNavigation bool, timeWindowMs int) string {
+	switch {
+	case sinceAction:
+		return "since your last action"
+	case sinceNavigation:
+		return "since the last navigation"
+	case timeWindowMs > 0:
+		return fmt.Sprintf("in the last %ds", timeWindowMs/1000)
+	default:
+		return "in this session"
+	}
+}
+
+// summaryLine is the one-line count header: the status and every non-zero count.
+func (d *diagnosis) summaryLine() string {
+	parts := []string{"status=" + d.status}
+	for _, kv := range []struct {
+		k string
+		v int
+	}{
+		{"page_load_failed", d.score.pageLoadFailed}, {"failed_5xx", d.score.failed5xx}, {"failed_4xx", d.score.failed4xx},
+		{"failed_network", d.score.failedNetwork}, {"console_errors", d.score.consoleErrors}, {"toast_errors", d.score.toastErrors},
+		{"dialogs", d.score.dialogs}, {"storms", d.score.storms}, {"ws_failures", d.score.wsFailures}, {"slow", d.score.slow},
+		{"blocking", d.score.blocking},
+	} {
+		if kv.v > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", kv.k, kv.v))
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func (d *diagnosis) nextFor(is *reasonIssue) interface{} {
+	if is != nil {
+		if is.next != nil {
+			return is.next
+		}
+		return nil
+	}
+	return map[string]interface{}{"tool": "browser-observe"}
+}
+
+// renderWhyFailed is the diagnosis: the verdict, the root cause behind it with
+// its evidence, the backend log lines for the leading failed request, and
+// every other issue as one line.
+// correlationTarget names the URL and moment backend logs are asked about
+// when the primary issue is a page that failed to load or a WebSocket that
+// failed, not a failed request.
+func correlationTarget(is *reasonIssue) *netCall {
+	if is == nil || is.detail == nil {
+		return nil
+	}
+	url := ""
+	switch is.kind {
+	case "page_load_failed":
+		url, _ = is.detail["url"].(string)
+	case "websocket":
+		if row, ok := is.detail["websocket"].(map[string]interface{}); ok {
+			url, _ = row["url"].(string)
+		}
+	}
+	if url == "" {
+		return nil
+	}
+	return &netCall{url: url, startMs: is.atMs, endMs: is.atMs}
+}
+
+func (t *BrowserReasonTool) renderWhyFailed(ctx context.Context, d *diagnosis, view, label string, maxItems int) map[string]interface{} {
+	out := map[string]interface{}{
+		"status":  d.status,
+		"verdict": d.verdict(label),
+		"summary": d.summaryLine(),
+	}
+	primary := d.primary()
+	if next := d.nextFor(primary); next != nil {
+		out["next"] = next
+	}
+	if view == "summary" {
+		return out
+	}
+
+	var failureIssue *reasonIssue
+	for _, is := range d.issues {
+		if is.failure != nil {
+			failureIssue = is
+			break
+		}
+	}
+	var backendLogs interface{}
+	if failureIssue != nil {
+		if src := t.backendSource(); src != nil {
+			backendLogs = t.backend.linesFor(ctx, src, failureIssue.failure.latest())
+		}
+	} else if target := correlationTarget(primary); target != nil {
+		// No request failed, but the page did not load or its WebSocket did
+		// not connect: every browser signal can read clean while the truth sits
+		// in the server log, so ask it about that URL at that moment.
+		if src := t.backendSource(); src != nil {
+			backendLogs = t.backend.linesFor(ctx, src, target)
+			failureIssue = primary
+		}
+	}
+
+	if primary != nil && primary.detail != nil {
+		rootCause := make(map[string]interface{}, len(primary.detail)+1)
+		for k, v := range primary.detail {
+			rootCause[k] = v
+		}
+		if backendLogs != nil && failureIssue == primary {
+			rootCause["backend_logs"] = backendLogs
+		}
+		out["root_cause"] = rootCause
+	}
+	if backendLogs != nil && failureIssue != primary {
+		out["backend_logs"] = map[string]interface{}{"for": failureIssue.line, "lines": backendLogs}
+	}
+
+	maxLines := minInt(maxItems, 6)
+	if view == "full" {
+		maxLines = maxItems
+	}
+	lines, more := d.issueLines(maxLines, view == "full")
+	if len(lines) > 0 {
+		out["issues"] = lines
+	}
+	if more > 0 {
+		out["more_issues"] = more
+	}
+	if view == "full" {
+		data := make(map[string]interface{})
+		for _, name := range reasonEvidenceSections {
+			if rows := d.section(name, maxItems); rows != nil {
+				data[name] = rows
+			}
+		}
+		if len(data) > 0 {
+			out["data"] = data
+		}
+	}
+	return out
+}
+
+// renderHealth is the scorecard: every count, the top issue as the verdict,
+// and the loudest console messages.
+func renderHealth(d *diagnosis, view, label string) map[string]interface{} {
+	out := map[string]interface{}{
+		"status":  d.status,
+		"verdict": d.verdict(label),
+		"summary": d.summaryLine(),
+	}
+	if next := d.nextFor(d.primary()); next != nil {
+		out["next"] = next
+	}
+	if view == "summary" {
+		return out
+	}
+	out["scorecard"] = d.score.row()
+	lines := make([]string, 0, 3)
+	for _, g := range d.console {
+		if len(lines) == 3 {
+			break
+		}
+		lines = append(lines, g.line())
+	}
+	if len(lines) > 0 {
+		out["console"] = lines
+	}
+	if view == "full" {
+		out["issues"] = d.issueRows()
+	}
+	return out
+}
+
+// renderBlocking answers "why is the page empty or stuck": the issues that can
+// hold a page back, worst first.
+func renderBlocking(d *diagnosis, view, label string, maxItems int) map[string]interface{} {
+	blockers := make([]*reasonIssue, 0)
+	for _, is := range d.issues {
+		if is.blocking != "" {
+			blockers = append(blockers, is)
+		}
+	}
+	out := map[string]interface{}{"status": d.status, "summary": d.summaryLine()}
+	if len(blockers) == 0 {
+		out["verdict"] = "nothing blocking recorded " + label
+		if p := d.primary(); p != nil {
+			out["top_issue"] = p.line
+		}
+		return out
+	}
+	out["verdict"] = blockers[0].line
+	if blockers[0].next != nil {
+		out["next"] = blockers[0].next
+	}
+	if view == "summary" {
+		return out
+	}
+	if blockers[0].detail != nil {
+		out["root_cause"] = blockers[0].detail
+	}
+	rest := make([]string, 0)
+	for _, is := range blockers[1:] {
+		if len(rest) >= minInt(maxItems, 6) && view != "full" {
+			break
+		}
+		rest = append(rest, is.line)
+	}
+	if len(rest) > 0 {
+		out["blocking"] = rest
+	}
+	return out
+}
+
+// renderNextBestAction lists the page's action candidates with repeats folded
+// (400 identical buttons are one candidate with a count), led by the error to
+// fix when there is one.
+func (t *BrowserReasonTool) renderNextBestAction(ctx context.Context, d *diagnosis, view, label, sessionID string, includePlan bool, maxActions int) map[string]interface{} {
+	out := map[string]interface{}{
+		"status":  d.status,
+		"verdict": d.verdict(label),
+		"summary": d.summaryLine(),
+	}
+	candidates := queryActionCandidates(ctx, t.engine, sessionID, maxActions)
+	if len(candidates) > maxActions {
+		candidates = candidates[:maxActions]
+	}
+	actions := make([]map[string]interface{}, 0, len(candidates))
+	if includePlan {
+		for _, cand := range candidates {
+			recs := buildActionPlanRecommendations([]map[string]interface{}{cand}, 1, sessionID, d.ev.origin)
+			if len(recs) == 0 {
+				continue
+			}
+			rec := recs[0]
+			recArgs, _ := rec["args"].(map[string]interface{})
+			row := map[string]interface{}{"label": cand["label"], "operations": recArgs["operations"]}
+			if n := asInt(cand["count"]); n > 1 {
+				row["count"] = n
+			}
+			if needs, _ := rec["requires_user_input"].(bool); needs {
+				row["requires_user_input"] = true
+			}
+			actions = append(actions, row)
+		}
+	} else {
+		for _, c := range candidates {
+			row := map[string]interface{}{"action": c["action"], "ref": c["ref"], "label": c["label"]}
+			if n := asInt(c["count"]); n > 1 {
+				row["count"] = n
+			}
+			actions = append(actions, row)
+		}
+	}
+	if view != "summary" && len(actions) > 0 {
+		out["actions"] = actions
+	}
+	if p := d.primary(); p != nil && p.level == "error" && p.next != nil {
+		out["next"] = p.next
+	} else if includePlan && len(actions) > 0 {
+		out["next"] = map[string]interface{}{"tool": "browser-act", "args": map[string]interface{}{"operations": actions[0]["operations"]}}
+	}
+	return out
+}
+
+// renderChanges is every issue inside the window, newest first.
+func renderChanges(d *diagnosis, label string, maxItems int) map[string]interface{} {
+	rows := d.issueRows()
+	sort.SliceStable(rows, func(i, j int) bool { return asInt64(rows[i]["at_ms"]) > asInt64(rows[j]["at_ms"]) })
+	out := map[string]interface{}{
+		"status":  d.status,
+		"verdict": d.verdict(label),
+		"summary": d.summaryLine(),
+		"changes": limitMapSlice(rows, maxItems),
+	}
+	if next := d.nextFor(d.primary()); next != nil {
+		out["next"] = next
+	}
+	return out
+}
+
+// reasonEvidenceSections are the expandable evidence sections, in the order
+// handles and full data list them.
+var reasonEvidenceSections = []string{
+	"page_load_failures", "failed_requests", "console", "toasts", "dialogs", "websockets",
+	"storms", "slow_apis", "root_causes", "blocking_issues", "contradictions", "network",
+}
+
+// section returns one evidence section's rows, or nil when it is empty.
+func (d *diagnosis) section(name string, maxItems int) interface{} {
+	origin := d.ev.origin
+	var rows []map[string]interface{}
+	switch name {
+	case "failed_requests":
+		for _, fg := range d.failures {
+			for _, c := range fg.calls {
+				rows = append(rows, callRow(c, origin))
+			}
+		}
+		sort.SliceStable(rows, func(i, j int) bool { return asInt64(rows[i]["at_ms"]) > asInt64(rows[j]["at_ms"]) })
+	case "console":
+		for _, g := range d.console {
+			rows = append(rows, g.row())
+		}
+	case "toasts":
+		for _, g := range d.toasts {
+			rows = append(rows, g.row())
+		}
+	case "dialogs":
+		for _, dl := range d.ev.dialogs {
+			rows = append(rows, map[string]interface{}{"type": dl.kind, "message": clipText(dl.message, 160), "accepted": dl.accepted, "handled_by": dl.handledBy, "at_ms": dl.ts})
+		}
+	case "websockets":
+		for _, g := range d.wsGroups {
+			rows = append(rows, g.row())
+		}
+	case "page_load_failures":
+		for _, lf := range d.ev.loadFailures {
+			rows = append(rows, map[string]interface{}{"url": lf.url, "error": lf.errorText, "at_ms": lf.ts})
+		}
+	case "storms":
+		for _, g := range d.groups {
+			if g.storm != nil {
+				rows = append(rows, g.row())
+			}
+		}
+	case "slow_apis":
+		for _, c := range d.ev.calls {
+			if c.durationMs > slowRequestMs && isAPIRequest(c.url) {
+				rows = append(rows, callRow(c, origin))
+			}
+		}
+	case "network":
+		for _, g := range d.groups {
+			rows = append(rows, g.row())
+		}
+	case "root_causes":
+		rows = d.ev.backendRootCauses
+	case "blocking_issues":
+		rows = d.ev.blocking
+	case "contradictions":
+		rows = d.ev.contradictions
+	case "issues":
+		rows = d.issueRows()
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	return limitMapSlice(rows, maxItems)
+}
+
+// selectedReasonSections maps expand_handles (full handles or bare section
+// names) to section names.
+func selectedReasonSections(raw interface{}) []string {
+	handles := toStringSlice(raw)
+	if len(handles) == 0 {
+		return nil
+	}
+	all := append(append([]string{}, reasonEvidenceSections...), "issues", "backend_logs")
+	out := make([]string, 0, len(handles))
+	seen := make(map[string]bool)
+	for _, h := range handles {
+		h = strings.ToLower(strings.TrimSpace(h))
+		for _, name := range all {
+			if !seen[name] && (h == name || strings.HasSuffix(h, ":"+name)) {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
 }

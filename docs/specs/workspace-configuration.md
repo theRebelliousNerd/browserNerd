@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Workspace Configuration
 created: 2026-07-23
-last_updated: 2026-07-23
+last_updated: 2026-09-24
 doc_type: configuration-spec
 subsystem: browsernerd
 read_when: Changing config discovery, path resolution, project corpora, or launch profiles
@@ -23,8 +23,13 @@ launch arguments, attach endpoint, auto-start behavior, or paths outside the
 workspace. This prevents a cloned repository from turning discovery into
 process execution.
 
-Mangle `schema_path` accepts a `.mg` file, a schema module directory, or a
-confined manifest. Spec delivery accepts named generic Markdown sources with
+The built-in Mangle schema is compiled into the binary, so a workspace never
+carries a copy of it. Mangle `schema_path` names project modules loaded on top
+of the built-in ones - a `.mg` file, a schema module directory, or a confined
+manifest - and is empty by default; `.mg` files in the workspace's
+`.browsernerd/schemas/` load as project modules without it, and a
+`schema_path` set in a config layer takes precedence over that directory
+([schema modules](mangle-schema-modules.md)). Spec delivery accepts named generic Markdown sources with
 roots, optional index hints, include/exclude patterns, and result/file/byte
 limits. Cross-Thread specs and indexes are ordinary read-only configured
 sources, not hard-coded platform dependencies.

@@ -1,6 +1,6 @@
 server:
   name: browsernerd-mcp
-  version: 1.1.0
+  version: 1.2.0
   log_file: data/browsernerd-mcp.log
 
 browser:
@@ -26,9 +26,8 @@ mcp:
 
 mangle:
   enable: true
-  schema_path: schemas/browser.mg
   disable_builtin_rules: false
-  fact_buffer_limit: 2048
+  fact_buffer_limit: 16384
   max_rule_bytes: 65536
   max_query_bytes: 32768
   max_rule_clauses: 16

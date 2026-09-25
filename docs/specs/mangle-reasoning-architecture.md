@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Mangle Reasoning Architecture
 created: 2026-07-23
-last_updated: 2026-07-23
+last_updated: 2026-09-24
 doc_type: architecture-spec
 subsystem: browsernerd
 read_when: Changing facts, rules, queries, subscriptions, causal reasoning, or memory bounds
@@ -19,16 +19,64 @@ boundary. Any upgrade requires a freshness check, upstream behavior review,
 complete schema analysis, derivation tests, and bounded performance profiling.
 
 Canonical logic is split across the domain modules documented in
-[Mangle schema modules](mangle-schema-modules.md). `browser.mg` remains a
-small compatibility manifest rather than a monolithic rules file.
+[Mangle schema modules](mangle-schema-modules.md); the built-in modules are
+compiled into the binary and project modules load on top of them.
 
 Fact classes cover browser topology, DOM and interaction, React semantics,
 runtime events, actions, repository correlations, specifications, and derived
-causal conclusions.
+causal conclusions ([browser fact model](browser-fact-model.md)).
 
-Temporal facts retain timestamps in a bounded buffer and predicate index. New
+## Buffer and retention
+
+Facts live in a bounded buffer of `mangle.fact_buffer_limit` facts (default
+16384) over a store indexed on each predicate's leading arguments. When the
+buffer passes its limit it trims to 90% of the limit, shedding by signal
+class, oldest first within a class:
+
+- low: page snapshots and bookkeeping that the next observe regenerates (DOM,
+  React, interactive-element and disclosure facts), and the facts of a
+  successful request to a URL the session requests repeatedly - polling - or
+  of a canceled one;
+- medium: everything not named low or high;
+- high, kept until nothing else is left: every fact of a failed request,
+  console errors and warnings, WebSocket errors and closes, error-level Docker
+  lines, navigations, `current_url`, page load failures, dialogs, downloads,
+  browser log entries, toasts, and user actions.
+
+A request's facts (`net_request`, `net_response`, headers, correlation keys,
+initiator, payload fields and the failure facts) share one class and are kept
+or evicted as a unit, so a response is never kept without its request. Over
+half the limit, low-value predicates are also sampled on the way in. The
+engine keeps only the latest `current_url` per session.
+
+A read evaluates only the rules the predicate it asks for depends on, over the
+indexed store, and caches the derivation until the next write. New
 subscriptions snapshot matching fingerprints at creation and emit only fresh
-derivations. Since-scoped queries require usable timestamps.
+derivations. Since-scoped queries require usable timestamps. The engine's
+self-report (`Engine.Stats`: facts by class, evictions, trims, sampling,
+rules, predicates, modules, last evaluation time and error) feeds the doctor,
+which flags a failed last evaluation and any evicted high-signal fact.
+`BROWSERNERD_DEBUG=1` turns on engine debug logging; without it the engine
+logs nothing per fact.
+
+## Queries
+
+`browser-mangle` `query` accepts one atom, a comma conjunction, or a rule
+`head :- body`. A conjunction joins without a rule: it is evaluated as a
+temporary program that is never persisted, under the same limits as
+`submit_rule`, and returns every variable it binds in order of first
+appearance. Before anything is evaluated, an atom naming an unknown predicate
+or giving a known one the wrong argument count is refused with the declared
+signature and its module, or with the closest predicate names - for example
+`net_response takes 5 arguments, not 4: net_response(SessionId, Id, Status,
+Latency, Duration) [builtin:00_core_events]`. Such a query could never match,
+and answering it with zero rows would read as "nothing happened"; the same
+check makes a `browser-test` assertion with a misspelled predicate fail
+instead of passing. `operation: schema` lists the predicates (`filter` narrows
+by substring): the summary view counts them per module, compact lists names
+per module until filtered and then signatures with kind, module and fact
+count, and full returns the objects. `submit_rule` evaluates only the new
+rule and what it depends on.
 
 ```yaml
 mangle:

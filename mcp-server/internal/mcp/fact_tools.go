@@ -177,11 +177,14 @@ QUERY SYNTAX (Mangle/Datalog):
 - Variables start with uppercase: Session, Url, Status
 - Wildcards use underscore: _
 - Queries end with period: .
+- A comma-separated conjunction joins predicates and returns every named variable.
+- An unknown predicate or a wrong argument count is an error naming the declared signature.
 
 EXAMPLES:
-- "navigation_event(Session, Url, _)."     -> All navigation events
-- "console_event(\"error\", Msg, _)."      -> All error messages
-- "failed_request(_, Url, Status)."        -> All failed requests
+- "navigation_event(Session, Url, _)."                     -> All navigation events
+- "console_event(S, \"error\", Msg, _)."                   -> All error messages
+- "failed_request(S, ReqId, Url, Status)."                 -> All failed app requests
+- "net_request(S, R, M, U, _, _), net_response(S, R, 500, _, _)." -> URL and method of every 500
 
 Returns: Array of variable bindings for each match.`
 }
@@ -260,7 +263,9 @@ WORKFLOW:
 1. submit-rule to define the condition
 2. Use evaluate-rule or wait-for-condition with the predicate name
 
-Rules persist for the session and auto-evaluate as facts arrive.`
+Rules persist and are evaluated whenever their predicate is read (query,
+evaluate, subscribe). A body atom naming an unknown predicate, or a known one
+with the wrong argument count, is rejected with the declared signature.`
 }
 func (t *SubmitRuleTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -542,8 +547,18 @@ func (t *AwaitFactTool) Execute(ctx context.Context, args map[string]interface{}
 	defer timeoutTimer.Stop()
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
+	derived := t.engine.IsDerived(predicate)
 	for {
-		if matchFact(t.engine.FactsByPredicate(predicate), wantArgs) {
+		facts := t.engine.FactsByPredicate(predicate)
+		if derived {
+			// A rule derives this predicate: its facts never enter the buffer.
+			evaluated, err := t.engine.Evaluate(ctx, predicate)
+			if err != nil {
+				return nil, err
+			}
+			facts = append(facts, evaluated...)
+		}
+		if matchFact(facts, wantArgs) {
 			return map[string]interface{}{
 				"predicate": predicate,
 				"status":    "passed",

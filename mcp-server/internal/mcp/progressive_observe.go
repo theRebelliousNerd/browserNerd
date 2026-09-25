@@ -18,13 +18,29 @@ type BrowserObserveTool struct {
 	engine     *mangle.Engine
 	pathPolicy *security.PathPolicy
 	specsCfg   config.SpecsConfig
+	// doctor builds the server self-diagnosis for mode "doctor".
+	doctor func(ctx context.Context) map[string]interface{}
 }
+
+// observePlanningGroups is how many control groups composite observe extracts (and
+// emits facts for) when it plans actions, however few rows it returns.
+const observePlanningGroups = 60
 
 func (t *BrowserObserveTool) Name() string { return "browser-observe" }
 func (t *BrowserObserveTool) Description() string {
-	return `Progressive page observation with token-aware modes.
-Returns state/navigation/interactive data plus refs for browser-act.
-Use mode for explicit slices (state, nav, interactive, hidden, grids, composite, sessions, screenshot, react, dom_snapshot).`
+	return `See a page, small by default; drill down with mode.
+- composite (default): title, headings, status/alert text, health digest, controls grouped
+  (400 identical buttons = 1 row with count + refs), ranked browser-act calls.
+- text: read the page (headings, landmarks, live regions, text blocks); text_query filters,
+  max_chars caps. Prefer it to a screenshot for reading.
+- interactive: controls only; refs feed browser-act.
+- screenshot: saves an image, returns path + size. annotate numbers controls in view; ref
+  captures one element.
+- storage: signed out / 401? cookies and web-storage keys with flags and expiry, and when
+  each JWT (even one nested in a JSON state blob) expires. Never values.
+- sessions: live tabs. doctor: BrowserNERD's own health (stale binary, wedged calls, env).
+  state|nav|hidden|grids|react|dom_snapshot: narrow slices.
+view: summary < compact (default) < full.`
 }
 
 func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
@@ -33,92 +49,126 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"session_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Target session",
+				"description": "Session (omit for sessions/doctor)",
 			},
 			"intent": map[string]interface{}{
 				"type":        "string",
-				"description": "Token-aware intent preset that applies progressive defaults when explicit knobs are omitted",
+				"description": "Preset for omitted knobs",
 				"enum":        []string{"quick_status", "find_actions", "map_navigation", "hidden_content", "deep_audit", "check_sessions", "visual_check", "grid_hunt"},
 			},
 			"mode": map[string]interface{}{
 				"type":        "string",
-				"description": "Observation mode",
-				"enum":        []string{"state", "nav", "interactive", "hidden", "grids", "composite", "sessions", "screenshot", "react", "dom_snapshot"},
-			},
-			"full_page": map[string]interface{}{
-				"type":        "boolean",
-				"description": "For screenshot mode: capture full scrollable page (default false)",
-			},
-			"save_path": map[string]interface{}{
-				"type":        "string",
-				"description": "For screenshot mode: save screenshot to this file path",
-			},
-			"format": map[string]interface{}{
-				"type":        "string",
-				"description": "For screenshot mode: image format (png|jpeg)",
-				"enum":        []string{"png", "jpeg"},
+				"description": "Default composite",
+				"enum":        []string{"composite", "text", "interactive", "screenshot", "storage", "sessions", "state", "nav", "hidden", "grids", "react", "dom_snapshot", "doctor"},
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
-				"description": "Disclosure depth: summary|compact|full",
+				"description": "Default compact",
 				"enum":        []string{"summary", "compact", "full"},
 			},
 			"max_items": map[string]interface{}{
 				"type":        "integer",
-				"description": "Max number of items for list outputs (default 20)",
+				"description": "List rows (default 20; annotate 30)",
+			},
+			"text_query": map[string]interface{}{
+				"type":        "string",
+				"description": "text: only blocks containing this term",
+			},
+			"max_chars": map[string]interface{}{
+				"type":        "integer",
+				"description": "text: char budget (default 1500)",
 			},
 			"filter": map[string]interface{}{
 				"type":        "string",
-				"description": "Interactive filter: all|buttons|inputs|links|selects",
+				"description": "Control kind",
 				"enum":        []string{"all", "buttons", "inputs", "links", "selects"},
 			},
 			"visible_only": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Only visible interactive elements (default true)",
+				"description": "Default true",
+			},
+			"annotate": map[string]interface{}{
+				"type":        "boolean",
+				"description": "screenshot: number the controls in view",
+			},
+			"ref": map[string]interface{}{
+				"type":        "string",
+				"description": "screenshot: this element only",
+			},
+			"full_page": map[string]interface{}{
+				"type":        "boolean",
+				"description": "screenshot: whole page",
+			},
+			"format": map[string]interface{}{
+				"type":        "string",
+				"description": "screenshot format",
+				"enum":        []string{"png", "jpeg"},
+			},
+			"quality": map[string]interface{}{
+				"type":        "integer",
+				"description": "screenshot jpeg quality 1-100 (default 90)",
+			},
+			"save_path": map[string]interface{}{
+				"type":        "string",
+				"description": "screenshot: file path",
+			},
+			"include_detached": map[string]interface{}{
+				"type":        "boolean",
+				"description": "sessions: also list stale detached records",
 			},
 			"internal_only": map[string]interface{}{
 				"type":        "boolean",
-				"description": "For nav mode: only internal links",
+				"description": "nav: same-origin only",
 			},
 			"emit_facts": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Emit derived facts where supported (default true)",
+				"description": "Default true",
 			},
 			"include_action_plan": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Include Mangle-derived action candidates and browser-act recommendations (default true)",
+				"description": "Ranked browser-act calls (default true)",
 			},
 			"include_diagnostics": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Include lightweight health signals (diagnose-page + toast counts) (default false; enabled by some intents)",
+				"description": "Full diagnostics and toasts (default false)",
 			},
 			"max_recommendations": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum recommendation rows to return (default 3)",
+				"description": "Default 3",
 			},
 			"max_grids": map[string]interface{}{
 				"type":        "integer",
-				"description": "Grids mode: max grids (default max_items)",
+				"description": "grids: max grids",
 			},
 			"sample_rows": map[string]interface{}{
 				"type":        "integer",
-				"description": "Grids mode: sample rows (default 3, max 10)",
+				"description": "grids: rows sampled (default 3)",
 			},
 			"include_samples": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Grids mode: include sample refs (default true; summary defaults false)",
+				"description": "grids: sample refs (default true)",
 			},
 			"include_specs": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Attach compact configured spec context for the current route (default true)",
+				"description": "Attach route spec excerpts (default false)",
 			},
 			"spec_terms": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "Optional feature or requirement terms used to rank spec context",
+				"description": "Terms ranking spec excerpts",
 			},
 		},
 	}
+}
+
+// withIntent records the intent preset on a response only when the caller used one;
+// without one the fields carry nothing an agent needs.
+func withIntent(response map[string]interface{}, hasIntent bool, intent string, applied bool) map[string]interface{} {
+	if hasIntent {
+		response["intent"] = intent
+		response["intent_applied"] = applied
+	}
+	return response
 }
 
 func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
@@ -192,38 +242,42 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 
 	// Handle new delegating modes that return early
 	switch mode {
+	case "doctor":
+		report := map[string]interface{}{}
+		if t.doctor != nil {
+			report = t.doctor(ctx)
+		}
+		return map[string]interface{}{
+			"success": true,
+			"status":  "ok",
+			"mode":    mode,
+			"view":    view,
+			"summary": "BrowserNERD self-diagnosis",
+			"data":    report,
+		}, nil
+
 	case "sessions":
-		delegate := &ListSessionsTool{sessions: t.sessions}
-		res, err := delegate.Execute(ctx, map[string]interface{}{})
+		return withIntent(t.observeSessions(ctx, args, view, maxItems), hasIntent, intent, intentApplied), nil
+
+	case "storage":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for storage mode"}, nil
+		}
+		response, err := t.observeStorage(ctx, sessionID, view)
 		if err != nil {
 			return nil, err
 		}
-		resMap := asMap(res)
-		handles := []string{"observe:sessions"}
-		emitDisclosureFacts(ctx, t.engine, "", handles, "observe")
-		response := map[string]interface{}{
-			"success":          true,
-			"status":           "ok",
-			"intent":           ternaryStatus(hasIntent, intent, "custom"),
-			"intent_applied":   intentApplied,
-			"mode":             mode,
-			"view":             view,
-			"evidence_handles": handles,
-			"truncated":        false,
+		return withIntent(response, hasIntent, intent, intentApplied), nil
+
+	case "text":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for text mode"}, nil
 		}
-		switch view {
-		case "summary":
-			sessions := toAnySlice(resMap["sessions"])
-			response["summary"] = fmt.Sprintf("%d active session(s)", len(sessions))
-			response["data"] = map[string]interface{}{"session_count": len(sessions)}
-		case "compact":
-			sessions := toAnySlice(resMap["sessions"])
-			response["summary"] = fmt.Sprintf("%d active session(s)", len(sessions))
-			response["data"] = map[string]interface{}{"sessions": limitAnySlice(sessions, maxItems)}
-		default:
-			response["data"] = resMap
+		response, err := t.observeText(ctx, sessionID, args, view)
+		if err != nil {
+			return nil, err
 		}
-		return response, nil
+		return withIntent(response, hasIntent, intent, intentApplied), nil
 
 	case "screenshot":
 		if sessionID == "" {
@@ -233,33 +287,47 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		delegateArgs := map[string]interface{}{
 			"session_id": sessionID,
 		}
-		if v, ok := args["full_page"]; ok {
-			delegateArgs["full_page"] = v
+		for _, key := range []string{"full_page", "save_path", "format", "quality", "annotate"} {
+			if v, ok := args[key]; ok {
+				delegateArgs[key] = v
+			}
 		}
-		if v, ok := args["save_path"]; ok {
-			delegateArgs["save_path"] = v
+		if ref := getStringArg(args, "ref"); ref != "" {
+			delegateArgs["element_ref"] = ref
 		}
-		if v, ok := args["format"]; ok {
-			delegateArgs["format"] = v
+		if argHasInt(args, "max_items") {
+			delegateArgs["max_items"] = maxItems
 		}
 		res, err := delegate.Execute(ctx, delegateArgs)
 		if err != nil {
 			return nil, err
 		}
+		resMap := asMap(res)
+		if ok, _ := resMap["success"].(bool); !ok {
+			return withIntent(map[string]interface{}{
+				"success": false,
+				"status":  "error",
+				"mode":    mode,
+				"error":   resMap["error"],
+			}, hasIntent, intent, intentApplied), nil
+		}
+		delete(resMap, "success")
+		summary := "screenshot saved"
+		if n := asInt(resMap["annotated"]); n > 0 {
+			summary = fmt.Sprintf("screenshot saved with %d numbered control(s)", n)
+		}
 		handles := []string{"observe:" + sessionID + ":screenshot"}
 		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
-		return map[string]interface{}{
+		return withIntent(map[string]interface{}{
 			"success":          true,
 			"status":           "ok",
-			"intent":           ternaryStatus(hasIntent, intent, "custom"),
-			"intent_applied":   intentApplied,
 			"mode":             mode,
 			"view":             view,
-			"summary":          "screenshot captured",
-			"data":             res,
+			"summary":          summary,
+			"data":             resMap,
 			"evidence_handles": handles,
-			"truncated":        false,
-		}, nil
+			"truncated":        resMap["truncated"] == true,
+		}, hasIntent, intent, intentApplied), nil
 
 	case "grids":
 		if sessionID == "" {
@@ -330,18 +398,16 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		handles := []string{"observe:" + sessionID + ":grids"}
 		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
 
-		response := map[string]interface{}{
+		response := withIntent(map[string]interface{}{
 			"success":          true,
 			"status":           "ok",
-			"intent":           ternaryStatus(hasIntent, intent, "custom"),
-			"intent_applied":   intentApplied,
 			"mode":             mode,
 			"view":             view,
 			"summary":          fmt.Sprintf("%d grid surface(s) detected", totalGrids),
 			"evidence_handles": handles,
 			"truncated":        false,
 			"next_step":        nextStep,
-		}
+		}, hasIntent, intent, intentApplied)
 		switch view {
 		case "summary":
 			response["data"] = map[string]interface{}{
@@ -371,16 +437,14 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		resMap := asMap(res)
 		handles := []string{"observe:" + sessionID + ":react"}
 		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
-		response := map[string]interface{}{
+		response := withIntent(map[string]interface{}{
 			"success":          true,
 			"status":           "ok",
-			"intent":           ternaryStatus(hasIntent, intent, "custom"),
-			"intent_applied":   intentApplied,
 			"mode":             mode,
 			"view":             view,
 			"evidence_handles": handles,
 			"truncated":        false,
-		}
+		}, hasIntent, intent, intentApplied)
 		switch view {
 		case "summary":
 			componentCount := asInt(resMap["component_count"])
@@ -412,16 +476,14 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		resMap := asMap(res)
 		handles := []string{"observe:" + sessionID + ":dom_snapshot"}
 		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
-		response := map[string]interface{}{
+		response := withIntent(map[string]interface{}{
 			"success":          true,
 			"status":           "ok",
-			"intent":           ternaryStatus(hasIntent, intent, "custom"),
-			"intent_applied":   intentApplied,
 			"mode":             mode,
 			"view":             view,
 			"evidence_handles": handles,
 			"truncated":        false,
-		}
+		}, hasIntent, intent, intentApplied)
 		switch view {
 		case "summary":
 			nodeCount := asInt(resMap["node_count"])
@@ -457,19 +519,23 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	hiddenData := map[string]interface{}{}
 	diagnosticsData := map[string]interface{}{}
 	toastData := map[string]interface{}{}
+	contentData := map[string]interface{}{}
+	var health map[string]interface{}
 
 	fetchState := mode == "state" || mode == "composite"
 	fetchNav := mode == "nav" || mode == "composite"
 	fetchInteractive := mode == "interactive" || mode == "composite"
 	fetchHidden := mode == "hidden" || (mode == "composite" && view == "full")
+	fetchContent := mode == "composite" && view != "summary"
+	fetchHealth := mode == "composite" || mode == "state"
 	fetchDiagnostics := includeDiagnostics
 
-	// Planning snapshot: when action planning is enabled, prefer a wider interactive extraction
-	// than the returned output to avoid missing primary CTAs (while keeping output token-light).
+	// Planning reads more control groups than the output shows, so a primary control
+	// below the fold still reaches the plan; grouping keeps that extraction small.
 	planningLimit := maxItems
 	planningFilter := filter
 	if includeActionPlan {
-		planningLimit = maxInt(maxItems, 80)
+		planningLimit = maxInt(maxItems, observePlanningGroups)
 		// Action planning benefits from seeing all interactive elements even if output filter is narrower.
 		planningFilter = "all"
 	}
@@ -501,15 +567,24 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			"filter":       planningFilter,
 			"visible_only": visibleOnly,
 			"limit":        planningLimit,
+			"group":        true,
 			"verbose":      view == "full",
 		})
 		if err != nil {
 			return nil, err
 		}
 		interactivePlanningData = asMap(res)
-		if fetchInteractive {
-			interactiveData = filterInteractiveData(interactivePlanningData, filter)
+		interactiveData = filterInteractiveData(interactivePlanningData, filter)
+	}
+
+	if fetchContent {
+		if text, err := readPageText(ctx, t.sessions, sessionID, "", contentDigestChars, true); err == nil {
+			contentData = contentDigest(text)
 		}
+	}
+
+	if fetchHealth {
+		health = observeHealthDigest(t.engine, sessionID)
 	}
 
 	if fetchHidden {
@@ -593,22 +668,24 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 
 	actionCandidates := []map[string]interface{}{}
 	recommendations := []map[string]interface{}{}
-	if includeActionPlan && t.engine != nil && (fetchInteractive || fetchNav || mode == "composite") {
+	if includeActionPlan && t.engine != nil && (fetchInteractive || fetchNav) {
 		// Query more than we plan to return so we can filter stale candidates safely.
-		queryLimit := maxInt(planningLimit*4, 300)
-		actionCandidatesRaw := queryActionCandidates(ctx, t.engine, sessionID, queryLimit)
+		raw := queryActionCandidatesRaw(ctx, t.engine, sessionID, maxInt(planningLimit*4, 300))
 
-		// Filter to candidates that match the *current* observe snapshot (prevents stale actions from prior pages).
-		allowedRefs := buildRefSet(interactivePlanningData)
-		allowedHrefs := buildHrefSet(navData)
-		actionCandidates = filterActionCandidates(actionCandidatesRaw, allowedRefs, allowedHrefs)
+		// Keep only candidates that match the *current* snapshot (prevents stale actions
+		// from prior pages), then collapse repeats and rank for the next decision.
+		current := filterActionCandidates(raw, buildRefSet(interactivePlanningData), buildHrefSet(navData))
+		annotateCandidatesFromRows(current, interactivePlanningData)
+		actionCandidates = rankActionCandidates(groupActionCandidates(current))
 
 		currentURL := getStringFromMap(stateData, "url")
 		if currentURL == "" {
 			currentURL = resolveCurrentURL(ctx, t.engine, sessionID)
 		}
 		recommendations = buildActionPlanRecommendations(actionCandidates, maxRecommendations, sessionID, originFromURL(currentURL))
-		handles = append(handles, "observe:"+sessionID+":action_candidates")
+		if view == "full" {
+			handles = append(handles, "observe:"+sessionID+":action_candidates")
+		}
 		handles = append(handles, "observe:"+sessionID+":recommendations")
 	}
 
@@ -621,15 +698,17 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		handles = append(handles, "observe:"+sessionID+":investigation_items")
 	}
 
+	if len(health) > 0 {
+		data["health"] = health
+	}
+	if len(contentData) > 0 {
+		data["content"] = contentData
+	}
+
 	switch view {
 	case "summary":
 		if fetchState {
-			data["state"] = map[string]interface{}{
-				"url":       getStringFromMap(stateData, "url"),
-				"title":     getStringFromMap(stateData, "title"),
-				"loading":   stateData["loading"],
-				"hasDialog": stateData["hasDialog"],
-			}
+			data["state"] = compactObserveState(stateData)
 		}
 		if fetchNav {
 			if counts, ok := navData["counts"].(map[string]interface{}); ok {
@@ -670,13 +749,15 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		}
 	case "compact":
 		if fetchState {
-			data["state"] = stateData
+			data["state"] = compactObserveState(stateData)
 		}
-		if fetchNav {
+		// Composite carries links as interactive rows with their href; the area map is
+		// mode nav.
+		if fetchNav && mode == "nav" {
 			data["nav"] = navData
 		}
 		if fetchInteractive {
-			data["interactive"] = compactInteractiveData(interactiveData, maxItems)
+			data["interactive"] = compactObserveInteractive(interactiveData, maxItems)
 		}
 		if fetchHidden {
 			data["hidden"] = compactHiddenData(hiddenData, maxItems)
@@ -689,8 +770,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			}
 			data["toasts"] = compactToastData(toastData, maxItems)
 		}
-		if includeActionPlan {
-			data["action_candidates"] = limitMapSlice(actionCandidates, maxItems)
+		if includeActionPlan && len(recommendations) > 0 {
 			data["recommendations"] = recommendations
 		}
 		if len(topErrors) > 0 {
@@ -728,20 +808,18 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		}
 	}
 
-	if getBoolArg(args, "include_specs", true) {
+	if getBoolArg(args, "include_specs", false) {
 		if matches := specContextForSession(t.specsCfg, t.sessions, sessionID, specTermsFromRaw(args["spec_terms"])); len(matches) > 0 {
 			data["spec_context"] = matches
 			handles = append(handles, "observe:"+sessionID+":spec_context")
 		}
 	}
-	summary := buildObserveSummary(data)
+	summary := observeSummaryLine(stateData, interactiveData, navData, health, len(actionCandidates))
 	emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
 
-	return map[string]interface{}{
+	return withIntent(map[string]interface{}{
 		"success":          true,
 		"status":           "ok",
-		"intent":           ternaryStatus(hasIntent, intent, "custom"),
-		"intent_applied":   intentApplied,
 		"mode":             mode,
 		"view":             view,
 		"summary":          summary,
@@ -749,5 +827,5 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		"next_step":        suggestObserveNextStep(sessionID, data, mode, view, recommendations),
 		"evidence_handles": handles,
 		"truncated":        false,
-	}, nil
+	}, hasIntent, intent, intentApplied), nil
 }
