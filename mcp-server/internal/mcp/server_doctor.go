@@ -113,7 +113,7 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 	}
 	report["credentials"] = map[string]interface{}{"set": set, "unset": unset}
 
-	report["config"] = map[string]interface{}{
+	configInfo := map[string]interface{}{
 		"headless":         cfg.Browser.IsHeadless(),
 		"progressive_only": cfg.MCP.IsProgressiveOnly(),
 		"tool_timeout":     cfg.MCP.GetToolTimeout().String(),
@@ -121,6 +121,11 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 		"fact_buffer":      cfg.Mangle.FactBufferLimit,
 		"docker":           cfg.Docker.Enabled,
 	}
+	if len(cfg.Overrides) > 0 {
+		configInfo["overrides"] = cfg.Overrides
+		problems = append(problems, cfg.Overrides...)
+	}
+	report["config"] = configInfo
 
 	if d.Sessions != nil {
 		active, detached := 0, 0

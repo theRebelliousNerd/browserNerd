@@ -74,10 +74,18 @@ subscriptions, and the hooks run once in its loaded document.
   (`next-route-announcer`, `#__next-route-announcer__`, `#gatsby-announcer`,
   `[data-route-announcer]`) or equal to the page title is left out, here and
   in browser-act's effects.
+- A toast's text is read with `innerText`, whitespace collapsed, so a title
+  and description in separate blocks stay apart ("Login failed Invalid
+  credentials"). For five seconds a notification is one toast: a re-render, or
+  a mutation that reports only its title or only its description (a prefix or
+  suffix of at least six characters, compared without whitespace or case), is
+  not a second `toast_notification`. A toast whose text grows is reported
+  again with the fuller text.
 
-Successful structured navigation always emits `current_url`, including a
-same-URL no-op, so declarative assertions do not depend on CDP event timing.
-The engine keeps only the latest `current_url` per session.
+Successful structured navigation always emits `current_url` and
+`navigation_event`, so declarative assertions do not depend on CDP event
+timing; a navigate to the URL the tab is on is a reload. The engine keeps only
+the latest `current_url` per session.
 
 ## Derived failure facts
 

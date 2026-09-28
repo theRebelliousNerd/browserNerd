@@ -7,7 +7,29 @@ import (
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
+
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 )
+
+// reloadTab reloads a tab from the browser side (CDP Page.reload) and returns
+// once its main frame has committed the new document, or when the page's
+// context ends. A page-initiated location.reload() - what rod's Reload runs -
+// is refused for a top-level data: URL, so its commit never comes; a
+// browser-initiated reload is not.
+func reloadTab(page *rod.Page) error {
+	wait := page.EachEvent(func(e *proto.PageFrameNavigated) bool {
+		return e.Frame != nil && e.Frame.ParentID == ""
+	})
+	if err := (proto.PageReload{}).Call(page); err != nil {
+		return err
+	}
+	wait()
+	if err := page.GetContext().Err(); err != nil {
+		return fmt.Errorf("the reload did not commit: %w", err)
+	}
+	return nil
+}
 
 // NavigateURLTool navigates an existing session to a new URL.
 type NavigateURLTool struct {
@@ -23,6 +45,10 @@ USE THIS (not create-session) when:
 - Navigating within the same browser session
 - Need to preserve cookies/localStorage
 - Following links or testing page flows
+
+A navigate to the URL the tab is already on reloads the page, as entering the
+URL in the address bar does, and the result says reloaded: true. A caller
+verifying a fix gets the page the server serves now, never the stale one.
 
 WAIT OPTIONS:
 - load: Wait for DOMContentLoaded (default, fast)
@@ -101,34 +127,32 @@ func (t *NavigateURLTool) Execute(ctx context.Context, args map[string]interface
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("session not found: %s", sessionID)}, nil
 	}
 
-	// Check if we're already on the same URL - skip navigation to avoid hang
-	// Rod/CDP doesn't emit navigation events for same-URL navigation, causing
-	// WaitLoad() to wait indefinitely for an event that never fires.
+	// A navigate to the URL the tab is already on is a reload: the caller asked
+	// for that page, and the copy on screen may predate a fix. Reload waits for
+	// the new document to commit, so the wait below reads the reloaded page.
 	currentInfo, _ := page.Info()
-	if currentInfo != nil && currentInfo.URL == url {
-		t.emitNavigationFacts(ctx, sessionID, url, false)
-		return map[string]interface{}{
-			"success":     true,
-			"url":         url,
-			"duration_ms": int64(0),
-			"note":        "already on this URL, no navigation needed",
-		}, nil
-	}
+	reload := currentInfo != nil && currentInfo.URL == url
 
 	startTime := time.Now()
 	boundCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	bounded := page.Context(boundCtx)
+	load := func() error {
+		if reload {
+			return reloadTab(bounded)
+		}
+		return bounded.Navigate(url)
+	}
 
 	// Navigate based on wait condition
 	var err error
 	warning := ""
 	switch waitUntil {
 	case "none":
-		err = bounded.Navigate(url)
+		err = load()
 	case "networkidle":
 		wait := bounded.WaitRequestIdle(500*time.Millisecond, nil, nil, nil)
-		err = bounded.Navigate(url)
+		err = load()
 		if err == nil {
 			wait()
 			if boundCtx.Err() != nil {
@@ -136,7 +160,7 @@ func (t *NavigateURLTool) Execute(ctx context.Context, args map[string]interface
 			}
 		}
 	default: // "load"
-		err = bounded.Navigate(url)
+		err = load()
 		if err == nil {
 			if err = bounded.WaitLoad(); err != nil && boundCtx.Err() != nil {
 				err = fmt.Errorf("the load event did not fire within %s", timeout)
@@ -163,12 +187,16 @@ func (t *NavigateURLTool) Execute(ctx context.Context, args map[string]interface
 		finalURL = info.URL
 	}
 
-	t.emitNavigationFacts(ctx, sessionID, finalURL, true)
+	t.emitNavigationFacts(ctx, sessionID, finalURL)
 
 	result := map[string]interface{}{
 		"success":     true,
 		"url":         finalURL,
 		"duration_ms": duration.Milliseconds(),
+	}
+	if reload {
+		result["reloaded"] = true
+		result["note"] = "already at this URL, so the page was reloaded"
 	}
 	if warning != "" {
 		result["warning"] = warning
@@ -176,24 +204,15 @@ func (t *NavigateURLTool) Execute(ctx context.Context, args map[string]interface
 	return result, nil
 }
 
-func (t *NavigateURLTool) emitNavigationFacts(ctx context.Context, sessionID, url string, navigated bool) {
+func (t *NavigateURLTool) emitNavigationFacts(ctx context.Context, sessionID, url string) {
 	if t.engine == nil {
 		return
 	}
 	now := time.Now()
-	facts := []mangle.Fact{{
-		Predicate: "current_url",
-		Args:      []interface{}{sessionID, url},
-		Timestamp: now,
-	}}
-	if navigated {
-		facts = append([]mangle.Fact{{
-			Predicate: "navigation_event",
-			Args:      []interface{}{sessionID, url, now.UnixMilli()},
-			Timestamp: now,
-		}}, facts...)
-	}
-	_ = t.engine.AddFacts(ctx, facts)
+	_ = t.engine.AddFacts(ctx, []mangle.Fact{
+		{Predicate: "navigation_event", Args: []interface{}{sessionID, url, now.UnixMilli()}, Timestamp: now},
+		{Predicate: "current_url", Args: []interface{}{sessionID, url}, Timestamp: now},
+	})
 }
 
 // PressKeyTool presses a keyboard key in a session.
@@ -340,7 +359,7 @@ func (t *BrowserHistoryTool) Execute(ctx context.Context, args map[string]interf
 	case "forward":
 		err = bounded.NavigateForward()
 	case "reload":
-		err = bounded.Reload()
+		err = reloadTab(bounded)
 	default:
 		return map[string]interface{}{"success": false, "error": fmt.Sprintf("unknown action: %s", action)}, nil
 	}

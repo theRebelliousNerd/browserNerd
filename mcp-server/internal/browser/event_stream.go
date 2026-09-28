@@ -318,8 +318,8 @@ func (m *SessionManager) headerFacts(sessionID, requestID, kind string, headers 
 }
 
 // pollPageEvents drains the in-page tracker buffer into click, input, state
-// and toast facts. It backs off on evaluation failures and stops after twenty
-// in a row (the tab is gone or wedged).
+// and toast facts every 500 ms. It backs off on evaluation failures and stops
+// after twenty in a row (the tab is gone or wedged).
 func (m *SessionManager) pollPageEvents(ctx context.Context, sessionID string, page *rod.Page) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -334,16 +334,7 @@ func (m *SessionManager) pollPageEvents(ctx context.Context, sessionID string, p
 			if tickTime.Before(nextAttempt) {
 				continue
 			}
-			res, err := page.Context(ctx).Evaluate(&rod.EvalOptions{
-				JS: `() => {
-					const buf = Array.isArray(window.__browsernerdEvents) ? window.__browsernerdEvents : [];
-					window.__browsernerdEvents = [];
-					return buf;
-				}`,
-				ByValue:      true,
-				AwaitPromise: true,
-			})
-			if err != nil || res == nil {
+			if err := m.drainPageEvents(ctx, sessionID, page); err != nil {
 				consecutiveErrors++
 				if consecutiveErrors >= 20 {
 					log.Printf("[session:%s] stopping event poller after %d consecutive evaluation failures", sessionID, consecutiveErrors)
@@ -354,74 +345,110 @@ func (m *SessionManager) pollPageEvents(ctx context.Context, sessionID string, p
 			}
 			consecutiveErrors = 0
 			nextAttempt = time.Time{}
-			if res.Value.Nil() {
-				continue
-			}
-			raw, err := res.Value.MarshalJSON()
-			if err != nil {
-				continue
-			}
-			var events []struct {
-				Type    string  `json:"type"`
-				ID      string  `json:"id"`
-				Name    string  `json:"name"`
-				Value   string  `json:"value"`
-				Text    string  `json:"text"`
-				Level   string  `json:"level"`
-				Source  string  `json:"source"`
-				Classes string  `json:"classes"`
-				TS      float64 `json:"ts"`
-			}
-			if err := json.Unmarshal(raw, &events); err != nil {
-				continue
-			}
-			facts := make([]mangle.Fact, 0, len(events))
-			for _, ev := range events {
-				ts := time.UnixMilli(int64(ev.TS))
-				switch ev.Type {
-				case "click":
-					facts = append(facts, mangle.Fact{
-						Predicate: "click_event",
-						Args:      []interface{}{sessionID, ev.ID, ts.UnixMilli()},
-						Timestamp: ts,
-					})
-				case "input":
-					facts = append(facts, mangle.Fact{
-						Predicate: "input_event",
-						Args:      []interface{}{sessionID, ev.ID, redactInputValue(m.redactor, ev.ID, ev.Value), ts.UnixMilli()},
-						Timestamp: ts,
-					})
-				case "state":
-					facts = append(facts, mangle.Fact{
-						Predicate: "state_change",
-						Args:      []interface{}{sessionID, ev.Name, ev.Value, ts.UnixMilli()},
-						Timestamp: ts,
-					})
-				case "toast":
-					safeText := m.redactor.SanitizeString(ev.Text)
-					m.recordToastEvent(sessionID, safeText, ev.Level, ev.Source, ts)
-					facts = append(facts, mangle.Fact{
-						Predicate: "toast_notification",
-						Args:      []interface{}{sessionID, safeText, ev.Level, ev.Source, ts.UnixMilli()},
-						Timestamp: ts,
-					})
-					switch ev.Level {
-					case "error":
-						facts = append(facts, mangle.Fact{
-							Predicate: "error_toast",
-							Args:      []interface{}{sessionID, safeText, ev.Source, ts.UnixMilli()},
-							Timestamp: ts,
-						})
-					case "warning":
-						facts = append(facts, mangle.Fact{
-							Predicate: "warning_toast",
-							Args:      []interface{}{sessionID, safeText, ev.Source, ts.UnixMilli()},
-							Timestamp: ts,
-						})
-					}
-				}
-			}
-			m.addFacts(ctx, sessionID, "click/state/toast", facts)
 		}
 	}
+}
+
+// DrainPageEvents turns what the page's trackers buffered since the last poll
+// into facts now. browser-act calls it before reading what a batch caused: a
+// toast raised after the last 500 ms poll would otherwise reach the facts only
+// after the digest was read. The in-page buffer is taken and reset in one
+// evaluation, so a drain and the poller never deliver an event twice.
+func (m *SessionManager) DrainPageEvents(ctx context.Context, sessionID string) error {
+	page, ok := m.Page(sessionID)
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+	return m.drainPageEvents(ctx, sessionID, page)
+}
+
+// drainPageEvents takes the in-page tracker buffer once and adds its facts.
+func (m *SessionManager) drainPageEvents(ctx context.Context, sessionID string, page *rod.Page) error {
+	res, err := page.Context(ctx).Evaluate(&rod.EvalOptions{
+		JS: `() => {
+			const buf = Array.isArray(window.__browsernerdEvents) ? window.__browsernerdEvents : [];
+			window.__browsernerdEvents = [];
+			return buf;
+		}`,
+		ByValue:      true,
+		AwaitPromise: true,
+	})
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return fmt.Errorf("page event drain returned nothing")
+	}
+	if res.Value.Nil() {
+		return nil
+	}
+	raw, err := res.Value.MarshalJSON()
+	if err != nil {
+		return nil
+	}
+	var events []struct {
+		Type    string  `json:"type"`
+		ID      string  `json:"id"`
+		Name    string  `json:"name"`
+		Value   string  `json:"value"`
+		Text    string  `json:"text"`
+		Level   string  `json:"level"`
+		Source  string  `json:"source"`
+		Classes string  `json:"classes"`
+		TS      float64 `json:"ts"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		return nil
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	facts := make([]mangle.Fact, 0, len(events))
+	for _, ev := range events {
+		ts := time.UnixMilli(int64(ev.TS))
+		switch ev.Type {
+		case "click":
+			facts = append(facts, mangle.Fact{
+				Predicate: "click_event",
+				Args:      []interface{}{sessionID, ev.ID, ts.UnixMilli()},
+				Timestamp: ts,
+			})
+		case "input":
+			facts = append(facts, mangle.Fact{
+				Predicate: "input_event",
+				Args:      []interface{}{sessionID, ev.ID, redactInputValue(m.redactor, ev.ID, ev.Value), ts.UnixMilli()},
+				Timestamp: ts,
+			})
+		case "state":
+			facts = append(facts, mangle.Fact{
+				Predicate: "state_change",
+				Args:      []interface{}{sessionID, ev.Name, ev.Value, ts.UnixMilli()},
+				Timestamp: ts,
+			})
+		case "toast":
+			safeText := m.redactor.SanitizeString(ev.Text)
+			m.recordToastEvent(sessionID, safeText, ev.Level, ev.Source, ts)
+			facts = append(facts, mangle.Fact{
+				Predicate: "toast_notification",
+				Args:      []interface{}{sessionID, safeText, ev.Level, ev.Source, ts.UnixMilli()},
+				Timestamp: ts,
+			})
+			switch ev.Level {
+			case "error":
+				facts = append(facts, mangle.Fact{
+					Predicate: "error_toast",
+					Args:      []interface{}{sessionID, safeText, ev.Source, ts.UnixMilli()},
+					Timestamp: ts,
+				})
+			case "warning":
+				facts = append(facts, mangle.Fact{
+					Predicate: "warning_toast",
+					Args:      []interface{}{sessionID, safeText, ev.Source, ts.UnixMilli()},
+					Timestamp: ts,
+				})
+			}
+		}
+	}
+	m.addFacts(ctx, sessionID, "click/state/toast", facts)
+	return nil
 }

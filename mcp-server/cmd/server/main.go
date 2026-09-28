@@ -38,6 +38,7 @@ func fatalf(format string, args ...any) {
 func main() {
 	configPath := flag.String("config", "", "Path to the BrowserNERD MCP config file (overrides workspace config)")
 	ssePort := flag.Int("sse-port", 0, "Optional SSE port override (falls back to config)")
+	sseHost := flag.String("sse-host", "", "Interface the SSE server listens on (falls back to config mcp.sse_host, default 127.0.0.1)")
 	noWorkspace := flag.Bool("no-workspace", false, "Disable .browsernerd/ workspace discovery")
 	workspaceDir := flag.String("workspace-dir", "", "Explicit workspace root (skip walk-up discovery)")
 	trustWorkspace := flag.Bool("trust-workspace-config", false, "Allow workspace config to launch/attach browsers or access paths outside the workspace")
@@ -119,6 +120,9 @@ func main() {
 	if *ssePort != 0 {
 		cfg.MCP.SSEPort = *ssePort
 	}
+	if *sseHost != "" {
+		cfg.MCP.SSEHost = *sseHost
+	}
 
 	mangleEngine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
@@ -150,8 +154,8 @@ func main() {
 
 	var startErr error
 	if cfg.MCP.SSEPort > 0 {
-		log.Printf("starting BrowserNERD MCP SSE server on port %d", cfg.MCP.SSEPort)
-		startErr = server.StartSSE(ctx, cfg.MCP.SSEPort)
+		log.Printf("starting BrowserNERD MCP SSE server on %s:%d", cfg.MCP.GetSSEHost(), cfg.MCP.SSEPort)
+		startErr = server.StartSSE(ctx, cfg.MCP.GetSSEHost(), cfg.MCP.SSEPort)
 	} else {
 		log.Printf("starting BrowserNERD MCP stdio server")
 		startErr = server.Start(ctx)

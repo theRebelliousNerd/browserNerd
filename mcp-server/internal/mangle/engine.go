@@ -408,6 +408,50 @@ func (e *Engine) readStoreLocked(ctx context.Context, predicate string) (factsto
 	return e.base, nil
 }
 
+// buildBaseSinceLocked builds a private base store holding the facts
+// QuerySince reads: the eternal facts, the current fact of each superseding
+// predicate, and every other fact stamped after since.
+func (e *Engine) buildBaseSinceLocked(since time.Time) *indexedStore {
+	s := newIndexedStore()
+	for _, atom := range e.eternal {
+		_, _ = s.AddEternal(atom)
+	}
+	mirrored := make(map[ast.PredicateSym]bool)
+	for _, f := range e.facts {
+		if !supersedingPredicates[f.Predicate] && !f.Timestamp.IsZero() && !f.Timestamp.After(since) {
+			continue
+		}
+		if sym, ok := e.addToBase(s, f); ok {
+			mirrored[sym] = true
+		}
+	}
+	for sym := range mirrored {
+		_ = s.Coalesce(sym)
+	}
+	return s
+}
+
+// readStoreSinceLocked is readStoreLocked over the QuerySince view. Nothing it
+// builds is cached: the view belongs to one run's start time.
+func (e *Engine) readStoreSinceLocked(ctx context.Context, predicate string, since time.Time) (factstore.TemporalFactStore, error) {
+	if !e.schemaLoaded || e.programInfo == nil {
+		return nil, errNotReady
+	}
+	base := e.buildBaseSinceLocked(since)
+	if !e.isDerivedLocked(predicate) {
+		return base, nil
+	}
+	program := closureProgram(e.programInfo, []string{predicate})
+	derived := newIndexedStore()
+	overlay := &overlayStore{base: base, out: derived}
+	if len(program.Rules) > 0 || len(program.InitialFacts) > 0 {
+		if err := e.evalProgramWithTimeout(ctx, program, factstore.NewTemporalFactStoreAdapter(overlay), overlay, "derive since "+predicate); err != nil {
+			return nil, err
+		}
+	}
+	return overlay, nil
+}
+
 // isDerivedLocked reports whether some rule derives predicate.
 func (e *Engine) isDerivedLocked(predicate string) bool {
 	if e.programInfo == nil {
@@ -896,6 +940,29 @@ func factFingerprint(fact Fact) string {
 // program before evaluation: an unknown name or a wrong argument count is an
 // error naming the declared signature, never an empty result.
 func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, error) {
+	return e.query(ctx, queryStr, time.Time{})
+}
+
+// QuerySince evaluates a query as Query does, over only the facts a run that
+// started at since can claim: every fact stamped after since, every eternal
+// fact, and the current fact of each superseding predicate (current_url),
+// which holds now however long ago it was stamped. An event from before since
+// is left out; a state that still holds is not. It answers "is this true for
+// the run": a tab still on /login matches current_url(S, "/login") although
+// the fact predates the run, while a failed request from before the run does
+// not match failed_request. A fact stamped exactly at since counts as before
+// the run; a caller that starts acting only once the clock has moved past
+// since keeps every fact of its own out of that tie.
+func (e *Engine) QuerySince(ctx context.Context, queryStr string, since time.Time) ([]QueryResult, error) {
+	if since.IsZero() {
+		return nil, fmt.Errorf("QuerySince needs a start time")
+	}
+	return e.query(ctx, queryStr, since)
+}
+
+// query evaluates queryStr over the whole buffer (zero since) or over the run
+// view QuerySince describes.
+func (e *Engine) query(ctx context.Context, queryStr string, since time.Time) ([]QueryResult, error) {
 	if !e.cfg.Enable {
 		return nil, errNotReady
 	}
@@ -941,11 +1008,20 @@ func (e *Engine) Query(ctx context.Context, queryStr string) ([]QueryResult, err
 	// A query with premises projects its body onto the head's variables and is
 	// evaluated through Mangle, so comparisons and negation in the body hold.
 	if len(clause.Premises) > 0 {
-		return e.queryWithBodyLocked(ctx, clause)
+		if since.IsZero() {
+			e.ensureBaseLocked()
+			return e.queryWithBodyLocked(ctx, clause, e.base, true)
+		}
+		return e.queryWithBodyLocked(ctx, clause, e.buildBaseSinceLocked(since), false)
 	}
 
 	queryAtom := normalizeAnonymousVariables(clause.Head)
-	store, err := e.readStoreLocked(ctx, queryAtom.Predicate.Symbol)
+	var store factstore.TemporalFactStore
+	if since.IsZero() {
+		store, err = e.readStoreLocked(ctx, queryAtom.Predicate.Symbol)
+	} else {
+		store, err = e.readStoreSinceLocked(ctx, queryAtom.Predicate.Symbol, since)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -991,10 +1067,12 @@ const queryResultPredicate = "__browsernerd_query_result"
 
 // queryWithBodyLocked evaluates a conditional query by projecting its body onto
 // a synthetic head predicate and evaluating schema + rules + that projection
-// into a store of its own. It never changes the live program or derivations,
-// and it is bounded like a submitted rule: the evaluation timeout, the created
-// fact limit, and max_query_results. e.mu must be held.
-func (e *Engine) queryWithBodyLocked(ctx context.Context, clause ast.Clause) ([]QueryResult, error) {
+// over base into a store of its own. It never changes the live program or
+// derivations, and it is bounded like a submitted rule: the evaluation timeout,
+// the created fact limit, and max_query_results. shared says base is the
+// engine's own store, which a failed evaluation still running in the
+// background must not keep sharing with later writes. e.mu must be held.
+func (e *Engine) queryWithBodyLocked(ctx context.Context, clause ast.Clause, base *indexedStore, shared bool) ([]QueryResult, error) {
 	if !e.schemaLoaded || e.programInfo == nil {
 		return nil, errNotReady
 	}
@@ -1017,12 +1095,13 @@ func (e *Engine) queryWithBodyLocked(ctx context.Context, clause ast.Clause) ([]
 		return nil, fmt.Errorf("analyze query: %w", err)
 	}
 
-	e.ensureBaseLocked()
 	derived := newIndexedStore()
-	overlay := &overlayStore{base: e.base, out: derived}
+	overlay := &overlayStore{base: base, out: derived}
 	program := closureProgram(programInfo, []string{queryResultPredicate})
 	if err := e.evalProgramWithTimeout(ctx, program, factstore.NewTemporalFactStoreAdapter(overlay), overlay, "query_body"); err != nil {
-		e.baseFresh = false
+		if shared {
+			e.baseFresh = false
+		}
 		return nil, fmt.Errorf("evaluate query: %w", err)
 	}
 

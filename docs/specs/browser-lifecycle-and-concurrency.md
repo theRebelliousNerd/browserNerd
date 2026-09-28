@@ -52,6 +52,19 @@ when its browser went away) owns no tab and never counts toward the limit
 Shutdown detaches resources under the manager lock, then closes pages and
 browsers outside the lock.
 
+## Several server instances
+
+Every MCP client spawns its own BrowserNERD process, and a process with an
+empty `debugger_url` and `launch` launches its own Chrome with a private
+temporary profile and a random debugging port, so two clients never drive the
+same browser or tab. Processes started with the same config do share the files
+it names - the session store, the log and the trace directory - so a session
+another process persisted is listed as `detached`, and it cannot be attached:
+its target lives in that process's Chrome. A tab that navigates without a
+BrowserNERD operation - the page redirecting itself, or a person using a
+headful window - is reported by the next `browser-act` or `browser-observe` on
+it as `tab_moved` ([declarative automation](declarative-browser-automation.md)).
+
 ## Opening a tab
 
 Creating or forking a session opens the tab at `about:blank`, sets the

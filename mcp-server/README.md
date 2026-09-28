@@ -101,11 +101,14 @@ Use for triage and root cause analysis:
 - Topics: `health` (default), `why_failed`, `network`, `blocking_issue`, `next_best_action`, `what_changed_since`
 - A diagnosis leads with a one-line `verdict`, the `root_cause` (request,
   body, the effects it caused, backend log lines) and the one `next` call
-- `network` groups requests by method and URL, flags storms, and with
-  `expand` plus `body: true` returns the shape of what the latest calls
-  answered (`items: array[0]` is an empty answer)
+- `network` answers for the page on screen (requests since the latest
+  navigation; `earlier` counts what it left out), groups requests by method
+  and URL with data calls first and healthy chunks and fonts folded into
+  `assets`, flags storms and recovered failures, and with `expand` plus
+  `body: true` returns the shape of what the latest calls answered
+  (`items: array[0]` is an empty answer)
 - Intents: `triage`, `act_now`, `debug_failure`, `unblock`
-- Scope: `since_action=true` (since your last click or input), `since_navigation=true` (the current route), `time_window_ms`
+- Scope: `since_action=true` (since your last click or input), `since_navigation` (the page on screen; default true for `network`), `time_window_ms`
 
 ### browser-audit
 
@@ -311,7 +314,7 @@ go run ./cmd/rebuild
 # Stdio mode (Claude Code / MCP host)
 ./bin/browsernerd.exe --config config.yaml
 
-# SSE mode
+# SSE mode (listens on 127.0.0.1; --sse-host or mcp.sse_host names another interface)
 ./bin/browsernerd.exe --config config.yaml --sse-port 8080
 
 # Identity and self-diagnosis

@@ -171,7 +171,31 @@ func withIntent(response map[string]interface{}, hasIntent bool, intent string, 
 	return response
 }
 
+// Execute observes the page and says when the tab navigated since the last act
+// or observe on it ended; a successful observation marks the tab as seen.
 func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionID := getStringArg(args, "session_id")
+	moved := unattendedMove(t.sessions, sessionID)
+	res, err := t.observe(ctx, args)
+	if err != nil {
+		return res, err
+	}
+	m, ok := res.(map[string]interface{})
+	if !ok || m["success"] != true || sessionID == "" {
+		return res, nil
+	}
+	// doctor and sessions report on the server, not on the page.
+	if mode, _ := m["mode"].(string); mode == "doctor" || mode == "sessions" {
+		return res, nil
+	}
+	markAttended(t.sessions, sessionID)
+	if moved != nil {
+		m["tab_moved"] = moved
+	}
+	return res, nil
+}
+
+func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
 	intent := normalizeObserveIntent(getStringArg(args, "intent"))
 	intentCfg, hasIntent := resolveObserveIntentDefaults(intent)

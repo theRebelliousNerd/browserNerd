@@ -115,16 +115,31 @@ const pageHookFunction = `() => {
 		return title !== '' && text === title;
 	};
 
-	const seenToasts = new Set();
+	// A toast's title and description are separate blocks: innerText keeps
+	// them apart ("Login failed Invalid credentials") where textContent runs
+	// them together ("Login failedInvalid credentials").
+	const toastText = (el) => {
+		const raw = (el.isConnected && typeof el.innerText === 'string' && el.innerText) || el.textContent || '';
+		return raw.replace(/\s+/g, ' ').trim().substring(0, 500);
+	};
+	// One notification is one toast for five seconds, whether it re-renders or
+	// a mutation reports only its title or its description.
+	const seenToasts = new Map();
+	const toastKeyOf = (text) => text.replace(/\s+/g, '').toLowerCase().substring(0, 200);
+	const seenToast = (key) => {
+		const now = Date.now();
+		for (const [seen, expires] of seenToasts) {
+			if (expires <= now) { seenToasts.delete(seen); continue; }
+			if (seen === key || (key.length >= 6 && (seen.startsWith(key) || seen.endsWith(key)))) return true;
+		}
+		seenToasts.set(key, now + 5000);
+		return false;
+	};
 	const checkToast = (el) => {
 		if (!isToastElement(el)) return;
-		const text = (el.textContent || el.innerText || '').trim().substring(0, 500);
+		const text = toastText(el);
 		if (!text || isRouteAnnouncement(el, text)) return;
-		// Toasts re-render; one text is one toast for five seconds.
-		const toastKey = text.substring(0, 100);
-		if (seenToasts.has(toastKey)) return;
-		seenToasts.add(toastKey);
-		setTimeout(() => seenToasts.delete(toastKey), 5000);
+		if (seenToast(toastKeyOf(text))) return;
 		w.__browsernerdEvents.push({
 			type: 'toast',
 			text: text,

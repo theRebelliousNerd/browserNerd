@@ -777,8 +777,8 @@ CLI flags  >  explicit --config  >  .browsernerd/config.yaml  >  DefaultConfig()
 
 - **DefaultConfig()** - Hardcoded Go defaults (unchanged)
 - **`.browsernerd/config.yaml`** - Project-level overrides (Docker containers, schemas, etc.)
-- **`--config path`** - Machine/user-level settings (Chrome path, headless, viewport)
-- **CLI flags** (`--sse-port`) - Invocation-level overrides
+- **`--config path`** - Machine/user-level settings (Chrome path, headless, viewport). Keep project settings out of it: a `docker` block here overrides the workspace's, and `-doctor` names any such override as a problem
+- **CLI flags** (`--sse-port`, `--sse-host`) - Invocation-level overrides
 
 ### CLI Flags
 
@@ -787,6 +787,8 @@ CLI flags  >  explicit --config  >  .browsernerd/config.yaml  >  DefaultConfig()
 | `--no-workspace` | `false` | Disable `.browsernerd/` auto-discovery |
 | `--workspace-dir` | `""` | Explicit workspace root (skip walk-up search) |
 | `--init-workspace` | `false` | Create `.browsernerd/` template and exit |
+| `--sse-port` | `0` | Serve MCP over SSE on this port instead of stdio |
+| `--sse-host` | `127.0.0.1` | Interface the SSE server listens on (config `mcp.sse_host`) |
 
 ### Multi-Project Patterns
 

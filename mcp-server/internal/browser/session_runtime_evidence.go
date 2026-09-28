@@ -223,6 +223,52 @@ func (b *sessionRuntimeEvidenceBuffer) snapshotSince(sessionID string, since tim
 	return evidence
 }
 
+// navigationsAfter returns the recorded navigations stamped after afterMs,
+// oldest first.
+func (b *sessionRuntimeEvidenceBuffer) navigationsAfter(afterMs int64) []StepRouteChange {
+	if b == nil {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	var out []StepRouteChange
+	for _, nav := range b.navigations {
+		if nav.TimestampMs > afterMs {
+			out = append(out, nav)
+		}
+	}
+	return out
+}
+
+// MarkAttended records that a tool call acting on or observing the tab ended
+// at `at`. Navigations after it are ones no call saw happen.
+func (m *SessionManager) MarkAttended(sessionID string, at time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if record, ok := m.sessions[sessionID]; ok && record != nil {
+		record.attendedMs = at.UnixMilli()
+	}
+}
+
+// UnattendedNavigations returns the navigations the tab made after the last
+// call that attended it ended, oldest first: a redirect that landed after
+// that call reported, the page navigating on its own, or a person using the
+// browser window. It is nil until some call has attended the tab. The
+// navigation buffer keeps the latest eight.
+func (m *SessionManager) UnattendedNavigations(sessionID string) []StepRouteChange {
+	m.mu.RLock()
+	var attended int64
+	var activity *sessionRuntimeEvidenceBuffer
+	if record, ok := m.sessions[sessionID]; ok && record != nil {
+		attended, activity = record.attendedMs, record.activity
+	}
+	m.mu.RUnlock()
+	if attended == 0 {
+		return nil
+	}
+	return activity.navigationsAfter(attended)
+}
+
 // CaptureStepRuntimeEvidence returns the latest bounded runtime signals observed
 // for a session after the provided checkpoint.
 func (m *SessionManager) CaptureStepRuntimeEvidence(sessionID string, since time.Time) (StepRuntimeEvidence, error) {

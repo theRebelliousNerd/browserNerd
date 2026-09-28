@@ -265,6 +265,62 @@ docker:
 	}
 }
 
+// The shipped machine config (mcp-server/config.yaml) is loaded with --config
+// on top of a workspace that correlates Docker logs. It must leave the
+// workspace's docker block in effect: it once restated the disabled default,
+// and every why_failed ran without backend log lines.
+func TestShippedMachineConfigKeepsTheWorkspaceDockerBlock(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, WorkspaceDirName), 0755); err != nil {
+		t.Fatal(err)
+	}
+	wsConfig := "docker:\n  enabled: true\n  containers:\n    - app-backend\n    - app-frontend\n  log_window: \"30s\"\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, WorkspaceDirName, WorkspaceConfigFile), []byte(wsConfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+	shipped, err := filepath.Abs(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadWithWorkspace(shipped, WorkspaceOptions{ExplicitDir: tmpDir})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.Docker.Enabled || strings.Join(cfg.Docker.Containers, ",") != "app-backend,app-frontend" {
+		t.Fatalf("the workspace's docker block must survive the shipped --config, got %+v", cfg.Docker)
+	}
+	if len(cfg.Overrides) != 0 {
+		t.Fatalf("nothing was overridden, got %v", cfg.Overrides)
+	}
+}
+
+// A --config that does turn off the Docker correlation a workspace configures
+// still wins, as every later layer does, and the load says so: a setting the
+// workspace asked for is never dropped without a word.
+func TestExplicitConfigThatDisablesWorkspaceDockerIsNamed(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, WorkspaceDirName), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, WorkspaceDirName, WorkspaceConfigFile), []byte("docker:\n  enabled: true\n  containers: [app-backend]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	explicitPath := filepath.Join(tmpDir, "machine.yaml")
+	if err := os.WriteFile(explicitPath, []byte("browser:\n  auto_start: false\ndocker:\n  enabled: false\n  containers: []\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadWithWorkspace(explicitPath, WorkspaceOptions{ExplicitDir: tmpDir})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Docker.Enabled {
+		t.Fatalf("an explicit --config still overrides the workspace, got %+v", cfg.Docker)
+	}
+	if len(cfg.Overrides) != 1 || !strings.Contains(cfg.Overrides[0], "docker") || !strings.Contains(cfg.Overrides[0], "machine.yaml") {
+		t.Fatalf("the override must be named with the file that made it, got %v", cfg.Overrides)
+	}
+}
+
 func TestLoadWithWorkspace_PartialYAML(t *testing.T) {
 	// Workspace only sets one field
 	tmpDir := t.TempDir()

@@ -35,8 +35,11 @@ browser-act operations (actions[] is read as the same list) and assertions are
 {name, query, expect: present|absent, scope}. Unknown keys, invalid operations
 and a fixture with neither operations nor assertions are refused before
 anything runs. Create captures privacy-safe steps from a session or normalizes
-an inline test. Run replays the operations, evaluates fresh facts by default,
-and returns compact causal diagnosis on failure.
+an inline test. Run replays the operations and returns compact causal
+diagnosis on failure. An action test's assertions default to scope fresh: what
+the run caused, plus state that still holds (the tab's current URL), never an
+event from before the run. A fixture with operations and no assertions is a
+replay: status replayed, never passed.
 
 Credential fields use value_env, resolved only while running and never written
 back into the fixture; an unset or empty variable stops the run before the
@@ -139,10 +142,14 @@ func (t *BrowserTestTool) create(ctx context.Context, args map[string]interface{
 		"assertion_count": len(spec.Assertions),
 	}
 	if len(spec.Assertions) == 0 {
-		result["warning"] = "run needs at least one assertion; add {name, query, expect}"
+		result["warning"] = noAssertionsWarning
 	}
 	return result, nil
 }
+
+// noAssertionsWarning is what create and inspect say about a steps-only
+// fixture: run replays it and reports replayed, not passed.
+const noAssertionsWarning = "no assertions: run only replays the steps and reports status replayed, not passed; add {name, query, expect} to check what they caused"
 
 func (t *BrowserTestTool) inspect(args map[string]interface{}) (interface{}, error) {
 	spec, err := parseTestSpec(args)
@@ -165,7 +172,7 @@ func (t *BrowserTestTool) inspect(args map[string]interface{}) (interface{}, err
 		result["issues"] = issues
 	}
 	if len(spec.Assertions) == 0 {
-		result["warning"] = "run needs at least one assertion; add {name, query, expect}"
+		result["warning"] = noAssertionsWarning
 	}
 	return result, nil
 }
@@ -183,10 +190,17 @@ func (t *BrowserTestTool) run(ctx context.Context, args map[string]interface{}) 
 	}
 	resultMap := result.(map[string]interface{})
 	resultMap["operation"] = "run"
-	passed, _ := resultMap["passed"].(bool)
-	resultMap["success"] = passed
-	resultMap["status"] = ternaryStatus(passed, "passed", "failed")
-	resultMap["summary"] = fmt.Sprintf("Declarative test %s", resultMap["status"])
+	if replayOnly, _ := resultMap["replay_only"].(bool); replayOnly {
+		replayed, _ := resultMap["replayed"].(bool)
+		resultMap["success"] = replayed
+		resultMap["status"] = ternaryStatus(replayed, "replayed", "failed")
+		resultMap["summary"] = fmt.Sprintf("Replay %s; no assertions were checked", ternaryStatus(replayed, "completed", "failed"))
+	} else {
+		passed, _ := resultMap["passed"].(bool)
+		resultMap["success"] = passed
+		resultMap["status"] = ternaryStatus(passed, "passed", "failed")
+		resultMap["summary"] = fmt.Sprintf("Declarative test %s", resultMap["status"])
+	}
 	sessionID, _ := resultMap["session_id"].(string)
 	handle := fmt.Sprintf("test:%s:%d", sessionID, time.Now().UnixMilli())
 	resultMap["evidence_handles"] = []string{handle}

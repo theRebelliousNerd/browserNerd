@@ -231,19 +231,19 @@ func (t *ExecutePlanTool) Execute(ctx context.Context, args map[string]interface
 			if url == "" {
 				url = value
 			}
-			// Skip navigation if already on same URL to avoid WaitLoad hang
-			currentInfo, _ := page.Info()
-			if currentInfo != nil && currentInfo.URL == url {
-				result["url"] = url
-				result["skipped"] = "already on this URL"
+			// A navigate to the URL the tab is on reloads it, as browser-act's
+			// navigate does: the plan asked for that page as the server serves it.
+			bounded := page.Timeout(defaultNavigateTimeout)
+			if currentInfo, _ := page.Info(); currentInfo != nil && currentInfo.URL == url {
+				actionErr = reloadTab(bounded)
+				result["reloaded"] = true
 			} else {
-				bounded := page.Timeout(defaultNavigateTimeout)
 				actionErr = bounded.Navigate(url)
-				if actionErr == nil {
-					actionErr = bounded.WaitLoad()
-				}
-				result["url"] = url
 			}
+			if actionErr == nil {
+				actionErr = bounded.WaitLoad()
+			}
+			result["url"] = url
 
 		case "press":
 			key := ref
