@@ -44,9 +44,12 @@ type BrowserInstance struct {
 }
 
 type browserRecord struct {
-	meta       BrowserInstance
-	browser    *rod.Browser
-	controlURL string
+	meta        BrowserInstance
+	browser     *rod.Browser
+	controlURL  string
+	pid         int
+	userDataDir string
+	tempDir     bool
 }
 
 type sessionRecord struct {
@@ -201,6 +204,8 @@ type SessionManager struct {
 	reaperCancel     context.CancelFunc
 	dialogs          dialogBook
 	downloads        downloadBook
+	querier          ProcessQuerier
+	reapedOrphans    int
 }
 
 // EngineSink defines the minimal interface we need from the logic layer.
@@ -225,11 +230,12 @@ func NewSessionManagerWithSecurity(cfg config.BrowserConfig, sink EngineSink, re
 		sessions: make(map[string]*sessionRecord),
 		redactor: redactor,
 		browsers: make(map[string]*browserRecord),
+		querier:  DefaultProcessQuerier(),
 	}
 }
 
 // Start connects to an existing Chrome or launches a new one using Rod's launcher.
-func (m *SessionManager) Start(_ context.Context) error {
+func (m *SessionManager) Start(ctx context.Context) error {
 	// If we already have a browser, verify it's still alive
 	if m.browser != nil {
 		// Try a simple operation to test connection health
@@ -242,12 +248,31 @@ func (m *SessionManager) Start(_ context.Context) error {
 		_ = m.browser.Close()
 		m.browser = nil
 		m.controlURL = ""
-		// Clear all sessions since they're orphaned
+
 		m.mu.Lock()
+		if m.querier == nil {
+			m.querier = DefaultProcessQuerier()
+		}
+		q := m.querier
+		staleRecords := make([]*browserRecord, 0, len(m.browsers))
+		for _, rec := range m.browsers {
+			if rec != nil {
+				staleRecords = append(staleRecords, rec)
+			}
+		}
 		m.clearSessionsLocked(false)
 		m.browsers = make(map[string]*browserRecord)
 		m.defaultBrowserID = ""
 		m.mu.Unlock()
+
+		for _, rec := range staleRecords {
+			if rec.pid > 0 {
+				_ = q.KillProcessTree(rec.pid)
+			}
+			if rec.tempDir && rec.userDataDir != "" {
+				_ = removeUserDataDir(rec.userDataDir)
+			}
+		}
 	}
 
 	if err := m.loadSessions(); err != nil {
@@ -255,18 +280,23 @@ func (m *SessionManager) Start(_ context.Context) error {
 	}
 
 	controlURL := m.cfg.DebuggerURL
+	var launched *launchedChrome
 	if controlURL == "" {
 		var err error
-		controlURL, err = m.launchChrome()
+		launched, err = m.launchChrome()
 		if err != nil {
 			return err
 		}
+		controlURL = launched.controlURL
 	}
 
 	// Browser lifetime must not depend on request-scoped tool contexts.
 	// Use a long-lived background context so later tool calls can reuse the same connection.
 	browser := rod.New().ControlURL(controlURL).Context(context.Background())
 	if err := browser.Connect(); err != nil {
+		if launched != nil {
+			m.killLaunchedChrome(launched)
+		}
 		return fmt.Errorf("connect to chrome: %w", err)
 	}
 
@@ -276,7 +306,7 @@ func (m *SessionManager) Start(_ context.Context) error {
 	browserID := uuid.NewString()
 	now := time.Now()
 	m.defaultBrowserID = browserID
-	m.browsers[browserID] = &browserRecord{
+	record := &browserRecord{
 		meta: BrowserInstance{
 			ID:         browserID,
 			ControlURL: m.redactor.SanitizeString(controlURL),
@@ -289,6 +319,12 @@ func (m *SessionManager) Start(_ context.Context) error {
 		browser:    browser,
 		controlURL: controlURL,
 	}
+	if launched != nil {
+		record.pid = launched.pid
+		record.userDataDir = launched.userDataDir
+		record.tempDir = launched.tempDir
+	}
+	m.browsers[browserID] = record
 	m.mu.Unlock()
 	if m.cfg.DebuggerURL == "" {
 		// Only a browser this server launched is redirected to the download
@@ -315,7 +351,7 @@ func (m *SessionManager) IsConnected() bool {
 	return m.browser != nil
 }
 
-// Shutdown closes tracked pages and the underlying browser.
+// Shutdown closes tracked pages, terminates launched Chrome process trees, and deletes their temp directories.
 func (m *SessionManager) Shutdown(_ context.Context) error {
 	m.mu.Lock()
 	sessionRecords := make([]*sessionRecord, 0, len(m.sessions))
@@ -332,16 +368,20 @@ func (m *SessionManager) Shutdown(_ context.Context) error {
 		m.reaperCancel()
 		m.reaperCancel = nil
 	}
-	browsers := make([]*rod.Browser, 0, len(m.browsers))
+	records := make([]*browserRecord, 0, len(m.browsers))
 	for id, record := range m.browsers {
-		if record != nil && record.browser != nil {
-			browsers = append(browsers, record.browser)
+		if record != nil {
+			records = append(records, record)
 		}
 		delete(m.browsers, id)
 	}
 	m.browser = nil
 	m.controlURL = ""
 	m.defaultBrowserID = ""
+	if m.querier == nil {
+		m.querier = DefaultProcessQuerier()
+	}
+	q := m.querier
 	m.mu.Unlock()
 
 	var err error
@@ -350,9 +390,21 @@ func (m *SessionManager) Shutdown(_ context.Context) error {
 			err = closeErr
 		}
 	}
-	for _, browser := range browsers {
-		if closeErr := browser.Close(); closeErr != nil && err == nil {
-			err = closeErr
+	for _, record := range records {
+		if record.browser != nil {
+			if closeErr := record.browser.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
+		if record.pid > 0 {
+			if killErr := q.KillProcessTree(record.pid); killErr != nil && err == nil {
+				err = killErr
+			}
+		}
+		if record.tempDir && record.userDataDir != "" {
+			if rmErr := removeUserDataDir(record.userDataDir); rmErr != nil && err == nil {
+				err = rmErr
+			}
 		}
 	}
 	log.Printf("Browser shutdown complete")

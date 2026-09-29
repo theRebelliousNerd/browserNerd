@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -45,26 +46,34 @@ func (m *SessionManager) LaunchAdditional(_ context.Context) (*BrowserInstance, 
 	if browserCount >= m.cfg.GetMaxBrowsers() {
 		return nil, fmt.Errorf("browser limit reached (%d)", m.cfg.GetMaxBrowsers())
 	}
-	controlURL, err := m.launchChrome()
+	launched, err := m.launchChrome()
 	if err != nil {
 		return nil, err
 	}
-	browser := rod.New().ControlURL(controlURL).Context(context.Background())
+	browser := rod.New().ControlURL(launched.controlURL).Context(context.Background())
 	if err := browser.Connect(); err != nil {
+		m.killLaunchedChrome(launched)
 		return nil, fmt.Errorf("connect additional chrome: %w", err)
 	}
 
 	now := time.Now()
 	meta := BrowserInstance{
 		ID:         uuid.NewString(),
-		ControlURL: m.redactor.SanitizeString(controlURL),
+		ControlURL: m.redactor.SanitizeString(launched.controlURL),
 		Status:     "connected",
 		Managed:    true,
 		CreatedAt:  now,
 		LastActive: now,
 	}
 	m.mu.Lock()
-	m.browsers[meta.ID] = &browserRecord{meta: meta, browser: browser, controlURL: controlURL}
+	m.browsers[meta.ID] = &browserRecord{
+		meta:        meta,
+		browser:     browser,
+		controlURL:  launched.controlURL,
+		pid:         launched.pid,
+		userDataDir: launched.userDataDir,
+		tempDir:     launched.tempDir,
+	}
 	m.mu.Unlock()
 	m.enableDownloads(browser, "")
 	m.listenForDownloads(browser)
@@ -286,7 +295,12 @@ func (m *SessionManager) CloseBrowser(browserID string) (bool, error) {
 			break
 		}
 	}
+	if m.querier == nil {
+		m.querier = DefaultProcessQuerier()
+	}
+	q := m.querier
 	m.mu.Unlock()
+
 	var err error
 	for _, session := range sessionRecords {
 		if closeErr := closeSessionResources(session); closeErr != nil && err == nil {
@@ -296,6 +310,16 @@ func (m *SessionManager) CloseBrowser(browserID string) (bool, error) {
 	if record.browser != nil {
 		if closeErr := record.browser.Close(); closeErr != nil && err == nil {
 			err = closeErr
+		}
+	}
+	if record.pid > 0 {
+		if killErr := q.KillProcessTree(record.pid); killErr != nil && err == nil {
+			err = killErr
+		}
+	}
+	if record.tempDir && record.userDataDir != "" {
+		if rmErr := removeUserDataDir(record.userDataDir); rmErr != nil && err == nil {
+			err = rmErr
 		}
 	}
 	_ = m.persistSessions()
@@ -316,6 +340,32 @@ func (m *SessionManager) browserRecordLocked(browserID string) (*browserRecord, 
 	return nil, browserID
 }
 
+type launchedChrome struct {
+	controlURL  string
+	pid         int
+	userDataDir string
+	tempDir     bool
+}
+
+func (m *SessionManager) killLaunchedChrome(l *launchedChrome) {
+	if l == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.querier == nil {
+		m.querier = DefaultProcessQuerier()
+	}
+	q := m.querier
+	m.mu.Unlock()
+
+	if l.pid > 0 {
+		_ = q.KillProcessTree(l.pid)
+	}
+	if l.tempDir && l.userDataDir != "" {
+		_ = removeUserDataDir(l.userDataDir)
+	}
+}
+
 // newLauncher builds a Chrome launcher without Rod's leakless guard. Leakless
 // execs a helper binary it drops in %TEMP%, and Windows Defender quarantines
 // that helper as potentially unwanted software, so every launch fails with
@@ -325,7 +375,7 @@ func (m *SessionManager) newLauncher() *launcher.Launcher {
 	return launcher.New().Headless(m.cfg.IsHeadless()).Leakless(false)
 }
 
-func (m *SessionManager) launchChrome() (string, error) {
+func (m *SessionManager) launchChrome() (*launchedChrome, error) {
 	launch := m.newLauncher()
 	flagStart := 0
 	if len(m.cfg.Launch) > 0 {
@@ -343,17 +393,36 @@ func (m *SessionManager) launchChrome() (string, error) {
 	}
 	controlURL, err := launch.Launch()
 	if err == nil {
-		return controlURL, nil
+		uDir := launch.Get(flags.UserDataDir)
+		return &launchedChrome{
+			controlURL:  controlURL,
+			pid:         launch.PID(),
+			userDataDir: uDir,
+			tempDir:     isBrowserNERDUserDataDir(uDir),
+		}, nil
 	}
+	if dir := launch.Get(flags.UserDataDir); isBrowserNERDUserDataDir(dir) {
+		_ = os.RemoveAll(dir)
+	}
+
 	fallback := m.newLauncher()
 	if len(m.cfg.Launch) > 0 {
 		fallback = fallback.Bin(m.cfg.Launch[0])
 	}
 	alternate, fallbackErr := fallback.Launch()
 	if fallbackErr != nil {
-		return "", fmt.Errorf("launch chrome: %w (fallback: %v)", err, fallbackErr)
+		if dir := fallback.Get(flags.UserDataDir); isBrowserNERDUserDataDir(dir) {
+			_ = os.RemoveAll(dir)
+		}
+		return nil, fmt.Errorf("launch chrome: %w (fallback: %v)", err, fallbackErr)
 	}
-	return alternate, nil
+	uDir := fallback.Get(flags.UserDataDir)
+	return &launchedChrome{
+		controlURL:  alternate,
+		pid:         fallback.PID(),
+		userDataDir: uDir,
+		tempDir:     isBrowserNERDUserDataDir(uDir),
+	}, nil
 }
 
 func (m *SessionManager) startIdleReaper() {

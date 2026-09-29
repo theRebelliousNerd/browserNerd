@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
+	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/buildinfo"
@@ -21,6 +23,29 @@ import (
 	"browsernerd-mcp-server/internal/security"
 )
 
+var (
+	exitCleanupsMu sync.Mutex
+	exitCleanups   []func()
+)
+
+func registerExitCleanup(fn func()) {
+	exitCleanupsMu.Lock()
+	defer exitCleanupsMu.Unlock()
+	exitCleanups = append(exitCleanups, fn)
+}
+
+func runExitCleanups() {
+	exitCleanupsMu.Lock()
+	cleanups := make([]func(), len(exitCleanups))
+	copy(cleanups, exitCleanups)
+	exitCleanups = nil
+	exitCleanupsMu.Unlock()
+
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		cleanups[i]()
+	}
+}
+
 // fatalf reports an unrecoverable startup failure to BOTH the configured log
 // sink and stderr, then exits.
 //
@@ -30,6 +55,7 @@ import (
 // the failure is real, the diagnosis is invisible. Only STDOUT is the MCP
 // protocol channel, so mirroring to stderr is safe and is what clients surface.
 func fatalf(format string, args ...any) {
+	runExitCleanups()
 	log.Printf(format, args...)
 	fmt.Fprintf(os.Stderr, "browsernerd: "+format+"\n", args...)
 	os.Exit(1)
@@ -65,11 +91,12 @@ func main() {
 		return
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	defer func() {
 		if r := recover(); r != nil {
+			runExitCleanups()
 			log.Printf("FATAL PANIC IN MAIN: %v", r)
 			os.Exit(1)
 		}
@@ -134,6 +161,20 @@ func main() {
 		browserRedactor = security.NewRedactor(cfg.Security.ExtraSensitiveKeys)
 	}
 	sessionManager := browser.NewSessionManagerWithSecurity(cfg.Browser, mangleEngine, browserRedactor)
+	cleanupManager := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = sessionManager.Shutdown(cleanupCtx)
+	}
+	registerExitCleanup(cleanupManager)
+	defer cleanupManager()
+
+	if reaped, err := sessionManager.ReapOrphans(ctx); err != nil {
+		log.Printf("warning: failed to reap orphaned Chrome processes: %v", err)
+	} else if reaped > 0 {
+		log.Printf("reaped %d orphaned Chrome process tree(s) and temp profile(s)", reaped)
+	}
+
 	if cfg.Browser.AutoStart {
 		if err := sessionManager.Start(ctx); err != nil {
 			fatalf("failed to initialize Rod session manager: %v", err)
@@ -172,6 +213,10 @@ func main() {
 // own env block, so run it with the same variables to mirror the server.
 func doctor(ctx context.Context, cfg config.Config, wsDir string) int {
 	deps := mcpserver.DoctorDeps{Config: cfg}
+	sm := browser.NewSessionManager(cfg.Browser, nil)
+	if reaped, err := sm.ReapOrphans(ctx); err == nil {
+		deps.ReapedOrphans = reaped
+	}
 	schemaErr := ""
 	if engine, err := mangle.NewEngine(cfg.Mangle); err != nil {
 		schemaErr = err.Error()

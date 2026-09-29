@@ -49,8 +49,13 @@ resource growth. `max_tabs` counts OPEN tabs - sessions holding a page. A
 detached session (reloaded from the session store after a restart, or left
 when its browser went away) owns no tab and never counts toward the limit
 (`internal/browser/browser_instances.go` `openTabCountLocked`). Pollers back off and terminate after repeated failure.
-Shutdown detaches resources under the manager lock, then closes pages and
-browsers outside the lock.
+Shutdown detaches resources under the manager lock, closes pages and browsers outside
+the lock, terminates launched Chrome process trees, and removes their temporary
+user-data directories on all exit paths (MCP client disconnect, stdin EOF, signals,
+and errors). On startup, the server reaps orphaned Chrome process trees whose command line
+carries a BrowserNERD/rod user-data directory and whose launching server process is dead
+(never touching a Chrome it cannot prove it launched), deletes their temp user-data directories,
+and reports the reaped count in `browser-observe mode=doctor`.
 
 ## Several server instances
 

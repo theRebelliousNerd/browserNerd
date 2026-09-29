@@ -23,11 +23,12 @@ var credentialEnvVars = []string{"BROWSERNERD_TEST_PASSWORD"}
 
 // DoctorDeps is what the self-diagnosis inspects. Any field may be nil.
 type DoctorDeps struct {
-	Config   config.Config
-	Sessions *browser.SessionManager
-	Engine   *mangle.Engine
-	Docker   *docker.Client
-	Calls    *callTracker
+	Config        config.Config
+	Sessions      *browser.SessionManager
+	Engine        *mangle.Engine
+	Docker        *docker.Client
+	Calls         *callTracker
+	ReapedOrphans int
 }
 
 // DoctorReport is BrowserNERD's self-diagnosis: which binary is running, the
@@ -127,6 +128,7 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 	}
 	report["config"] = configInfo
 
+	reaped := d.ReapedOrphans
 	if d.Sessions != nil {
 		active, detached := 0, 0
 		activeRows := make([]map[string]interface{}, 0)
@@ -140,16 +142,21 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 				activeRows = append(activeRows, map[string]interface{}{"id": s.ID, "url": s.URL, "status": s.Status})
 			}
 		}
+		if sReaped := d.Sessions.ReapedOrphans(); sReaped > reaped {
+			reaped = sReaped
+		}
 		browserInfo := map[string]interface{}{
-			"connected": d.Sessions.IsConnected(),
-			"active":    active,
-			"detached":  detached,
+			"connected":      d.Sessions.IsConnected(),
+			"active":         active,
+			"detached":       detached,
+			"reaped_orphans": reaped,
 		}
 		if len(activeRows) > 0 {
 			browserInfo["sessions"] = activeRows
 		}
 		report["browser"] = browserInfo
 	}
+	report["reaped_orphans"] = reaped
 
 	if d.Engine != nil {
 		st := d.Engine.Stats()

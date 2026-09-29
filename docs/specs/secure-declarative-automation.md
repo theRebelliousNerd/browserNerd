@@ -160,7 +160,13 @@ current session and reports causal evidence for violations.
 - Session creation fails fast at `max_tabs` open tabs (detached sessions do not
   count); browser launch fails fast at `max_browsers`.
 - Idle reaping is configurable and disabled only by an explicit zero timeout.
-- Browser shutdown closes every session before closing Rod.
+- Browser shutdown terminates launched Chrome process trees and removes their
+  temporary user-data directories on all exit paths (MCP client disconnect, stdin
+  EOF, SIGINT/SIGTERM, panic recovery, and normal exit).
+- On startup, the server reaps orphaned Chrome process trees whose command line
+  carries a BrowserNERD/rod user-data directory and whose launching server process
+  is dead (never touching a Chrome it cannot prove it launched), removes their
+  temporary directories, and reports `reaped_orphans` in `browser-observe mode=doctor`.
 
 ## File and Module Boundaries
 

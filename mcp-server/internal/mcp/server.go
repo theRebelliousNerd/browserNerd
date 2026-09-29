@@ -181,15 +181,25 @@ func sseAdvertisedHost(host string) string {
 	return host
 }
 
-// Close releases optional recorder resources.
+// Close releases optional recorder resources and shuts down active sessions.
 func (s *Server) Close() error {
-	if s.recorder == nil {
-		return nil
+	var firstErr error
+	if s.sessions != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.sessions.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
-	s.recorder.Log("server_stop", "", map[string]interface{}{
-		"server_name": s.cfg.Server.Name,
-	})
-	return s.recorder.Close()
+	if s.recorder != nil {
+		s.recorder.Log("server_stop", "", map[string]interface{}{
+			"server_name": s.cfg.Server.Name,
+		})
+		if err := s.recorder.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // ExecuteTool executes a tool directly (used by demos/tests).
