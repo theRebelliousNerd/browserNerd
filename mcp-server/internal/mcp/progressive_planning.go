@@ -996,6 +996,8 @@ func filterInteractiveData(data map[string]interface{}, filter string) map[strin
 	typeCount := map[string]int{}
 	disabledCount := 0
 	total := 0
+	deadCount := 0
+	deadLabels := make([]string, 0)
 
 	for _, e := range elems {
 		elem, ok := e.(map[string]interface{})
@@ -1014,6 +1016,16 @@ func filterInteractiveData(data map[string]interface{}, filter string) map[strin
 		total += members
 		if disabled, ok := elem["disabled"].(bool); ok && disabled {
 			disabledCount += members
+		}
+		if dead, ok := elem["dead"].(bool); ok && dead {
+			deadCount += members
+			lbl := getStringFromMap(elem, "label")
+			if lbl == "" {
+				lbl = getStringFromMap(elem, "ref")
+			}
+			if lbl != "" {
+				deadLabels = append(deadLabels, lbl)
+			}
 		}
 	}
 
@@ -1042,13 +1054,36 @@ func filterInteractiveData(data map[string]interface{}, filter string) map[strin
 
 	out := map[string]interface{}{}
 	for k, v := range data {
-		if k == "summary" || k == "elements" {
+		if k == "summary" || k == "elements" || k == "dead_controls" {
 			continue
 		}
 		out[k] = v
 	}
 	out["summary"] = summary
 	out["elements"] = filtered
+	if deadCount > 0 {
+		seen := make(map[string]bool)
+		uniqueLabels := make([]string, 0, len(deadLabels))
+		for _, lbl := range deadLabels {
+			if !seen[lbl] {
+				seen[lbl] = true
+				uniqueLabels = append(uniqueLabels, lbl)
+				if len(uniqueLabels) == 10 {
+					break
+				}
+			}
+		}
+		deadOut := map[string]interface{}{
+			"count":  deadCount,
+			"labels": uniqueLabels,
+		}
+		if sourceDead, ok := data["dead_controls"].(map[string]interface{}); ok {
+			if pageMsg, ok := sourceDead["page"].(string); ok && pageMsg != "" {
+				deadOut["page"] = pageMsg
+			}
+		}
+		out["dead_controls"] = deadOut
+	}
 	return out
 }
 

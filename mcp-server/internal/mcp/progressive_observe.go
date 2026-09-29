@@ -260,8 +260,14 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 	if maxItems <= 0 {
 		maxItems = defaultProgressiveMaxItems
 	}
-	if filter == "" {
-		filter = "all"
+	var filterErr error
+	filter, filterErr = normalizeInteractiveFilter(filter)
+	if filterErr != nil {
+		return map[string]interface{}{
+			"success": false,
+			"status":  "error",
+			"error":   filterErr.Error(),
+		}, nil
 	}
 
 	// Handle new delegating modes that return early
@@ -311,10 +317,13 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 		delegateArgs := map[string]interface{}{
 			"session_id": sessionID,
 		}
-		for _, key := range []string{"full_page", "save_path", "format", "quality", "annotate"} {
+		for _, key := range []string{"full_page", "save_path", "format", "quality", "annotate", "filter"} {
 			if v, ok := args[key]; ok {
 				delegateArgs[key] = v
 			}
+		}
+		if _, hasFilter := delegateArgs["filter"]; !hasFilter && filter != "" {
+			delegateArgs["filter"] = filter
 		}
 		if ref := getStringArg(args, "ref"); ref != "" {
 			delegateArgs["element_ref"] = ref
@@ -547,7 +556,7 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 	var health map[string]interface{}
 
 	fetchState := mode == "state" || mode == "composite"
-	fetchNav := mode == "nav" || mode == "composite"
+	fetchNav := (mode == "nav" || mode == "composite") && (filter == "all" || filter == "links")
 	fetchInteractive := mode == "interactive" || mode == "composite"
 	fetchHidden := mode == "hidden" || (mode == "composite" && view == "full")
 	fetchContent := mode == "composite" && view != "summary"
@@ -560,8 +569,6 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 	planningFilter := filter
 	if includeActionPlan {
 		planningLimit = maxInt(maxItems, observePlanningGroups)
-		// Action planning benefits from seeing all interactive elements even if output filter is narrower.
-		planningFilter = "all"
 	}
 
 	if fetchState {
@@ -583,6 +590,14 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 			return nil, err
 		}
 		navData = asMap(res)
+	} else if mode == "nav" {
+		navData = map[string]interface{}{
+			"nav":    map[string]interface{}{},
+			"side":   map[string]interface{}{},
+			"main":   map[string]interface{}{},
+			"foot":   map[string]interface{}{},
+			"counts": map[string]interface{}{"total": 0, "internal": 0, "external": 0},
+		}
 	}
 
 	if fetchInteractive {
@@ -698,8 +713,12 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 
 		// Keep only candidates that match the *current* snapshot (prevents stale actions
 		// from prior pages), then collapse repeats and rank for the next decision.
-		current := filterActionCandidates(raw, buildRefSet(interactivePlanningData), buildHrefSet(navData))
-		annotateCandidatesFromRows(current, interactivePlanningData)
+		var allowedHrefs map[string]bool
+		if filter == "all" || filter == "links" {
+			allowedHrefs = buildHrefSet(navData)
+		}
+		current := filterActionCandidates(raw, buildRefSet(interactiveData), allowedHrefs)
+		annotateCandidatesFromRows(current, interactiveData)
 		actionCandidates = rankActionCandidates(groupActionCandidates(current))
 
 		currentURL := getStringFromMap(stateData, "url")
@@ -777,7 +796,7 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 		}
 		// Composite carries links as interactive rows with their href; the area map is
 		// mode nav.
-		if fetchNav && mode == "nav" {
+		if (fetchNav || mode == "nav") && len(navData) > 0 {
 			data["nav"] = navData
 		}
 		if fetchInteractive {
@@ -807,7 +826,7 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 		if fetchState {
 			data["state"] = stateData
 		}
-		if fetchNav {
+		if (fetchNav || mode == "nav") && len(navData) > 0 {
 			data["nav"] = navData
 		}
 		if fetchInteractive {
@@ -838,7 +857,11 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 			handles = append(handles, "observe:"+sessionID+":spec_context")
 		}
 	}
-	summary := observeSummaryLine(stateData, interactiveData, navData, health, len(actionCandidates))
+	var summaryNav map[string]interface{}
+	if filter == "all" || filter == "links" {
+		summaryNav = navData
+	}
+	summary := observeSummaryLine(stateData, interactiveData, summaryNav, health, len(actionCandidates))
 	emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
 
 	return withIntent(map[string]interface{}{

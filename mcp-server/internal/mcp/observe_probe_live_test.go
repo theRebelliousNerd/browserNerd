@@ -389,3 +389,189 @@ func TestLiveProbeObserveSessionsBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestObserveFilterHonouredAcrossModes(t *testing.T) {
+	p := startLiveProbe(t)
+
+	t.Run("composite mode honours filter buttons", func(t *testing.T) {
+		out := observeProbe(t, p, map[string]interface{}{
+			"session_id": p.session,
+			"mode":       "composite",
+			"view":       "full",
+			"filter":     "buttons",
+		})
+		data := asMap(out["data"])
+		summary := fmt.Sprintf("%v", out["summary"])
+
+		// Summary must not mention links when filtered to buttons
+		if strings.Contains(summary, "link(s)") {
+			t.Errorf("summary should not mention links when filter=buttons, got: %q", summary)
+		}
+
+		// Nav data must not be returned when filter=buttons
+		if nav, ok := data["nav"].(map[string]interface{}); ok && len(nav) > 0 {
+			if counts, ok := nav["counts"].(map[string]interface{}); ok && asInt(counts["total"]) > 0 {
+				t.Errorf("data.nav should not return links when filter=buttons, got: %v", nav)
+			}
+		}
+
+		// All interactive elements must be button-like
+		inter := asMap(data["interactive"])
+		elems := toAnySlice(inter["elements"])
+		if len(elems) == 0 {
+			t.Fatalf("expected buttons, got 0 elements")
+		}
+		for _, el := range elems {
+			elm := asMap(el)
+			typ := fmt.Sprintf("%v", elm["type"])
+			if typ != "button" && typ != "clickable" && typ != "tab" && typ != "menuitem" && typ != "option" && typ != "row" {
+				t.Errorf("unexpected non-button type %q in filter=buttons: %v", typ, elm)
+			}
+		}
+
+		// Recommendations and action candidates must not suggest link navigations or input typing
+		for _, recRaw := range toAnySlice(data["recommendations"]) {
+			rec := asMap(recRaw)
+			reason := strings.ToLower(fmt.Sprintf("%v", rec["reason"]))
+			if strings.Contains(reason, "navigate") || strings.Contains(reason, "home") || strings.Contains(reason, "second") {
+				t.Errorf("recommendation should not suggest link navigation when filter=buttons: %v", rec)
+			}
+		}
+	})
+
+	t.Run("composite mode honours filter inputs without dead button leak", func(t *testing.T) {
+		out := observeProbe(t, p, map[string]interface{}{
+			"session_id": p.session,
+			"mode":       "composite",
+			"view":       "full",
+			"filter":     "inputs",
+		})
+		data := asMap(out["data"])
+		summary := fmt.Sprintf("%v", out["summary"])
+
+		// Summary must not mention links
+		if strings.Contains(summary, "link(s)") {
+			t.Errorf("summary should not mention links when filter=inputs, got: %q", summary)
+		}
+
+		// The probe page has 1 dead button (dead-btn) and 0 dead inputs.
+		// dead_controls must not leak the dead button when filtered to inputs.
+		inter := asMap(data["interactive"])
+		if dead, ok := inter["dead_controls"].(map[string]interface{}); ok && asInt(dead["count"]) > 0 {
+			t.Errorf("filter=inputs must not report dead button in dead_controls, got: %v", dead)
+		}
+		if strings.Contains(summary, "dead control(s)") {
+			t.Errorf("summary should not report dead controls when no inputs are dead, got: %q", summary)
+		}
+
+		// All elements must be input-like
+		elems := toAnySlice(inter["elements"])
+		if len(elems) == 0 {
+			t.Fatalf("expected inputs, got 0 elements")
+		}
+		for _, el := range elems {
+			elm := asMap(el)
+			typ := fmt.Sprintf("%v", elm["type"])
+			if typ != "input" && typ != "checkbox" && typ != "radio" && typ != "combobox" {
+				t.Errorf("unexpected non-input type %q in filter=inputs: %v", typ, elm)
+			}
+		}
+	})
+
+	t.Run("interactive mode honours filter links", func(t *testing.T) {
+		out := observeProbe(t, p, map[string]interface{}{
+			"session_id": p.session,
+			"mode":       "interactive",
+			"view":       "compact",
+			"filter":     "links",
+		})
+		data := asMap(out["data"])
+		inter := asMap(data["interactive"])
+		elems := toAnySlice(inter["elements"])
+		if len(elems) == 0 {
+			t.Fatalf("expected links, got 0 elements")
+		}
+		for _, el := range elems {
+			elm := asMap(el)
+			if typ := fmt.Sprintf("%v", elm["type"]); typ != "link" {
+				t.Errorf("expected only link elements, got %s: %v", typ, elm)
+			}
+		}
+	})
+
+	t.Run("screenshot mode with annotate honours filter", func(t *testing.T) {
+		out := observeProbe(t, p, map[string]interface{}{
+			"session_id": p.session,
+			"mode":       "screenshot",
+			"annotate":   true,
+			"filter":     "buttons",
+		})
+		data := asMap(out["data"])
+		elems := toAnySlice(data["elements"])
+		if len(elems) == 0 {
+			t.Fatalf("expected annotated button elements, got 0")
+		}
+		for _, el := range elems {
+			elm := asMap(el)
+			typ := fmt.Sprintf("%v", elm["type"])
+			if typ != "button" && typ != "clickable" && typ != "tab" && typ != "menuitem" && typ != "option" && typ != "row" {
+				t.Errorf("screenshot annotate with filter=buttons must not annotate %s: %v", typ, elm)
+			}
+		}
+	})
+
+	t.Run("nav mode honours filter buttons by returning zero links", func(t *testing.T) {
+		out := observeProbe(t, p, map[string]interface{}{
+			"session_id": p.session,
+			"mode":       "nav",
+			"filter":     "buttons",
+		})
+		data := asMap(out["data"])
+		if nav, ok := data["nav"].(map[string]interface{}); ok {
+			if counts, ok := nav["counts"].(map[string]interface{}); ok && asInt(counts["total"]) > 0 {
+				t.Errorf("nav mode with filter=buttons must not return links, got: %v", nav)
+			}
+		}
+	})
+
+	t.Run("composite mode honours filter selects", func(t *testing.T) {
+		out := observeProbe(t, p, map[string]interface{}{
+			"session_id": p.session,
+			"mode":       "composite",
+			"filter":     "selects",
+		})
+		data := asMap(out["data"])
+		inter := asMap(data["interactive"])
+		elems := toAnySlice(inter["elements"])
+		if len(elems) != 2 {
+			t.Fatalf("expected 2 select elements (native select + combobox), got %d: %v", len(elems), elems)
+		}
+		for _, el := range elems {
+			elm := asMap(el)
+			typ := fmt.Sprintf("%v", elm["type"])
+			if typ != "select" && typ != "combobox" && typ != "listbox" && typ != "option" {
+				t.Errorf("unexpected non-select type %q in filter=selects: %v", typ, elm)
+			}
+		}
+	})
+
+	t.Run("invalid filter refused loudly", func(t *testing.T) {
+		tool := &BrowserObserveTool{sessions: p.manager, engine: p.engine}
+		res, err := tool.Execute(p.ctx, map[string]interface{}{
+			"session_id": p.session,
+			"filter":     "invalid_kind",
+		})
+		if err != nil {
+			// Refusal via Go error is acceptable
+			return
+		}
+		resMap := asMap(res)
+		if resMap["success"] == true {
+			t.Fatalf("expected invalid filter to fail, got success: %v", resMap)
+		}
+		errStr := fmt.Sprintf("%v", resMap["error"])
+		if !strings.Contains(errStr, "invalid") || !strings.Contains(errStr, "filter") {
+			t.Fatalf("expected error message to state invalid filter, got: %v", resMap["error"])
+		}
+	})
+}

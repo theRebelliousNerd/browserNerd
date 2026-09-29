@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"browsernerd-mcp-server/internal/security"
 )
 
 func TestDiscoverWorkspace_Found(t *testing.T) {
@@ -654,4 +656,97 @@ func TestExplicitConfigPathsAnchorToConfigFile(t *testing.T) {
 			t.Errorf("%s: expected %q, got %q", c.name, c.want, c.got)
 		}
 	}
+}
+
+// TestRepoArtifactsDirectoryInWritableRoots verifies that both the workspace config
+// (.browsernerd/config.yaml) and the machine config (dev_tools/BrowserNERD/mcp-server/config.yaml)
+// include the repo's artifacts/ directory in security.writable_roots.
+func TestRepoArtifactsDirectoryInWritableRoots(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	repoRoot, err := DiscoverWorkspace(cwd)
+	if err != nil || repoRoot == "" {
+		t.Fatalf("discovering repo workspace root from %s: %v", cwd, err)
+	}
+
+	expectedArtifactsDir := filepath.Join(repoRoot, "artifacts")
+
+	t.Run("workspace config includes artifacts", func(t *testing.T) {
+		cfg, ws, err := LoadWithWorkspace("", WorkspaceOptions{ExplicitDir: repoRoot})
+		if err != nil {
+			t.Fatalf("LoadWithWorkspace: %v", err)
+		}
+		if ws != repoRoot {
+			t.Fatalf("expected workspace %s, got %s", repoRoot, ws)
+		}
+		found := false
+		for _, root := range cfg.Security.WritableRoots {
+			if filepath.Clean(root) == filepath.Clean(expectedArtifactsDir) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %s in writable_roots, got %v", expectedArtifactsDir, cfg.Security.WritableRoots)
+		}
+	})
+
+	t.Run("explicit machine config includes artifacts", func(t *testing.T) {
+		explicitConfig := filepath.Join(repoRoot, "dev_tools", "BrowserNERD", "mcp-server", "config.yaml")
+		cfg, _, err := LoadWithWorkspace(explicitConfig, WorkspaceOptions{Disable: true})
+		if err != nil {
+			t.Fatalf("LoadWithWorkspace explicit: %v", err)
+		}
+		found := false
+		for _, root := range cfg.Security.WritableRoots {
+			if filepath.Clean(root) == filepath.Clean(expectedArtifactsDir) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %s in writable_roots, got %v", expectedArtifactsDir, cfg.Security.WritableRoots)
+		}
+	})
+
+	t.Run("workspace path policy allows write into artifacts directory", func(t *testing.T) {
+		cfg, _, err := LoadWithWorkspace("", WorkspaceOptions{ExplicitDir: repoRoot})
+		if err != nil {
+			t.Fatalf("LoadWithWorkspace: %v", err)
+		}
+		policy, err := security.NewPathPolicy(cfg.Security.BaseDir, cfg.Security.WritableRoots)
+		if err != nil {
+			t.Fatalf("NewPathPolicy: %v", err)
+		}
+		targetFile := filepath.Join(expectedArtifactsDir, "live-verification", "test-evidence.png")
+		resolved, err := policy.ResolveForWrite(targetFile, policy.DefaultRoot(), "test-evidence.png")
+		if err != nil {
+			t.Fatalf("expected write to %s to be allowed: %v", targetFile, err)
+		}
+		if filepath.Clean(resolved) != filepath.Clean(targetFile) {
+			t.Errorf("expected %s, got %s", targetFile, resolved)
+		}
+	})
+
+	t.Run("explicit machine config path policy allows write into artifacts directory", func(t *testing.T) {
+		explicitConfig := filepath.Join(repoRoot, "dev_tools", "BrowserNERD", "mcp-server", "config.yaml")
+		cfg, _, err := LoadWithWorkspace(explicitConfig, WorkspaceOptions{Disable: true})
+		if err != nil {
+			t.Fatalf("LoadWithWorkspace explicit: %v", err)
+		}
+		policy, err := security.NewPathPolicy(cfg.Security.BaseDir, cfg.Security.WritableRoots)
+		if err != nil {
+			t.Fatalf("NewPathPolicy: %v", err)
+		}
+		targetFile := filepath.Join(expectedArtifactsDir, "live-verification", "test-evidence.png")
+		resolved, err := policy.ResolveForWrite(targetFile, policy.DefaultRoot(), "test-evidence.png")
+		if err != nil {
+			t.Fatalf("expected write to %s to be allowed: %v", targetFile, err)
+		}
+		if filepath.Clean(resolved) != filepath.Clean(targetFile) {
+			t.Errorf("expected %s, got %s", targetFile, resolved)
+		}
+	})
 }

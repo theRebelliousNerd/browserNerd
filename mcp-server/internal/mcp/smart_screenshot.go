@@ -93,6 +93,11 @@ func (t *ScreenshotTool) InputSchema() map[string]interface{} {
 				"type":        "integer",
 				"description": "JPEG quality 1-100 (default: 90). Ignored for png.",
 			},
+			"filter": map[string]interface{}{
+				"type":        "string",
+				"description": "annotate: filter by control kind ('all', 'buttons', 'inputs', 'links', 'selects', default 'all')",
+				"enum":        []string{"all", "buttons", "inputs", "links", "selects"},
+			},
 		},
 		"required": []string{"session_id"},
 	}
@@ -142,6 +147,10 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	if quality > 100 {
 		quality = 100
 	}
+	filter, filterErr := normalizeInteractiveFilter(getStringArg(args, "filter"))
+	if filterErr != nil {
+		return map[string]interface{}{"success": false, "error": filterErr.Error()}, nil
+	}
 
 	if sessionID == "" {
 		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
@@ -188,7 +197,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	var annotated []BoundingBox
 	inView := 0
 	if annotate && elementRef == "" {
-		boxes, extractErr := t.extractBoundingBoxes(capture, !fullPage)
+		boxes, extractErr := t.extractBoundingBoxes(capture, !fullPage, filter)
 		if extractErr != nil {
 			return map[string]interface{}{"success": false, "error": extractErr.Error()}, nil
 		}
@@ -270,12 +279,13 @@ func activateWithin(page *rod.Page, d time.Duration) error {
 }
 
 // boxScript lists the visible interactive elements with their boxes in image pixels.
-// It takes {viewportOnly, document} as data: viewportOnly keeps only elements that
+// It takes {viewportOnly, document, filter} as data: viewportOnly keeps only elements that
 // intersect the viewport, and document offsets boxes by the scroll position for a
 // full-page image. Refs and types come from elementRefScript, which
 // get-interactive-elements and the resolver share, so an overlay ref names the same
 // element and resolves back to it.
 const boxScript = `(opts) => {` + elementRefScript + `
+	const filter = opts.filter || 'all';
 	const vw = window.innerWidth;
 	const vh = window.innerHeight;
 	const dpr = window.devicePixelRatio || 1;
@@ -283,6 +293,7 @@ const boxScript = `(opts) => {` + elementRefScript + `
 	const sy = opts.document ? window.scrollY : 0;
 	const boxes = [];
 	__bnElementRefs().forEach((record) => {
+		if (!__bnMatchesFilter(record, filter)) return;
 		const el = record.el;
 		const rect = el.getBoundingClientRect();
 		const style = getComputedStyle(el);
@@ -294,12 +305,23 @@ const boxScript = `(opts) => {` + elementRefScript + `
 		if (opts.viewportOnly && (rect.bottom <= 0 || rect.right <= 0 || rect.top >= vh || rect.left >= vw)) {
 			return;
 		}
+		const classified = __bnClassify(record);
+		if (filter !== 'all') {
+			const allowedButtons = new Set(['button', 'clickable', 'tab', 'menuitem', 'option', 'row']);
+			const allowedInputs = new Set(['input', 'checkbox', 'radio', 'combobox']);
+			const allowedLinks = new Set(['link']);
+			const allowedSelects = new Set(['select', 'combobox', 'listbox', 'option']);
+			if (filter === 'buttons' && !allowedButtons.has(classified.type)) return;
+			if (filter === 'inputs' && !allowedInputs.has(classified.type)) return;
+			if (filter === 'links' && !allowedLinks.has(classified.type)) return;
+			if (filter === 'selects' && !allowedSelects.has(classified.type)) return;
+		}
 		boxes.push({
 			x: (rect.x + sx) * dpr,
 			y: (rect.y + sy) * dpr,
 			width: rect.width * dpr,
 			height: rect.height * dpr,
-			type: __bnClassify(record).type,
+			type: classified.type,
 			label: __bnAccessibleLabel(el),
 			ref: record.ref
 		});
@@ -309,13 +331,18 @@ const boxScript = `(opts) => {` + elementRefScript + `
 
 // extractBoundingBoxes returns the visible interactive elements in document order,
 // numbered from 0. viewportOnly keeps only those intersecting the viewport; otherwise
-// boxes are placed in full-page image coordinates.
+// boxes are placed in full-page image coordinates. Optional filter restricts elements by kind.
 func (t *ScreenshotTool) extractBoundingBoxes(page interface {
 	Eval(string, ...interface{}) (*proto.RuntimeRemoteObject, error)
-}, viewportOnly bool) ([]BoundingBox, error) {
+}, viewportOnly bool, filter ...string) ([]BoundingBox, error) {
+	f := "all"
+	if len(filter) > 0 && filter[0] != "" {
+		f = filter[0]
+	}
 	result, err := page.Eval(boxScript, map[string]interface{}{
 		"viewportOnly": viewportOnly,
 		"document":     !viewportOnly,
+		"filter":       f,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract elements: %w", err)
