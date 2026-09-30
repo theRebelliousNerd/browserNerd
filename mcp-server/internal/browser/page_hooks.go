@@ -66,17 +66,13 @@ const pageHookFunction = `() => {
 	const infoPatterns = /info|information|note/i;
 
 	const detectToastLevel = (el) => {
-		const role = (el.getAttribute('role') || '').toLowerCase();
-		const ariaLive = (el.getAttribute('aria-live') || '').toLowerCase();
 		const dataType = (el.getAttribute('data-type') || el.getAttribute('data-status') || el.getAttribute('data-variant') || '').toLowerCase();
-		const combined = classOf(el).toLowerCase() + ' ' + role + ' ' + dataType;
-		if (errorPatterns.test(combined)) return 'error';
-		if (warningPatterns.test(combined)) return 'warning';
-		if (successPatterns.test(combined)) return 'success';
-		if (infoPatterns.test(combined)) return 'info';
-		// role="alert" is implicitly assertive: an interruption, not a note.
-		if (ariaLive === 'assertive' || role === 'alert' || role === 'alertdialog') return 'error';
-		if (errorPatterns.test((el.textContent || '').substring(0, 200))) return 'error';
+		for (const descriptor of [dataType, classOf(el), (el.textContent || '').substring(0, 200)]) {
+			if (errorPatterns.test(descriptor)) return 'error';
+			if (warningPatterns.test(descriptor)) return 'warning';
+			if (successPatterns.test(descriptor)) return 'success';
+			if (infoPatterns.test(descriptor)) return 'info';
+		}
 		return 'info';
 	};
 

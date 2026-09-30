@@ -149,6 +149,15 @@ current session and reports causal evidence for violations.
   pass/fail facts plus compact causal diagnosis.
 - Query and assertion failures are explicit; no fallback may turn evaluation
   failure into a passing or ordinary failed assertion.
+- Form-submit evidence uses the instant before dispatching the
+  submit action for both the starting URL and submission timestamp. A POST
+  initiated synchronously by the click remains eligible as login evidence;
+  timestamps equal to submission are valid. Failed dispatches emit no
+  submission fact.
+- Toast severity follows explicit variants and status attributes before
+  falling back to message text. ARIA alert roles and assertive live regions
+  announce urgency, not error severity. A successful authentication
+  notification is not a user-visible error.
 
 ## Lifecycle Contract
 
@@ -162,7 +171,9 @@ current session and reports causal evidence for violations.
 - Idle reaping is configurable and disabled only by an explicit zero timeout.
 - Browser shutdown terminates launched Chrome process trees and removes their
   temporary user-data directories on all exit paths (MCP client disconnect, stdin
-  EOF, SIGINT/SIGTERM, panic recovery, and normal exit).
+  EOF, SIGINT/SIGTERM, panic recovery, and normal exit). Removal retries for up
+  to five seconds while Windows releases profile file handles; persistent
+  removal failures remain errors.
 - On startup, the server reaps orphaned Chrome process trees whose command line
   carries a BrowserNERD/rod user-data directory and whose launching server process
   is dead (never touching a Chrome it cannot prove it launched), removes their

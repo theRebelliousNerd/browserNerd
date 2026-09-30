@@ -53,6 +53,31 @@ call still running past its timeout - and `status: ok | degraded`; the CLI
 exits nonzero when degraded. The CLI checks its own environment, so run it with the MCP server's
 env block to mirror the server.
 
+## Codex connection
+
+The Cross-Thread Codex configuration and the machine's Codex configuration
+register `browsernerd` as a stdio server through `.codex/run-browsernerd.ps1`.
+The launcher resolves the binary and explicit configuration under
+`dev_tools/BrowserNERD/mcp-server/` from its own location and pins
+`--workspace-dir` to the Cross-Thread root. Its behavior does not depend on
+the MCP client's working directory. Startup allows 60 seconds and tool calls
+allow 180 seconds.
+
+The launcher preserves an existing `BROWSERNERD_TEST_PASSWORD` environment
+variable. Otherwise it reads the BrowserNERD environment entry from the
+gitignored project `.mcp.json`, then the user's `.claude.json`, and passes the
+value through the server process environment. Credentials are never embedded
+in the tracked launcher, Codex configuration, command arguments, or output.
+An absent credential leaves the server available for unauthenticated work;
+the doctor reports it and credential-dependent fixtures fail explicitly.
+
+`.codex/run-browsernerd.ps1 -Doctor` checks the configuration and credential
+environment that Codex uses. `-Version` reports the installed binary. After
+configuration changes, reconnect MCP or start a new Codex session to load the
+registered tools. Verify the stdio handshake and tool inventory through the
+launcher, then exercise `launch-browser`, `browser-act`, `browser-observe`,
+and `browser-test` against a real page.
+
 ## Every call has a deadline
 
 A tool call runs under `mcp.tool_timeout` (default 2m, floor 5s) plus the

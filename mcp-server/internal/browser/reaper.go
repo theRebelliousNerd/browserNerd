@@ -115,14 +115,17 @@ func removeUserDataDir(dir string) error {
 		return fmt.Errorf("safety refusal: path %q is not a BrowserNERD/rod temp user-data dir", dir)
 	}
 	var err error
-	for i := 0; i < 5; i++ {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
 		err = os.RemoveAll(dir)
 		if err == nil || os.IsNotExist(err) {
 			return nil
 		}
+		if !time.Now().Before(deadline) {
+			return err
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return err
 }
 
 // SetProcessQuerier overrides the process querier (used by tests).
