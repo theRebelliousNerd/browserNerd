@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Secure Declarative Browser Automation
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-09-30
 doc_type: spec
 subsystem: infra
 read_when: Changing BrowserNERD security, browser automation, spec delivery, test generation, or workspace configuration
@@ -66,6 +66,18 @@ input corpus, not BrowserNERD-owned platform surfaces.
    and execution-time limits. Panics are converted to explicit errors.
 9. Every browser session can be closed independently. Maximum session count
    and idle reaping prevent unbounded contexts, goroutines, and pollers.
+
+## Scoped Diagnostic Evidence
+
+`browser_reason` derives success-toast/request-failure contradictions from the
+same joined, deduplicated evidence used by its scorecard. Session, navigation,
+action and time-window boundaries apply to both requests and toasts. An old
+failure cannot turn a fresh successful action into an error, and an old toast
+cannot contradict a fresh request failure. Strict bounded reads exclude
+untimestamped events; an explicit unbounded history read retains its normal
+history semantics. Cancelled network requests without an HTTP error do not
+count as failures. A contradiction is coincident evidence within the selected
+scope, not proof that a toast and request have a causal relationship.
 
 ## Configuration Contract
 

@@ -499,7 +499,7 @@ func collectBrowserEvidence(ctx context.Context, engine *mangle.Engine, scope re
 	}
 	ev.backendRootCauses = filterRowsSinceScoped(rootCauses, []string{"Ts", "Timestamp"}, scope.sinceMs, scope.strict)
 	ev.blocking = filterRowsByField(queryToRows(ctx, engine, "interaction_blocked(SessionId, Reason)."), "SessionId", sid)
-	ev.contradictions = detectContradictions(ctx, engine, sid)
+	ev.contradictions = detectContradictions(ev)
 	return ev
 }
 
