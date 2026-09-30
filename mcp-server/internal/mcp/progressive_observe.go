@@ -42,6 +42,7 @@ func (t *BrowserObserveTool) Description() string {
   scroll, content unreachable in drawers/menus or under a phone toolbar, columns that never stack,
   small tap targets, covered content), DOM geometry checked against pixels, annotated screenshot.
   viewports:["phone","tablet"] audits each size (restored after); url reloads per size.
+  Waits out skeletons and pending requests; readiness:"still_loading" if they never end.
 - sessions: live tabs. doctor: BrowserNERD's own health (stale binary, wedged calls, env).
   state|nav|hidden|grids|react|dom_snapshot: narrow slices.
 view: summary < compact (default) < full.`
@@ -119,6 +120,10 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			"thresholds": map[string]interface{}{
 				"type":        "object",
 				"description": "layout: min_overlap_px, tap_target_px, min_column_px, collapse_below, max_findings",
+			},
+			"ready_timeout_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "layout: max wait per viewport for loading (default 20000)",
 			},
 			"format": map[string]interface{}{
 				"type":        "string",

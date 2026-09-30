@@ -19,6 +19,10 @@ import (
 	"browsernerd-mcp-server/internal/security"
 )
 
+// slowDataDelay is how long loading.html's data call takes: long enough that
+// an audit that does not wait sees only the skeleton.
+const slowDataDelay = 2 * time.Second
+
 // layoutHarness is headless Chrome with one session and the layout fixtures
 // served over HTTP.
 type layoutHarness struct {
@@ -52,8 +56,29 @@ func startLayoutHarness(t *testing.T) *layoutHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer(http.FileServer(http.Dir(dir)))
+	// /slow-data is the data call loading.html waits on: it answers after
+	// slowDataDelay, or with ?never=1 not until the test ends.
+	released := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.Handle("/", http.FileServer(http.Dir(dir)))
+	mux.HandleFunc("/slow-data", func(w http.ResponseWriter, r *http.Request) {
+		wait := time.After(slowDataDelay)
+		if r.URL.Query().Get("never") != "" {
+			wait = nil
+		}
+		select {
+		case <-wait:
+		case <-released:
+			return
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"label":"Proprietary","title":"Managed network service"}`))
+	})
+	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(released) })
 	session, err := manager.CreateSession(ctx, "about:blank")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -166,6 +191,13 @@ func contains(list []string, s string) bool {
 func (h *layoutHarness) checkFixture(t *testing.T, page string) []layout.Finding {
 	t.Helper()
 	findings, _ := h.audit(t, page)
+	h.checkFindings(t, page, findings)
+	return findings
+}
+
+// checkFindings holds audited findings to the marks on the page now shown.
+func (h *layoutHarness) checkFindings(t *testing.T, page string, findings []layout.Finding) {
+	t.Helper()
 	marks := h.marks(t)
 	got := map[string]map[string]bool{} // mark id -> types reported naming it
 	for _, f := range findings {
@@ -212,7 +244,6 @@ func (h *layoutHarness) checkFixture(t *testing.T, page string) []layout.Finding
 	for _, f := range findings {
 		t.Logf("%s: #%d %s %s cv=%s %s", page, f.N, f.Type, f.Severity, f.CV, f.Message)
 	}
-	return findings
 }
 
 func findingsOfType(fs []layout.Finding, typ string) []layout.Finding {
@@ -368,4 +399,145 @@ func TestLiveLayoutMultiViewport(t *testing.T) {
 		t.Errorf("three-viewport compact response costs ~%d tokens, budget 3000", tokens)
 	}
 	t.Logf("summary: %v (~%d tokens)", m["summary"], responseTokens(t, res))
+}
+
+// layoutCall runs a layout audit and fails the test unless it succeeded.
+func (h *layoutHarness) layoutCall(t *testing.T, args map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	args["session_id"] = h.session
+	args["mode"] = "layout"
+	res, err := h.observe.Execute(h.ctx, args)
+	if err != nil {
+		t.Fatalf("layout %v: %v", args, err)
+	}
+	m := asMap(res)
+	if m["success"] != true {
+		t.Fatalf("layout %v failed: %v", args, m["error"])
+	}
+	return m
+}
+
+// TestLiveLayoutReadiness proves the audit measures a page's content rather
+// than its loading frame: it waits out a skeleton, and a page that never
+// finishes loading is reported as still loading, never as clean.
+func TestLiveLayoutReadiness(t *testing.T) {
+	h := startLayoutHarness(t)
+
+	t.Run("an audit that does not wait sees only the skeleton", func(t *testing.T) {
+		h.act1(t, map[string]interface{}{"type": "viewport", "preset": "phone"})
+		h.act1(t, map[string]interface{}{"type": "navigate", "url": h.baseURL + "/loading.html"})
+		m := h.layoutCall(t, map[string]interface{}{"view": "full", "ready_timeout_ms": 0})
+		if m["readiness"] != readinessStillLoading {
+			t.Fatalf("an immediate audit of the skeleton reports readiness %v, want still_loading: %s", m["readiness"], mustJSON(t, m))
+		}
+		if fs, _ := asMap(m["data"])["findings"].([]layout.Finding); len(findingsOfType(fs, layout.TypeOverlap)) != 0 {
+			t.Fatalf("the skeleton frame already holds the overlap; the fixture no longer proves the wait")
+		}
+		t.Logf("immediate: %v", m["summary"])
+	})
+
+	t.Run("waits for the content and catches its defect", func(t *testing.T) {
+		findings, m := h.audit(t, "loading.html")
+		data := asMap(m["data"])
+		ready := asMap(data["readiness"])
+		if m["readiness"] != readinessReady || ready["state"] != readinessReady {
+			t.Fatalf("readiness %v / %v, want ready: %s", m["readiness"], ready, mustJSON(t, m))
+		}
+		if _, ok := data["warning"]; ok {
+			t.Errorf("a settled page carries a warning: %v", data["warning"])
+		}
+		if len(findingsOfType(findings, layout.TypeOverlap)) == 0 {
+			t.Fatalf("the audit did not wait for the content: no overlap found; summary %v", m["summary"])
+		}
+		h.checkFindings(t, "loading.html", findings)
+		t.Logf("waited %vms: %v", ready["waited_ms"], m["summary"])
+	})
+
+	t.Run("a page that never finishes loading is still_loading, not clean", func(t *testing.T) {
+		h.act1(t, map[string]interface{}{"type": "navigate", "url": h.baseURL + "/loading.html?never=1"})
+		start := time.Now()
+		m := h.layoutCall(t, map[string]interface{}{"ready_timeout_ms": 1500})
+		if took := time.Since(start); took > 15*time.Second {
+			t.Errorf("a 1500 ms readiness wait took %s", took)
+		}
+		data := asMap(m["data"])
+		ready := asMap(data["readiness"])
+		if m["readiness"] != readinessStillLoading || ready["state"] != readinessStillLoading {
+			t.Fatalf("readiness %v / %v, want still_loading: %s", m["readiness"], ready, mustJSON(t, m))
+		}
+		if n, _ := numberValue(ready["placeholders"]); n < 1 {
+			t.Errorf("no placeholders counted: %v", ready)
+		}
+		if w, _ := data["warning"].(string); !strings.Contains(w, "loading state") {
+			t.Errorf("no loading-state warning: %q", w)
+		}
+		if ws, _ := m["warnings"].([]string); len(ws) != 1 {
+			t.Errorf("top-level warnings %v, want one", m["warnings"])
+		}
+		summary, _ := m["summary"].(string)
+		if strings.HasSuffix(summary, "no layout findings") || !strings.Contains(summary, readinessStillLoading) {
+			t.Errorf("the summary reads like a clean page: %q", summary)
+		}
+		t.Logf("never: %s", summary)
+	})
+
+	t.Run("a request in flight with nothing on screen is network_busy", func(t *testing.T) {
+		h.act1(t, map[string]interface{}{"type": "navigate", "url": h.baseURL + "/loading.html?never=1&bare=1"})
+		m := h.layoutCall(t, map[string]interface{}{"ready_timeout_ms": 1500})
+		ready := asMap(asMap(m["data"])["readiness"])
+		if m["readiness"] != readinessNetworkBusy {
+			t.Fatalf("readiness %v, want network_busy: %s", m["readiness"], mustJSON(t, m))
+		}
+		if n, _ := numberValue(ready["in_flight"]); n < 1 {
+			t.Errorf("the pending data call, sent before the audit began, is not counted: %v", ready)
+		}
+	})
+
+	t.Run("each viewport waits for its own load", func(t *testing.T) {
+		h.act1(t, map[string]interface{}{"type": "viewport", "reset": true})
+		m := h.layoutCall(t, map[string]interface{}{"url": h.baseURL + "/loading.html", "viewports": []interface{}{"phone", "desktop"}})
+		if m["readiness"] != readinessReady {
+			t.Fatalf("readiness %v, want ready: %s", m["readiness"], mustJSON(t, m))
+		}
+		blocks, _ := asMap(m["data"])["viewports"].([]map[string]interface{})
+		if len(blocks) != 2 {
+			t.Fatalf("want 2 viewport blocks, got %d", len(blocks))
+		}
+		for k, b := range blocks {
+			if state := asMap(b["readiness"])["state"]; state != readinessReady {
+				t.Errorf("viewport %d readiness %v, want ready", k, state)
+			}
+			rows, _ := b["findings"].([]map[string]interface{})
+			overlap := false
+			for _, r := range rows {
+				if r["type"] == layout.TypeOverlap {
+					overlap = true
+				}
+			}
+			if !overlap {
+				t.Errorf("viewport %d missed the overlap that arrives with the data: %v", k, rows)
+			}
+		}
+
+		m = h.layoutCall(t, map[string]interface{}{"url": h.baseURL + "/loading.html?never=1", "viewports": []interface{}{"phone", "desktop"}, "ready_timeout_ms": 1000})
+		if m["readiness"] != readinessStillLoading {
+			t.Fatalf("readiness %v, want still_loading: %s", m["readiness"], mustJSON(t, m))
+		}
+		blocks, _ = asMap(m["data"])["viewports"].([]map[string]interface{})
+		for k, b := range blocks {
+			if state := asMap(b["readiness"])["state"]; state != readinessStillLoading {
+				t.Errorf("viewport %d readiness %v, want still_loading", k, state)
+			}
+			if w, _ := b["warning"].(string); w == "" {
+				t.Errorf("viewport %d carries no warning", k)
+			}
+		}
+		if ws, _ := m["warnings"].([]string); len(ws) != 2 {
+			t.Errorf("top-level warnings %v, want one per viewport", m["warnings"])
+		}
+		if h.manager.HasViewportOverride(h.session) {
+			t.Errorf("the session kept an override after the multi-viewport audit")
+		}
+		t.Logf("multi never: %v", m["summary"])
+	})
 }

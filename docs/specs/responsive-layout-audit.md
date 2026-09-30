@@ -98,6 +98,7 @@ Arguments beyond `session_id` and `view`:
 |---|---|
 | `viewports` | run the audit once per entry - a preset name or a `viewport` object - and restore the session's viewport afterwards |
 | `url` | navigate the session to `url` under each viewport before auditing it, so each size gets a fresh load |
+| `ready_timeout_ms` | how long each viewport's audit waits for the page to finish loading (default 20000, at most 120000; 0 audits at once but still reports the page's readiness) |
 | `checks` | limit to some finding types (default all) |
 | `thresholds` | `min_overlap_px` (default 3), `tap_target_px` (44), `min_column_px` (140), `collapse_below` (640), `max_findings` (200) |
 | `max_items` | compact rows per viewport (default 20) |
@@ -113,6 +114,57 @@ against the device (the root element's client box, 390x844 on `phone`),
 reports the widened width as `viewport.layout_width`, and names the cause as
 `horizontal_overflow` whatever the root's `overflow-x` says, because on a
 phone the page loads zoomed out either way.
+
+### Readiness: audit the content, not the loading frame
+
+A page whose data takes 5-30 s shows grey skeleton cards first, and a
+skeleton has no overlapping badges or bleeding labels. An audit of that frame
+comes back clean, and a clean verdict on the loading state reads like
+success. So before it measures, every audit - at the session's size, and at
+each entry of `viewports`, after that size's load when `url` is given - waits
+up to `ready_timeout_ms` for the page to settle. The page is settled when
+both hold on two polls 250 ms apart:
+
+- **Network quiet.** No request of the tab's in flight and none started or
+  ended in the last 500 ms. The session tracks every request of its tab from
+  the moment it opens, so a fetch started before the audit was called counts.
+  Long-lived connections are not load: WebSockets, EventSource streams, and a
+  request in flight for more than 60 s (a long poll or a streaming response)
+  are left out. Without the event stream (Mangle disabled) the tab's requests
+  are not tracked, the network signal is `untracked`, and a `url` load waits
+  for network idle instead.
+- **No loading placeholder rendered.** Generic signals only, never an app's
+  own markup: an element with `aria-busy="true"`; an indeterminate progress
+  indicator (`role="progressbar"` without `aria-valuenow`, `<progress>`
+  without `value`); a skeleton or shimmer (`animate-pulse` larger than a
+  16 px status dot, `animate-spin`, a class containing `skeleton` or
+  `shimmer`, `data-loading="true"`, `data-skeleton`); and a live region
+  (`role="status"`, `aria-live`) or a short standalone text reading
+  "Loading", "Loading…" or "Loading contacts...". A placeholder counts only
+  when it is rendered (`checkVisibility` with opacity and visibility), and
+  only the outermost of nested placeholders counts, so a skeleton card of
+  six pulsing lines is one.
+
+The block's `readiness` reports the outcome:
+
+| `state` | Meaning |
+|---|---|
+| `ready` | settled within the wait |
+| `still_loading` | placeholders were still rendered when the wait ran out; the findings describe the loading state |
+| `network_busy` | no placeholder was rendered, but requests were still in flight or starting when the wait ran out; content that arrives later can still move the layout |
+| `unknown` | the page could not be probed (it navigated or its renderer did not answer) |
+
+with `waited_ms`, `placeholders` (the count), `samples` (up to five of their
+selectors), `in_flight` and `network` (`tracked` or `untracked`). An audit
+that is not `ready` still returns its findings, adds a `warning` to the block
+("audited while 6 loading placeholders were visible; results cover the loading
+state"), and its summary line says so after the counts, so a caller never
+reads a bare "no layout findings" off a loading page. The response carries a
+top-level `readiness`, the worst state of its viewports (`still_loading`
+over `network_busy` over `unknown` over `ready`), and `warnings`, one line
+per viewport that was not ready. `ready_timeout_ms: 0` skips the wait but
+still probes once, so a caller who audits deliberately mid-load still gets
+the honest verdict.
 
 ### Findings
 
@@ -172,7 +224,8 @@ into one row with `count` and the members' selectors.
 
 ### Pipeline
 
-1. **Settle.** Wait two animation frames and `document.fonts.ready`.
+1. **Settle.** Wait for readiness (above), then two animation frames and
+   `document.fonts.ready`.
 2. **Capture geometry.** One `DOMSnapshot.captureSnapshot` of the main
    frame's document, with layout bounds, client and scroll rects, paint
    order, inline text boxes, and a fixed list of computed styles (display,
@@ -246,15 +299,18 @@ for (`unreachable`, `toolbar_cutoff`, `occlusion`, `non_collapsing`,
 ### Response
 
 `data.viewport` (the measured size, scale, mobile, touch, toolbar height,
-preset, document size and scroll), `data.counts` (by type and severity),
+preset, document size and scroll), `data.readiness` and, when it is not
+`ready`, `data.warning`; `data.counts` (by type and severity),
 `data.findings` (compact rows: `n`, `type`, `severity`, `message`, the
 elements' selectors and refs, `count` for a group; `view: full` adds rects,
 metrics and every finding), and `data.screenshot` (`file_path`, `width`,
 `height`, `annotated`). With `viewports`, `data.viewports` holds one such
 block per viewport (default 10 rows each) and `data.recurring` names the
 findings seen at more than one size; a viewport whose `url` failed to load
-carries `navigate_error`. The `summary` line gives the size and the counts,
-and `next_step` is a `browser-observe` `mode: screenshot` of the first high
+carries `navigate_error`. Top level: `readiness` (the worst state) and, when
+any viewport was not ready, `warnings`. The `summary` line gives the size, the
+counts and, for a viewport that was not ready, its readiness warning, and
+`next_step` is a `browser-observe` `mode: screenshot` of the first high
 finding's control, by `ref`. Evidence handle: `observe:<session>:layout`.
 Budget: a three-viewport compact response stays under 3,000 tokens
 (`TestLiveLayoutMultiViewport`).
@@ -282,7 +338,15 @@ element the audit misses and on any finding that names no element marked
 intentional patterns listed above, must produce no finding. The same file
 proves the viewport operation sizes only its own tab and resets, that the
 phone-only checks stay quiet at `desktop`, and the multi-viewport flow and
-its restore. `mcp-server/internal/mcp/observe_layout_test.go` covers the
+its restore. `TestLiveLayoutReadiness` in the same file proves readiness on
+`loading.html`: a page that shows a skeleton while a fetch the fixture server
+holds for about two seconds is in flight, then swaps in content with an
+overlap. Audited straight after navigation it must wait, report `ready`, and
+catch the overlap; with `?never=1` the fetch never returns and the skeleton
+stays, and a short `ready_timeout_ms` must yield `still_loading` with the
+placeholder count, a warning and a summary that does not read clean, never a
+bare "no layout findings"; the same holds per block under `viewports`.
+`mcp-server/internal/mcp/observe_layout_test.go` covers the
 authored-style cascade and the operation's validation.
 `mcp-server/internal/mcp/observe_layout_smoke_live_test.go` audits a running
 app on demand: pointed at a signed-in shared browser
@@ -304,3 +368,4 @@ its tab.
 | `taps.html` | a 20 px button, a bare checkbox, a 26 px-tall link |
 | `occlusion.html` | a title under a fixed header, a last button under a fixed footer |
 | `clean.html` | none: every intentional pattern above |
+| `loading.html` | a skeleton card while `/slow-data` is pending, then two badges on each other; `?never=1` keeps the skeleton forever |

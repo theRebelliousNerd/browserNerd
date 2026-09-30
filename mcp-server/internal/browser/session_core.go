@@ -61,6 +61,7 @@ type sessionRecord struct {
 	isolated     *rod.Browser
 	registry     *ElementRegistry // Per-session element cache for reliable re-identification
 	activity     *sessionRuntimeEvidenceBuffer
+	net          *networkActivity   // Requests in flight; nil without an event stream
 	streamCancel context.CancelFunc // Cancels long-lived background event ingestion for this session
 	// attendedMs is when the last tool call that acted on or observed this
 	// tab ended; a navigation after it happened while no call was looking.

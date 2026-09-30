@@ -38,6 +38,11 @@ func (m *SessionManager) startEventStream(ctx context.Context, sessionID string,
 			mainFrame = tree.FrameTree.Frame.ID
 		}
 		capture = newCaptureState(mainFrame)
+		m.mu.Lock()
+		if rec := m.sessions[sessionID]; rec != nil {
+			rec.net = capture.net
+		}
+		m.mu.Unlock()
 
 		// The trackers run in every new document before its own scripts, and
 		// once now for a tab that is already showing a page.
@@ -150,15 +155,18 @@ func (m *SessionManager) subscribeRuntimeEvents(ctx context.Context, sessionID s
 			m.onLogEntry(ctx, sessionID, capture, ev.Entry)
 		},
 		func(ev *proto.NetworkRequestWillBeSent) {
+			capture.net.started(ev.RequestID, ev.Type, time.Now())
 			m.onRequestWillBeSent(ctx, sessionID, capture, captureHeaders, ev)
 		},
 		func(ev *proto.NetworkResponseReceived) {
 			m.onResponseReceived(ctx, sessionID, capture, captureHeaders, ev)
 		},
 		func(ev *proto.NetworkLoadingFinished) {
+			capture.net.ended(ev.RequestID, time.Now())
 			m.onLoadingFinished(capture, ev)
 		},
 		func(ev *proto.NetworkLoadingFailed) {
+			capture.net.ended(ev.RequestID, time.Now())
 			m.onLoadingFailed(ctx, sessionID, capture, ev, time.Now())
 		},
 		func(ev *proto.NetworkWebSocketCreated) {

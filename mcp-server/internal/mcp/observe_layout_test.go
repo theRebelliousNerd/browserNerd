@@ -3,6 +3,7 @@ package mcp
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 
@@ -110,5 +111,34 @@ func TestResolveViewportPresetsAndOverrides(t *testing.T) {
 	}
 	if got := v.String(); !strings.Contains(got, "768x1024@2") {
 		t.Errorf("String: %s", got)
+	}
+}
+
+func TestLayoutReadyTimeoutAndVerdict(t *testing.T) {
+	if d, err := layoutReadyTimeout(map[string]interface{}{}); err != nil || d != 20*time.Second {
+		t.Errorf("default: %s %v", d, err)
+	}
+	if d, err := layoutReadyTimeout(map[string]interface{}{"ready_timeout_ms": float64(0)}); err != nil || d != 0 {
+		t.Errorf("zero: %s %v", d, err)
+	}
+	for _, bad := range []interface{}{float64(-1), "soon", float64(layoutReadyMaxMs + 1)} {
+		if _, err := layoutReadyTimeout(map[string]interface{}{"ready_timeout_ms": bad}); err == nil {
+			t.Errorf("ready_timeout_ms %v was accepted", bad)
+		}
+	}
+	block := func(state string) *layoutBlock {
+		return &layoutBlock{readiness: layoutReadiness{State: state, Placeholders: 3, Waited: 20 * time.Second}}
+	}
+	if got := worstReadiness([]*layoutBlock{block(readinessReady), block(readinessStillLoading), block(readinessNetworkBusy)}); got != readinessStillLoading {
+		t.Errorf("worst of ready, still_loading, network_busy = %s", got)
+	}
+	if got := worstReadiness([]*layoutBlock{block(readinessReady), block(readinessUnknown)}); got != readinessUnknown {
+		t.Errorf("worst of ready, unknown = %s", got)
+	}
+	if w := block(readinessReady).readiness.warning(); w != "" {
+		t.Errorf("a ready page warns: %q", w)
+	}
+	if w := block(readinessStillLoading).readiness.warning(); !strings.Contains(w, "3 loading placeholder") || !strings.Contains(w, "loading state") {
+		t.Errorf("still_loading warning: %q", w)
 	}
 }

@@ -151,6 +151,10 @@ func (t *BrowserObserveTool) observeLayout(ctx context.Context, sessionID string
 	}
 	url := getStringArg(args, "url")
 	fullPage := getBoolArg(args, "full_page", false)
+	readyTimeout, err := layoutReadyTimeout(args)
+	if err != nil {
+		return fail(err.Error()), nil
+	}
 
 	var viewports []browser.Viewport
 	if raw, ok := args["viewports"]; ok {
@@ -174,7 +178,7 @@ func (t *BrowserObserveTool) observeLayout(ctx context.Context, sessionID string
 				return fail(navErr), nil
 			}
 		}
-		b, err := t.runLayoutAudit(ctx, sessionID, page, t.sessions.SessionViewport(sessionID), opts, fullPage)
+		b, err := t.runLayoutAudit(ctx, sessionID, page, t.sessions.SessionViewport(sessionID), opts, fullPage, readyTimeout)
 		if err != nil {
 			return fail(err.Error()), nil
 		}
@@ -200,7 +204,7 @@ func (t *BrowserObserveTool) observeLayout(ctx context.Context, sessionID string
 			if url != "" {
 				navNote = t.layoutNavigate(ctx, sessionID, url)
 			}
-			b, err := t.runLayoutAudit(ctx, sessionID, page, applied, opts, fullPage)
+			b, err := t.runLayoutAudit(ctx, sessionID, page, applied, opts, fullPage, readyTimeout)
 			if err != nil {
 				return fail(fmt.Sprintf("audit at %s: %v", vp, err)), nil
 			}
@@ -211,11 +215,17 @@ func (t *BrowserObserveTool) observeLayout(ctx context.Context, sessionID string
 	return t.layoutResponse(ctx, sessionID, blocks, view, maxItems), nil
 }
 
-// layoutNavigate loads url in the session and waits for it to go quiet; it
-// returns why it failed, or "".
+// layoutNavigate loads url in the session; it returns why it failed, or "".
+// A tab whose requests are tracked waits only for the load event, because
+// the readiness wait that follows covers the network; an untracked one waits
+// for network idle here instead.
 func (t *BrowserObserveTool) layoutNavigate(ctx context.Context, sessionID, url string) string {
+	waitUntil := "networkidle"
+	if t.sessions.NetworkState(sessionID).Tracked {
+		waitUntil = "load"
+	}
 	res, err := (&NavigateURLTool{sessions: t.sessions, engine: t.engine}).Execute(ctx, map[string]interface{}{
-		"session_id": sessionID, "url": url, "wait_until": "networkidle", "timeout_ms": layoutNavigateTimeoutMs,
+		"session_id": sessionID, "url": url, "wait_until": waitUntil, "timeout_ms": layoutNavigateTimeoutMs,
 	})
 	if err != nil {
 		return fmt.Sprintf("navigate %s: %v", url, err)
@@ -235,14 +245,17 @@ type layoutBlock struct {
 	annotated     int
 	anchorsNote   string
 	navigateError string
+	readiness     layoutReadiness
 	elapsed       time.Duration
 }
 
-// runLayoutAudit captures the page's geometry and pixels at its current size
-// and runs the detectors and the CV pass.
-func (t *BrowserObserveTool) runLayoutAudit(ctx context.Context, sessionID string, page *rod.Page, vp browser.Viewport, opts layout.Options, fullPage bool) (*layoutBlock, error) {
+// runLayoutAudit waits for the page to finish loading, then captures its
+// geometry and pixels at its current size and runs the detectors and the CV
+// pass.
+func (t *BrowserObserveTool) runLayoutAudit(ctx context.Context, sessionID string, page *rod.Page, vp browser.Viewport, opts layout.Options, fullPage bool, readyTimeout time.Duration) (*layoutBlock, error) {
 	start := time.Now()
 	p := page.Context(ctx)
+	readiness := t.waitLayoutReady(ctx, sessionID, page, readyTimeout)
 	browser.SettleLayout(ctx, page)
 	lm, err := proto.PageGetLayoutMetrics{}.Call(p)
 	if err != nil {
@@ -273,7 +286,7 @@ func (t *BrowserObserveTool) runLayoutAudit(ctx context.Context, sessionID strin
 		doc.Viewport.LayoutWidth = lvp.Width
 		doc.Viewport.Width, doc.Viewport.Height = icbW, icbH
 	}
-	block := &layoutBlock{viewport: vp}
+	block := &layoutBlock{viewport: vp, readiness: readiness}
 	if cands := doc.AnchorCandidates(); len(cands) > 0 {
 		anchors, probeErr := probeAnchors(p, doc, cands)
 		doc.Anchors = anchors
@@ -567,8 +580,9 @@ func (b *layoutBlock) data(view string, maxItems int) map[string]interface{} {
 		vpOut["scroll"] = []float64{vp.ScrollX, vp.ScrollY}
 	}
 	out := map[string]interface{}{
-		"viewport": vpOut,
-		"counts":   b.audit.Counts(),
+		"viewport":  vpOut,
+		"readiness": b.readiness.data(),
+		"counts":    b.audit.Counts(),
 		"screenshot": map[string]interface{}{
 			"file_path": b.shotPath, "width": b.shotW, "height": b.shotH, "annotated": b.annotated,
 		},
@@ -578,6 +592,9 @@ func (b *layoutBlock) data(view string, maxItems int) map[string]interface{} {
 	}
 	if b.navigateError != "" {
 		out["navigate_error"] = b.navigateError
+	}
+	if w := b.readiness.warning(); w != "" {
+		out["warning"] = w
 	}
 	switch view {
 	case "summary":
@@ -598,12 +615,28 @@ func (b *layoutBlock) data(view string, maxItems int) map[string]interface{} {
 	return out
 }
 
-func (b *layoutBlock) summary() string {
+// name is the viewport as the summary names it: "390x844 phone".
+func (b *layoutBlock) name() string {
 	vp := b.audit.Doc.Viewport
 	name := fmt.Sprintf("%.0fx%.0f", vp.Width, vp.Height)
 	if vp.Preset != "" {
 		name += " " + vp.Preset
 	}
+	return name
+}
+
+// summary is the viewport's line: its counts, and its readiness when the
+// page had not settled, so a loading frame never reads as a clean page.
+func (b *layoutBlock) summary() string {
+	line := b.countsLine()
+	if w := b.readiness.warning(); w != "" {
+		line += " [" + b.readiness.State + ": " + w + "]"
+	}
+	return line
+}
+
+func (b *layoutBlock) countsLine() string {
+	name := b.name()
 	if len(b.audit.Findings) == 0 {
 		return name + ": no layout findings"
 	}
@@ -638,6 +671,10 @@ func (t *BrowserObserveTool) layoutResponse(ctx context.Context, sessionID strin
 		summaries = append(summaries, b.summary())
 	}
 	resp["summary"] = strings.Join(summaries, "; ")
+	resp["readiness"] = worstReadiness(blocks)
+	if warnings := readinessWarnings(blocks); len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
 	if len(blocks) == 1 {
 		resp["data"] = blocks[0].data(view, maxItems)
 	} else {

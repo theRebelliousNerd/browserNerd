@@ -56,10 +56,15 @@ type captureState struct {
 	lastLoadFail  string
 	lastLoadFailT time.Time
 	bodyJobs      chan proto.NetworkRequestID
+	// net counts requests in flight; it has its own lock and outlives the
+	// correlation maps above, which keep error responses until their body
+	// is fetched.
+	net *networkActivity
 }
 
 func newCaptureState(mainFrame proto.PageFrameID) *captureState {
 	return &captureState{
+		net:       newNetworkActivity(),
 		mainFrame: mainFrame,
 		requests:  make(map[proto.NetworkRequestID]*requestInfo),
 		sockets:   make(map[proto.NetworkRequestID]string),
