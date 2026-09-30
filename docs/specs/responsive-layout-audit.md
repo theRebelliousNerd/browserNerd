@@ -121,7 +121,7 @@ phone the page loads zoomed out either way.
 | `overlap` | Two visible content units - text runs, badges and pills, controls, images and icons - intersect by at least `min_overlap_px` in both axes |
 | `text_bleed` | A run of text extends past the box that should hold it - a tab, button, badge, cell or card - and is drawn outside it |
 | `text_clipped` | Text is cut by an `overflow: hidden`/`clip` ancestor with no ellipsis and no line clamp |
-| `horizontal_overflow` | The document is wider than the viewport, so the page scrolls sideways; names the elements that stick out |
+| `horizontal_overflow` | The document is wider than the viewport, so the page scrolls sideways; names up to five causes, widest first: elements that stick out further than their parent does (a child merely filling an overflowing parent is not a cause), outside any container that clips or scrolls sideways, svg internals answered for by their svg |
 | `offscreen` | Content past the viewport's side where the root clips horizontal overflow, so it can never be scrolled to |
 | `clipped` | A control, image or badge partly cut by an ancestor that does not scroll |
 | `unreachable` | Content inside a fixed element (drawer, sheet, dialog, menu, popover) that lies beyond the viewport and no scroll container can bring into view. Content cut by the fixed element's own non-scrolling clip, or by one that reaches the viewport's edge, counts as lost; content inside a smaller non-scrolling box within it (a collapsed section) is hidden on purpose |
@@ -206,8 +206,10 @@ into one row with `count` and the members' selectors.
    confirm or downgrade DOM candidates and add `edge_cut` findings.
 8. **Report.** Findings are ranked (severity, then size), grouped, numbered,
    drawn on the screenshot - the first element in red, the second in blue,
-   the problem region filled - and saved beside other screenshots; each
-   becomes a `layout_finding` fact.
+   the problem region filled; a region past the screen's edge (a button
+   pushed off the left side) marks the sliver of its elements still on
+   screen - and saved beside other screenshots; each becomes a
+   `layout_finding` fact.
 
 ### CV pass
 
@@ -282,6 +284,14 @@ proves the viewport operation sizes only its own tab and resets, that the
 phone-only checks stay quiet at `desktop`, and the multi-viewport flow and
 its restore. `mcp-server/internal/mcp/observe_layout_test.go` covers the
 authored-style cascade and the operation's validation.
+`mcp-server/internal/mcp/observe_layout_smoke_live_test.go` audits a running
+app on demand: pointed at a signed-in shared browser
+(`BROWSERNERD_LAYOUT_SMOKE_DEBUGGER`, `_BASE`, `_OUT`, optional `_ROUTES` with
+`path@selector` to scroll a spot into view, `_CHECKS`, `_PRESET`), it opens one
+tab of its own, records what the page reports about the device
+(`innerWidth`, `devicePixelRatio`, `(pointer: coarse)`, a mobile user agent)
+and a plain screenshot, audits each route, writes the report, and closes only
+its tab.
 
 | Fixture | Defects it holds |
 |---|---|

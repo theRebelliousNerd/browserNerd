@@ -96,7 +96,9 @@ func (a *Audit) detectHorizontalOverflow() {
 				}
 			}
 		} else if p >= 0 {
-			if _, parentOver := overflows(p); parentOver && n.Bounds.W <= vw {
+			// A child inside an overflowing parent is the cause only when it
+			// reaches further than the parent does.
+			if _, parentOver := overflows(p); parentOver && n.Bounds.Right() <= doc.Nodes[p].Bounds.Right()+1 {
 				continue
 			}
 		}

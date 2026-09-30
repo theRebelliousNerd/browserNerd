@@ -148,12 +148,25 @@ func (a *Audit) Annotate(out *image.RGBA, originX, originY, scale float64) int {
 	// Later numbers first, so the most severe findings end on top.
 	for k := len(a.Findings) - 1; k >= 0; k-- {
 		f := a.Findings[k]
-		if f.Rect.Intersect(img).Area() < 1 {
-			continue
+		// A region cut off past the screen's edge is not in the image, but the
+		// part of its elements still on screen is: mark that sliver.
+		anchor := f.Rect.Intersect(img)
+		filled := anchor.Area() >= 1
+		if !filled {
+			for e, el := range f.Elements {
+				if e <= 1 {
+					anchor = anchor.Union(el.Rect.Intersect(img))
+				}
+			}
+			if anchor.Area() < 1 {
+				continue
+			}
 		}
 		drawn++
-		x1, y1, x2, y2 := px(f.Rect)
-		FillRect(out, x1, y1, x2, y2, ColorRegion, 90)
+		x1, y1, x2, y2 := px(anchor)
+		if filled {
+			FillRect(out, x1, y1, x2, y2, ColorRegion, 90)
+		}
 		for e, el := range f.Elements {
 			if e > 1 || el.Rect.Intersect(img).Empty() {
 				continue
