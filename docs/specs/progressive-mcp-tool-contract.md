@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Progressive MCP Tool Contract
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-09-30
 doc_type: interface-spec
 subsystem: browsernerd
 read_when: Changing tool registration, schemas, response views, or evidence handles
@@ -22,10 +22,12 @@ focused ones, so both surfaces run one implementation.
 ## Roles
 
 - `browser-observe` sees a page, small by default, and drills down by `mode`:
-  `composite` (default), `text`, `interactive`, `screenshot`, `storage`,
-  `sessions`, `doctor`, and the narrow slices `state`, `nav`, `hidden`,
-  `grids`, `react` and `dom_snapshot`. Contract:
-  [observation and interaction](browser-observation-and-interaction.md).
+  `composite` (default), `text`, `interactive`, `screenshot`, `layout`,
+  `storage`, `sessions`, `doctor`, and the narrow slices `state`, `nav`,
+  `hidden`, `grids`, `react` and `dom_snapshot`. Contract:
+  [observation and interaction](browser-observation-and-interaction.md);
+  `layout` and the `browser-act` `viewport` operation:
+  [responsive layout audit](responsive-layout-audit.md).
 - `browser-act` runs an ordered `operations` array. The batch is validated as
   a whole before anything runs, every operation is time-bounded, and the
   result reports what the batch caused in an `effects` digest. Contract: the

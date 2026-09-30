@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Browser Fact Model
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-09-30
 doc_type: data-spec
 subsystem: browsernerd
 read_when: Ingesting browser events or authoring Mangle rules
@@ -31,6 +31,9 @@ each predicate's module and fact count. Core domains:
   `download`, `dead_control`, and interaction facts.
 - Automation and evidence: form, plan, screenshot, audit, repo-trace,
   disclosure, and JS-gate facts.
+- Responsive layout: `viewport_emulated` and `layout_finding`, with the
+  derived `layout_defect` for high findings
+  ([responsive layout audit](responsive-layout-audit.md)).
 
 Every browser-originated fact that can overlap across tabs carries
 `SessionId`. Request and response facts preserve the same CDP request id; load

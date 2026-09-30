@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Observation and Interaction
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-09-30
 doc_type: feature-spec
 subsystem: browsernerd
 read_when: Changing navigation, element discovery, actions, screenshots, or JS
@@ -94,8 +94,16 @@ One call returns:
   `data.jar` (cookies), `data.storage` (`local`, `session`) and `data.expiry`
   (token times): names that avoid the words the server's credential redactor
   matches, which blanks the whole value of a key naming a cookie or token.
+- `layout` audits the page's spatial layout at its current size - or, with
+  `viewports`, at each named size, restoring the session's own afterwards -
+  and returns each overlap, text bleed or cut, horizontal overflow,
+  unreachable or toolbar-covered item, squeezed column set, small tap target
+  and permanently covered item with the elements' selectors and refs, their
+  boxes, a CV verdict from the pixels, and an annotated screenshot. Contract:
+  [responsive layout audit](responsive-layout-audit.md).
 - `sessions` lists live tabs `{id, url, status, isolated}`, most recently
-  active first, with `active_count` and `detached_count`.
+  active first, with `active_count` and `detached_count`; a tab a `viewport`
+  operation sized also shows `viewport` (`390x844@3 mobile touch (phone)`).
   `include_detached: true` also lists detached records - sessions reloaded
   from an earlier server run with no tab behind them, which `attach-session`
   can bind again.
@@ -137,6 +145,7 @@ false), `spec_terms`.
 | `browser_close` | `browser_id` |
 | `js` | `script`, `element_ref`, `timeout_ms`, `gate_reason`, `approved_by_handle`, `result_mode` (`scalar`, `compact_json`, `raw`), `max_result_bytes` |
 | `plan` | `actions`, `predicate`, `delay_ms` |
+| `viewport` | `preset` (`phone`, `iphone-14`, `pixel-7`, `phone-small`, `tablet`, `laptop`, `desktop`), or `width`, `height`, `device_scale_factor`, `mobile`, `touch`, `orientation`, `toolbar_height`, `user_agent`; or `reset: true`. Sizes the batch's tab only ([responsive layout audit](responsive-layout-audit.md)) |
 
 Every operation also accepts `dialog` (`accept` or `dismiss`) and
 `prompt_text`. The types `click`, `type`, `select`, `toggle`, `clear` and

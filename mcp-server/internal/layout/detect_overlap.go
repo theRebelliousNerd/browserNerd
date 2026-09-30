@@ -47,6 +47,20 @@ func (a *Audit) intentionalOverlap(u, v Unit) bool {
 		// Stacked avatars and layered artwork.
 		return true
 	}
+	// An adornment placed inside a text field: a search icon, a clear or
+	// reveal button, much smaller than the field and absolutely positioned.
+	for _, pair := range [][2]Unit{{u, v}, {v, u}} {
+		field, adorn := pair[0], pair[1]
+		switch doc.Nodes[field.Node].Tag {
+		case "input", "textarea", "select":
+		default:
+			continue
+		}
+		if adorn.Kind != UnitText && adorn.Rect.Area() <= 0.25*field.Rect.Area() &&
+			doc.absoluteBelow(adorn.Node, doc.commonAncestor(field.Node, adorn.Node)) {
+			return true
+		}
+	}
 	for _, pair := range [][2]Unit{{u, v}, {v, u}} {
 		img, other := pair[0], pair[1]
 		if img.Kind != UnitImage {

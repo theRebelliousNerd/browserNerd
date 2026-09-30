@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD
 created: 2026-01-31
-last_updated: 2026-09-25
+last_updated: 2026-09-30
 doc_type: readme
 subsystem: infra
 read_when: Orienting in this directory
@@ -302,7 +302,7 @@ agent sees; each drills down through parameters instead of more tools.
 | `launch-browser` | Start Chrome with CDP enabled (idempotent) |
 | `shutdown-browser` | Close Chrome and clean up all sessions |
 | `close-session` | Idempotently close one tab and its event streams |
-| `browser-observe` | See a page by `mode`: composite (default), text, interactive, screenshot, storage, sessions, doctor, and narrow slices |
+| `browser-observe` | See a page by `mode`: composite (default), text, interactive, screenshot, layout (spatial audit), storage, sessions, doctor, and narrow slices |
 | `browser-act` | Run a validated, time-bounded batch of `operations`; report what it caused |
 | `browser-reason` | Diagnose by `topic`: why_failed, health, network, blocking_issue, next_best_action, what_changed_since |
 | `browser-audit` | Phased frontend-to-API contract audit with evidence handles |
@@ -465,11 +465,22 @@ browser-observe(session_id, mode: "text", text_query: "Revenue")
 browser-observe(session_id, mode: "screenshot", annotate: true)
   -> {file_path, format, size_bytes, width, height} plus numbered controls in view
 
+browser-observe(session_id, mode: "layout", viewports: ["phone", "tablet"], url: "http://localhost:3001/services")
+  -> per size: overlaps, text bleeding out of or cut by its box, sideways
+     scroll, content unreachable in drawers or under a phone toolbar, columns
+     that never stack, small tap targets, covered content - each with
+     selectors, refs, boxes and a pixel (CV) verdict - and an annotated
+     screenshot; the session's size is restored afterwards
+
 browser-observe(mode: "doctor")
   -> BrowserNERD's own health: stale binary, env, engine, wedged calls
 ```
 
-**Modes:** `composite` | `text` | `interactive` | `screenshot` | `storage` |
+`browser-act` `{type: "viewport", preset: "phone"}` sizes one tab as a phone
+(390x844 @3, mobile, touch); `reset: true` puts it back. See
+[docs/specs/responsive-layout-audit.md](docs/specs/responsive-layout-audit.md).
+
+**Modes:** `composite` | `text` | `interactive` | `screenshot` | `layout` | `storage` |
 `sessions` | `doctor` | `state` | `nav` | `hidden` | `grids` | `react` |
 `dom_snapshot`
 **Intents:** `quick_status` | `find_actions` | `map_navigation` |

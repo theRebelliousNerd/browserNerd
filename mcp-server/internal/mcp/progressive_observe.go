@@ -105,7 +105,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"viewports": map[string]interface{}{
 				"type":        "array",
-				"description": "layout: presets (phone, phone-small, tablet, laptop, desktop) or viewport objects",
+				"description": "layout: presets (phone, iphone-14, pixel-7, phone-small, tablet, laptop, desktop) or viewport objects",
 			},
 			"url": map[string]interface{}{
 				"type":        "string",

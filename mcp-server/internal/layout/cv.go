@@ -182,6 +182,8 @@ func (a *Audit) ApplyCV(s *Shot) {
 		case "top", "bottom":
 			probe = Rect{X: f.Rect.X, Y: f.cutAt - 2, W: f.Rect.W, H: 4}
 		}
+		// in_view follows what the image shows, not the device rect.
+		f.InView = !f.Rect.Intersect(img).Empty()
 		if probe.Intersect(img).Area() < 1 {
 			f.CV = CVNotInView
 			continue

@@ -12,7 +12,7 @@ var StyleProperties = []string{
 	"z-index", "text-overflow", "white-space", "-webkit-line-clamp", "cursor",
 	"pointer-events", "background-color", "background-image", "border-top-width",
 	"border-right-width", "border-bottom-width", "border-left-width", "transform",
-	"flex-direction", "flex-wrap",
+	"flex-direction", "flex-wrap", "clip", "clip-path",
 }
 
 // Style is the part of an element's computed style the detectors read.
@@ -35,6 +35,8 @@ type Style struct {
 	Transform       string
 	FlexDirection   string
 	FlexWrap        string
+	Clip            string
+	ClipPath        string
 }
 
 // StyleFromValues builds a Style from values listed in StyleProperties order.
@@ -62,7 +64,7 @@ func StyleFromValues(values []string) Style {
 		OverflowX: get(4), OverflowY: get(5), ZIndex: get(6), TextOverflow: get(7),
 		WhiteSpace: get(8), LineClamp: get(9), Cursor: get(10), PointerEvents: get(11),
 		BackgroundColor: get(12), BackgroundImage: get(13), BorderWidth: border,
-		Transform: get(18), FlexDirection: get(19), FlexWrap: get(20),
+		Transform: get(18), FlexDirection: get(19), FlexWrap: get(20), Clip: get(21), ClipPath: get(22),
 	}
 }
 
@@ -109,6 +111,26 @@ func (s Style) hasBackground() bool {
 	}
 	c := strings.ReplaceAll(s.BackgroundColor, " ", "")
 	return c != "" && c != "transparent" && !strings.HasPrefix(c, "rgba(0,0,0,0)") && !strings.HasSuffix(c, ",0)")
+}
+
+// visuallyHidden reports the clip that screen-reader-only styles use to hide
+// an element from sight: clip: rect(0 0 0 0) or clip-path: inset(50%).
+func (s Style) visuallyHidden() bool {
+	c := strings.ReplaceAll(strings.ToLower(s.Clip), " ", "")
+	if strings.HasPrefix(c, "rect(") {
+		nums := strings.FieldsFunc(strings.TrimSuffix(strings.TrimPrefix(c, "rect("), ")"), func(r rune) bool { return r == ',' })
+		zero := len(nums) == 4
+		for _, n := range nums {
+			if parsePx(n) != 0 {
+				zero = false
+			}
+		}
+		if zero {
+			return true
+		}
+	}
+	cp := strings.ReplaceAll(strings.ToLower(s.ClipPath), " ", "")
+	return cp == "inset(50%)" || cp == "inset(100%)"
 }
 
 func (s Style) inline() bool { return s.Display == "inline" || s.Display == "contents" }
@@ -159,7 +181,7 @@ type Viewport struct {
 	DocWidth      float64 `json:"doc_width"`
 	DocHeight     float64 `json:"doc_height"`
 	// LayoutWidth is set when a mobile page is wider than the device and Chrome
-	// widened the layout viewport to it (the page shows zoomed out).
+	// widened the layout viewport to it (the page scrolls sideways).
 	LayoutWidth float64 `json:"layout_width,omitempty"`
 }
 
@@ -314,6 +336,8 @@ func (doc *Document) Analyze() {
 		op := node.Style.Opacity
 		if node.Tag == "#text" {
 			op = 1
+		} else if node.Style.visuallyHidden() {
+			op = 0 // sr-only: clipped to nothing, with everything inside it
 		}
 		dv.opacity = parentOpacity * op
 		if node.Attr("aria-hidden") == "true" {

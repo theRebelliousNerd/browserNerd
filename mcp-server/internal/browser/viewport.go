@@ -49,6 +49,8 @@ func (v Viewport) String() string {
 var ViewportPresets = map[string]Viewport{
 	"phone":       {Preset: "phone", Width: 390, Height: 844, DeviceScaleFactor: 3, Mobile: true, Touch: true, Orientation: "portrait", ToolbarHeight: 86},
 	"phone-small": {Preset: "phone-small", Width: 360, Height: 800, DeviceScaleFactor: 3, Mobile: true, Touch: true, Orientation: "portrait", ToolbarHeight: 56},
+	"iphone-14":   {Preset: "iphone-14", Width: 390, Height: 844, DeviceScaleFactor: 3, Mobile: true, Touch: true, Orientation: "portrait", ToolbarHeight: 86},
+	"pixel-7":     {Preset: "pixel-7", Width: 412, Height: 915, DeviceScaleFactor: 2.625, Mobile: true, Touch: true, Orientation: "portrait", ToolbarHeight: 56},
 	"tablet":      {Preset: "tablet", Width: 768, Height: 1024, DeviceScaleFactor: 2, Mobile: true, Touch: true, Orientation: "portrait", ToolbarHeight: 50},
 	"laptop":      {Preset: "laptop", Width: 1366, Height: 768, DeviceScaleFactor: 1, Orientation: "landscape"},
 	"desktop":     {Preset: "desktop", Width: 1920, Height: 1080, DeviceScaleFactor: 1, Orientation: "landscape"},

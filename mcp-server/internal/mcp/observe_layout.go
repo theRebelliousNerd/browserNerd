@@ -269,7 +269,7 @@ func (t *BrowserObserveTool) runLayoutAudit(ctx context.Context, sessionID strin
 	layoutW := lvp.Width
 	if icbW, icbH, ok := doc.InitialContainingBlock(); ok && icbW+1 < lvp.Width {
 		// A mobile page wider than the device: Chrome widens the layout viewport
-		// to the content and shows it zoomed out. Measure against the device.
+		// to the content, and the page scrolls sideways. Measure against the device.
 		doc.Viewport.LayoutWidth = lvp.Width
 		doc.Viewport.Width, doc.Viewport.Height = icbW, icbH
 	}
@@ -299,8 +299,13 @@ func (t *BrowserObserveTool) runLayoutAudit(ctx context.Context, sessionID strin
 	if err != nil {
 		return nil, fmt.Errorf("decode screenshot: %w", err)
 	}
+	// A viewport capture shows the visual viewport: the device width at the
+	// page's scale, even when the layout viewport widened past it.
 	originX, originY := lvp.ScrollX, lvp.ScrollY
 	cssWidth := layoutW
+	if vv := lm.CSSVisualViewport; vv != nil && vv.ClientWidth > 0 {
+		originX, originY, cssWidth = vv.PageX, vv.PageY, vv.ClientWidth
+	}
 	if fullPage {
 		originX, originY = 0, 0
 		cssWidth = math.Max(lvp.DocWidth, lvp.Width)

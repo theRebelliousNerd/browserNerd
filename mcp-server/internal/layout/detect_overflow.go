@@ -15,21 +15,33 @@ func (doc *Document) rootClipsX() bool {
 	return false
 }
 
-// innerClipRight is the right edge of the nearest non-root ancestor that clips
-// node i horizontally, or +Inf.
-func (doc *Document) innerClip(i int) (Rect, bool) {
+// heldInside reports whether some non-root ancestor that clips node i
+// horizontally keeps it within [left, right]: content cut or scrolled inside
+// its own container, however far out a nearer clip (an svg's own box) sits.
+func (doc *Document) heldInside(i int, left, right float64) bool {
 	for _, c := range doc.clipAncestors(i) {
 		n := doc.Nodes[c]
-		if n.Tag == "html" || n.Tag == "body" {
+		if n.Tag == "html" || n.Tag == "body" || !clips(n.Style.OverflowX) {
 			continue
 		}
-		if clips(n.Style.OverflowX) {
-			return doc.clientBox(c), true
+		cb := doc.clientBox(c)
+		if cb.X >= left && cb.Right() <= right {
+			return true
 		}
 	}
-	return Rect{}, false
+	return false
 }
 
+// insideSVG reports a node drawn inside an svg: its paths are the svg's
+// business, and the svg element itself answers for them.
+func (doc *Document) insideSVG(i int) bool {
+	for p := doc.Nodes[i].Parent; p >= 0; p = doc.Nodes[p].Parent {
+		if doc.Nodes[p].Tag == "svg" {
+			return true
+		}
+	}
+	return false
+}
 type offender struct {
 	node   int
 	amount float64
@@ -41,7 +53,7 @@ func (a *Audit) detectHorizontalOverflow() {
 	vw := doc.Viewport.Width
 	rootClips := doc.rootClipsX()
 	// A mobile page wider than the device widens Chrome's layout viewport and
-	// loads zoomed out whatever the root's overflow says.
+	// scrolls sideways whatever the root's overflow says.
 	widened := doc.Viewport.LayoutWidth > vw+1
 	pageScrolls := doc.Viewport.DocWidth > vw+1 && (!rootClips || widened)
 	if widened {
@@ -63,7 +75,7 @@ func (a *Audit) detectHorizontalOverflow() {
 		if r.Right() <= vw+1 {
 			return 0, false
 		}
-		if cb, ok := doc.innerClip(i); ok && cb.Right() <= vw+1 {
+		if doc.heldInside(i, -1e7, vw+1) || doc.insideSVG(i) {
 			return 0, false // cut or scrolled inside its own container
 		}
 		return r.Right() - vw, true
@@ -107,7 +119,7 @@ func (a *Audit) detectHorizontalOverflow() {
 			continue
 		}
 		if n.Bounds.X < -1 && n.Bounds.Right() > 1 {
-			if cb, ok := doc.innerClip(i); ok && cb.X >= -1 {
+			if doc.heldInside(i, -1, 1e7) || doc.insideSVG(i) {
 				continue
 			}
 			p := doc.element(n.Parent)
@@ -149,9 +161,6 @@ func (a *Audit) detectHorizontalOverflow() {
 		refs, region := elemsOf(right)
 		if pageScrolls && a.Options.enabled(TypeHorizontalOverflow) {
 			effect := "so it scrolls sideways"
-			if widened {
-				effect = "so a phone loads it zoomed out"
-			}
 			msg := fmt.Sprintf("the page is %s wide in a %s viewport, %s; widest cause: %s, %s past the edge",
 				fmtPx(doc.Viewport.DocWidth), fmtPx(vw), effect, a.describe(right[0].node), fmtPx(right[0].amount))
 			a.add(Finding{Type: TypeHorizontalOverflow, Severity: High, Message: msg, Elements: refs, Rect: region,

@@ -229,6 +229,9 @@ func (a *Audit) detectTapTargets() {
 		if r.Area() < 4 || doc.VisibleRect(i, r).Area() < 4 || doc.inlineLink(i) {
 			continue
 		}
+		if r.Right() <= 0 || r.Bottom() <= 0 {
+			continue // parked above or left of the document: never on screen
+		}
 		sev := Low
 		if math.Min(r.W, r.H) < 24 {
 			sev = Medium
