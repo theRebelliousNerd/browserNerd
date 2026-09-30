@@ -164,6 +164,18 @@ var actOpSpecs = map[string]actOpSpec{
 		"result_mode":        {kind: fieldString, enum: []string{"scalar", "compact_json", "raw"}},
 		"max_result_bytes":   fInt,
 	}, required: []string{"script"}},
+	"viewport": {fields: map[string]actField{
+		"preset":              {kind: fieldString, enum: viewportPresetEnum()},
+		"width":               fInt,
+		"height":              fInt,
+		"device_scale_factor": fNum,
+		"mobile":              fBool,
+		"touch":               fBool,
+		"orientation":         {kind: fieldString, enum: []string{"portrait", "landscape"}},
+		"toolbar_height":      fInt,
+		"user_agent":          fStr,
+		"reset":               fBool,
+	}},
 	"plan": {fields: map[string]actField{
 		"actions":   fArr,
 		"predicate": fStr,
@@ -176,7 +188,7 @@ var actOpTypes = []string{
 	"navigate", "interact", "fill", "upload", "key", "history", "sleep", "dialog",
 	"browser_launch", "browser_close", "session_create", "session_attach", "session_focus",
 	"session_close", "session_fork", "wait", "await_stable", "await_fact", "await_conditions",
-	"js", "plan",
+	"js", "plan", "viewport",
 }
 
 // actTypeAliases rewrite a natural shorthand type into its operation.
@@ -482,6 +494,8 @@ func validateOpSemantics(opType string, op map[string]interface{}, allowValueEnv
 		if len(toStringSlice(op["files"])) == 0 {
 			issues = append(issues, "upload needs at least one path in files")
 		}
+	case "viewport":
+		issues = append(issues, validateViewportOp(op)...)
 	}
 	return issues
 }
@@ -702,6 +716,15 @@ func actOperationItemSchema() map[string]interface{} {
 			"files":         typed("array", ""),
 			"predicate":     str(""),
 			"session_id":    str("session_focus/close target"),
+			"preset":        map[string]interface{}{"type": "string", "enum": viewportPresetEnum()},
+			"width":         typed("integer", "viewport: CSS px"),
+			"height":        typed("integer", ""),
+			"device_scale_factor": typed("number", ""),
+			"mobile":        typed("boolean", ""),
+			"touch":         typed("boolean", ""),
+			"orientation":   map[string]interface{}{"type": "string", "enum": []string{"portrait", "landscape"}},
+			"toolbar_height": typed("integer", "viewport: modeled phone toolbar px"),
+			"reset":         typed("boolean", "viewport: back to the default"),
 		},
 		"required": []string{"type"},
 	}

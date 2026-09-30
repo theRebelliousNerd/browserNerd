@@ -45,6 +45,8 @@ upload{ref,files} sleep{duration_ms<=60000} await_stable await_fact{predicate,ar
 await_conditions{conditions} wait{predicate,match_args} dialog{accept,prompt_text}
 session_create{url} (later ops use the new session_id) session_focus session_close
 session_fork session_attach{target_id} browser_launch browser_close js{script} plan
+viewport{preset:phone|phone-small|tablet|laptop|desktop, or width,height,device_scale_factor,
+mobile,touch,orientation,toolbar_height; reset:true} sizes this tab only
 
 type/fill read the value back; select verifies the widget shows the option;
 navigate to the tab's current URL reloads it (reloaded:true); any op may carry
@@ -601,6 +603,8 @@ func (r *actRun) dispatch(ctx context.Context, sessionID string, op map[string]i
 		planArgs := passThrough("actions", "predicate", "delay_ms")
 		planArgs["session_id"] = sessionID
 		return (&ExecutePlanTool{sessions: t.sessions, engine: t.engine}).Execute(ctx, planArgs)
+	case "viewport":
+		return runViewportOp(ctx, t.sessions, t.engine, sessionID, op)
 	}
 	return nil, fmt.Errorf("unknown operation type: %s", getStringFromMap(op, "type"))
 }

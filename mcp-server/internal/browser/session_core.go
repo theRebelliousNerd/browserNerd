@@ -29,6 +29,9 @@ type Session struct {
 	CreatedAt  time.Time `json:"created_at"`
 	LastActive time.Time `json:"last_active"`
 	Isolated   bool      `json:"isolated"`
+	// Viewport is the device the tab emulates after a viewport operation; nil
+	// means the configured default.
+	Viewport *Viewport `json:"viewport,omitempty"`
 }
 
 // BrowserInstance describes a connected Chrome process or external endpoint.

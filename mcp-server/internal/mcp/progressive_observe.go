@@ -38,6 +38,10 @@ func (t *BrowserObserveTool) Description() string {
   captures one element.
 - storage: signed out / 401? cookies and web-storage keys with flags and expiry, and when
   each JWT (even one nested in a JSON state blob) expires. Never values.
+- layout: spatial defects at this size (overlaps, text bleeding out of or cut by its box, sideways
+  scroll, content unreachable in drawers/menus or under a phone toolbar, columns that never stack,
+  small tap targets, covered content), DOM geometry checked against pixels, annotated screenshot.
+  viewports:["phone","tablet"] audits each size (restored after); url reloads per size.
 - sessions: live tabs. doctor: BrowserNERD's own health (stale binary, wedged calls, env).
   state|nav|hidden|grids|react|dom_snapshot: narrow slices.
 view: summary < compact (default) < full.`
@@ -59,7 +63,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			"mode": map[string]interface{}{
 				"type":        "string",
 				"description": "Default composite",
-				"enum":        []string{"composite", "text", "interactive", "screenshot", "storage", "sessions", "state", "nav", "hidden", "grids", "react", "dom_snapshot", "doctor"},
+				"enum":        []string{"composite", "text", "interactive", "screenshot", "layout", "storage", "sessions", "state", "nav", "hidden", "grids", "react", "dom_snapshot", "doctor"},
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
@@ -97,7 +101,24 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"full_page": map[string]interface{}{
 				"type":        "boolean",
-				"description": "screenshot: whole page",
+				"description": "screenshot/layout: whole page",
+			},
+			"viewports": map[string]interface{}{
+				"type":        "array",
+				"description": "layout: presets (phone, phone-small, tablet, laptop, desktop) or viewport objects",
+			},
+			"url": map[string]interface{}{
+				"type":        "string",
+				"description": "layout: load this URL at each viewport first",
+			},
+			"checks": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "layout: finding types to run (default all)",
+			},
+			"thresholds": map[string]interface{}{
+				"type":        "object",
+				"description": "layout: min_overlap_px, tap_target_px, min_column_px, collapse_below, max_findings",
 			},
 			"format": map[string]interface{}{
 				"type":        "string",
@@ -304,6 +325,16 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 			return map[string]interface{}{"success": false, "error": "session_id is required for text mode"}, nil
 		}
 		response, err := t.observeText(ctx, sessionID, args, view)
+		if err != nil {
+			return nil, err
+		}
+		return withIntent(response, hasIntent, intent, intentApplied), nil
+
+	case "layout":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for layout mode"}, nil
+		}
+		response, err := t.observeLayout(ctx, sessionID, args, view)
 		if err != nil {
 			return nil, err
 		}

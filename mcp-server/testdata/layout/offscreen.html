@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: content cut at the screen edge</title>
+<link rel="stylesheet" href="shared.css">
+<style>html, body { overflow-x: hidden; }</style>
+</head>
+<body>
+<main>
+  <!-- Defect: the body hides horizontal overflow, so the end of this row can never be seen. -->
+  <section>
+    <div id="cut-row" data-expect="offscreen" style="width: 520px; height: 48px; background: #eef;">Revenue by region, cut off where the page stops</div>
+  </section>
+
+  <!-- Intentional: a panel parked wholly off-canvas until it is opened. -->
+  <section style="position: relative; height: 10px;">
+    <div style="position: absolute; left: 420px; top: 0; width: 200px;">Parked panel</div>
+  </section>
+</main>
+</body>
+</html>

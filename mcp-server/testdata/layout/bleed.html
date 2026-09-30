@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: text bleed and clipping</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border-bottom: 1px solid #ccc; }
+  .tab { height: 48px; padding: 0 6px; border: 1px solid #bbb; background: #eef; font: 14px Arial, sans-serif; white-space: nowrap; text-align: left; }
+</style>
+</head>
+<body>
+<main>
+  <!-- Defect: tab labels too long for four columns on a phone bleed into the next tab. -->
+  <section>
+    <div role="tablist" class="tabs">
+      <button role="tab" class="tab" id="tab-1" data-expect="text_bleed" data-allow="overlap">Opportunities (12)</button>
+      <button role="tab" class="tab" id="tab-2" data-expect="text_bleed" data-allow="overlap">Relationships (40)</button>
+      <button role="tab" class="tab" id="tab-3" data-expect="text_bleed" data-allow="overlap">Introductions (7)</button>
+      <button role="tab" class="tab" id="tab-4" data-allow="overlap text_bleed">All</button>
+    </div>
+  </section>
+
+  <!-- Defect: a fixed-width button whose label does not fit. -->
+  <section>
+    <button id="report" class="btn" data-expect="text_bleed" style="width: 90px; min-width: 0; white-space: nowrap; justify-content: flex-start;">Generate report</button>
+  </section>
+
+  <!-- Defect: a name cut off with no ellipsis. -->
+  <section>
+    <div id="name-cut" data-expect="text_clipped" style="width: 150px; overflow: hidden; white-space: nowrap; border: 1px solid #ccc; padding: 4px;">Northwind Industrial Holdings</div>
+  </section>
+
+  <!-- Defect: a fixed-height box cutting its last line in half. -->
+  <section>
+    <div id="lines-cut" data-expect="text_clipped" style="width: 220px; height: 44px; overflow: hidden; line-height: 18px;">First line of notes<br>Second line of notes<br>Third line of notes</div>
+  </section>
+
+  <!-- Intentional: an ellipsis. -->
+  <section>
+    <div style="width: 150px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">Northwind Industrial Holdings</div>
+  </section>
+
+  <!-- Intentional: a line clamp. -->
+  <section>
+    <p style="width: 220px; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">A long description of the account that runs well past two lines and is clamped with an ellipsis on purpose by the design.</p>
+  </section>
+
+  <!-- Intentional: screen-reader-only text. -->
+  <section>
+    <span style="position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;">Only for screen readers, and long enough to overflow</span>
+    <p style="margin: 0;">Visible paragraph.</p>
+  </section>
+
+  <!-- Intentional: text cut inside a container that scrolls. -->
+  <section>
+    <div style="width: 200px; overflow-x: auto; white-space: nowrap;">A scrollable row of text that is wider than its box on purpose</div>
+  </section>
+</main>
+</body>
+</html>

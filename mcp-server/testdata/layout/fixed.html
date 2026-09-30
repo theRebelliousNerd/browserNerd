@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: fixed layers</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  .drawer { position: fixed; top: 0; width: 180px; background: #fff; border: 1px solid #999; margin: 0; padding: 0; list-style: none; }
+  .drawer a { display: block; height: 56px; line-height: 56px; padding: 0 12px; color: #114; text-decoration: none; border-bottom: 1px solid #eee; }
+</style>
+</head>
+<body>
+<!-- Defect: a menu taller than the phone that does not scroll; its last items can never be reached. -->
+<nav id="menu-noscroll" class="drawer" data-expect="unreachable" style="left: 0; height: 100dvh; overflow: hidden;">
+  <a href="#1">Dashboard</a><a href="#2">Network</a><a href="#3">Services</a><a href="#4">Opportunities</a>
+  <a href="#5">Introductions</a><a href="#6">Contacts</a><a href="#7">Organizations</a><a href="#8">Deals</a>
+  <a href="#9">Coaching</a><a href="#10">Reports</a><a href="#11">Ingest</a><a href="#12">Agents</a>
+  <a href="#13">Settings</a><a href="#14">Help</a><a href="#15">Billing</a><a href="#16">Sign out</a>
+</nav>
+<!-- Defect: a menu sized 100vh that scrolls, but whose last items sit under a phone's bottom toolbar. -->
+<nav id="menu-vh" class="drawer" data-expect="toolbar_cutoff" style="right: 0; height: 100vh; overflow-y: auto;">
+  <a href="#a">Dashboard</a><a href="#b">Network</a><a href="#c">Services</a><a href="#d">Opportunities</a>
+  <a href="#e">Introductions</a><a href="#f">Contacts</a><a href="#g">Organizations</a><a href="#h">Deals</a>
+  <a href="#i">Coaching</a><a href="#j">Reports</a><a href="#k">Ingest</a><a href="#l">Agents</a>
+  <a href="#m">Settings</a><a href="#n">Help</a><a href="#o">Billing</a><a href="#p">Sign out</a>
+</nav>
+</body>
+</html>

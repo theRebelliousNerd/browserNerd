@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: permanently covered content</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  header { position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #123; color: #fff; z-index: 10; }
+  footer { position: fixed; bottom: 0; left: 0; right: 0; height: 70px; background: #eee; z-index: 10; }
+</style>
+</head>
+<body>
+<header><span style="display: block; padding: 18px 16px;">Partner hub</span></header>
+<!-- Defect: the page does not pad for its fixed header, so its first heading is always under it. -->
+<h1 id="covered-title" data-expect="occlusion" style="margin: 0; padding: 12px 16px 0; font-size: 24px;">Welcome back</h1>
+<main>
+  <p>Paragraph one of the account overview, long enough to fill the width and wrap over a few lines on a phone.</p>
+  <p>Paragraph two of the account overview, long enough to fill the width and wrap over a few lines on a phone.</p>
+  <div style="height: 1400px;"></div>
+  <!-- Defect: the last control sits in the strip the fixed footer always covers. -->
+  <button id="load-more" class="btn" data-expect="occlusion" style="margin-top: 40px; width: 200px;">Load more</button>
+</main>
+<footer><span style="display: block; padding: 24px 16px;">Bottom navigation</span></footer>
+</body>
+</html>

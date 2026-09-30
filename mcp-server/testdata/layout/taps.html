@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: tap targets</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<main>
+  <!-- Defects: controls smaller than a fingertip. -->
+  <section>
+    <button id="tiny-close" data-expect="tap_target" aria-label="Close" style="width: 20px; height: 20px; padding: 0;">x</button>
+  </section>
+  <section>
+    <input id="bare-check" data-expect="tap_target" type="checkbox" aria-label="Select row">
+  </section>
+  <section>
+    <a id="small-link" data-expect="tap_target" href="#more" style="display: inline-block; padding: 2px 4px;">More</a>
+  </section>
+
+  <!-- Intentional: an inline link in a sentence, a comfortable button, a disabled one, a checkbox in a big label. -->
+  <section>
+    <p style="margin: 0;">Read the <a href="#terms">terms</a> before you continue.</p>
+  </section>
+  <section>
+    <button class="btn">Continue</button>
+    <button disabled style="width: 20px; height: 20px; padding: 0;">x</button>
+  </section>
+  <section>
+    <label style="display: flex; align-items: center; gap: 12px; min-height: 48px;"><input type="checkbox"> Remember this device</label>
+  </section>
+</main>
+</body>
+</html>

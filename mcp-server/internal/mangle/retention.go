@@ -98,6 +98,7 @@ var lowSignal = map[string]bool{
 	"js_gate_open":      true,
 	"confidence_score":  true,
 	"screenshot_taken":  true,
+	"layout_finding":    true,
 	"js_evaluated":      true,
 	"interactive":       true,
 	"element_visible":   true,

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: horizontal overflow</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<main>
+  <!-- Defect: a fixed-width banner makes the whole page scroll sideways. -->
+  <section>
+    <div id="wide-banner" data-expect="horizontal_overflow" style="width: 600px; height: 48px; background: #eee;">Quarterly targets banner</div>
+  </section>
+
+  <!-- Intentional: a wide table inside its own scroll wrapper. -->
+  <section>
+    <div style="overflow-x: auto;">
+      <table style="width: 700px; border-collapse: collapse;"><tr><td style="border: 1px solid #ccc; padding: 8px;">Account</td><td style="border: 1px solid #ccc; padding: 8px;">Owner</td><td style="border: 1px solid #ccc; padding: 8px;">Stage</td></tr></table>
+    </div>
+  </section>
+</main>
+</body>
+</html>

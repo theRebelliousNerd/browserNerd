@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: columns on a phone</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<main>
+  <!-- Defect: three text columns still side by side on a phone. -->
+  <section id="three-up" data-expect="non_collapsing" style="display: flex; gap: 8px;">
+    <div class="card" style="flex: 1;"><strong>Revenue</strong><p style="margin: 4px 0 0;">Quarter over quarter revenue grew across every region this year</p></div>
+    <div class="card" style="flex: 1;"><strong>Pipeline</strong><p style="margin: 4px 0 0;">New opportunities entered the pipeline faster than the team closed them</p></div>
+    <div class="card" style="flex: 1;"><strong>Retention</strong><p style="margin: 4px 0 0;">Retention held steady while support tickets dropped by a fifth</p></div>
+  </section>
+
+  <!-- Intentional: a label and its value on one line. -->
+  <section style="display: flex; justify-content: space-between;">
+    <span>Status</span><span>Active</span>
+  </section>
+
+  <!-- Intentional: two card columns wide enough to read. -->
+  <section style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+    <div class="card"><strong>Accounts</strong><p style="margin: 4px 0 0;">128 active accounts this month</p></div>
+    <div class="card"><strong>Contacts</strong><p style="margin: 4px 0 0;">2,410 people across them</p></div>
+  </section>
+
+  <!-- Intentional: a toolbar of controls. -->
+  <section style="display: flex; gap: 8px;">
+    <button class="btn" aria-label="Bold">B</button><button class="btn" aria-label="Italic">I</button><button class="btn" aria-label="Underline">U</button>
+  </section>
+
+  <!-- Intentional: a row of cards that scrolls sideways. -->
+  <section style="display: flex; gap: 8px; overflow-x: auto;">
+    <div class="card" style="flex: 0 0 110px;">Small card with a sentence that wraps several times</div>
+    <div class="card" style="flex: 0 0 110px;">Another small card with a sentence that wraps</div>
+    <div class="card" style="flex: 0 0 110px;">A third small card with wrapping words</div>
+    <div class="card" style="flex: 0 0 110px;">A fourth small card beyond the edge</div>
+  </section>
+
+  <!-- Intentional: columns that wrap to one per row. -->
+  <section style="display: flex; flex-wrap: wrap; gap: 8px;">
+    <div class="card" style="flex: 1 1 280px;">A column that takes the full width on a phone and shares the row on a desktop.</div>
+    <div class="card" style="flex: 1 1 280px;">Its sibling, which wraps below it on a phone.</div>
+  </section>
+</main>
+</body>
+</html>
