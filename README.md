@@ -15,7 +15,7 @@ indexes: []
 Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent structured, actionable browser state in **50-100x fewer tokens** than traditional approaches - plus built-in causal reasoning, React extraction, and full-stack error correlation.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.26.5-00ADD8?logo=go)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.27.2-00ADD8?logo=go)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
 [![Tools](https://img.shields.io/badge/MCP_Tools-48-blue)](https://modelcontextprotocol.io)
 [![Version](https://img.shields.io/badge/version-1.2.0-orange)](#whats-new-in-120)
@@ -178,7 +178,7 @@ Hacker News front page:
 
 ### Requirements
 
-- **Go 1.26.5** - Required to build the MCP server
+- **Go 1.27.2** - Required to build the MCP server
 - **Chrome/Chromium** - Browser to automate (auto-detected or configurable)
 
 ### Build & Run

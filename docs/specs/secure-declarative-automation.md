@@ -186,7 +186,7 @@ browser ingestion, recorder output, MCP logging, and export code.
   tag.
 - CI runs formatting, vet, tests, and a build on Windows and Linux.
 
-As verified on 2026-07-23, the targets are Go 1.26.5,
+As verified on 2026-10-11, the targets are Go 1.27.2,
 `codeberg.org/TauCeti/mangle-go` v0.5.0,
 `github.com/go-rod/rod` v0.116.2, and
 `github.com/mark3labs/mcp-go` v0.57.0.

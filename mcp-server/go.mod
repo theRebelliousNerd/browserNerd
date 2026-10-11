@@ -1,8 +1,8 @@
 module browsernerd-mcp-server
 
-go 1.26.0
+go 1.27.0
 
-toolchain go1.26.5
+toolchain go1.27.2
 
 require (
 	codeberg.org/TauCeti/mangle-go v0.5.0
