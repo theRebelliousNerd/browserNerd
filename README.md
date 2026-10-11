@@ -18,9 +18,24 @@ Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent s
 [![Go](https://img.shields.io/badge/Go-1.27.2-00ADD8?logo=go)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
 [![Tools](https://img.shields.io/badge/MCP_Tools-48-blue)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.2.0-orange)](#whats-new-in-120)
+[![Version](https://img.shields.io/badge/version-1.3.0-orange)](#whats-new-in-130)
 
 ---
+
+## What's new in 1.3.0
+
+A platform release: BrowserNERD now builds, tests and runs natively on Linux.
+
+- **Go 1.27.2** toolchain; CI reads the version from `go.mod`.
+- **Dependencies:** mcp-go 1.2.1 (MCP protocol 2026-07-28 alongside earlier
+  revisions) and Mangle 0.6.0. Mangle 0.6 rejects a negation over unbound
+  wildcards that 0.5 silently dropped, which had left every audit plan step
+  reading as pending; the rule is fixed.
+- **Linux:** an empty `browser.launch` runs the installed Chrome/Chromium/Edge
+  instead of downloading Chromium; a killed server no longer orphans managed
+  Chrome; the default and example configs load; `debugger_url:
+  "ws://localhost:9222"` attaches; history back/forward no longer race Chrome's
+  navigation.
 
 ## What's new in 1.2.0
 
@@ -190,7 +205,7 @@ cd browserNerd/mcp-server
 
 # Build, stamping the release version into the binary
 go mod tidy
-go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.2.0" -o bin/browsernerd ./cmd/server
+go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.3.0" -o bin/browsernerd ./cmd/server
 
 # Confirm which build you are running (version, revision, build time)
 ./bin/browsernerd -version
@@ -882,7 +897,7 @@ docker:
 ```yaml
 server:
   name: "browsernerd-mcp"
-  version: "1.2.0"
+  version: "1.3.0"
   log_file: "data/browsernerd-mcp.log"
 
 browser:

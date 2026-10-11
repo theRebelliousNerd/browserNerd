@@ -24,7 +24,7 @@ import (
 )
 
 func main() {
-	version := flag.String("version", "1.2.0", "version stamped into the binary")
+	version := flag.String("version", "1.3.0", "version stamped into the binary")
 	flag.Parse()
 	if err := build(*version); err != nil {
 		fmt.Fprintln(os.Stderr, "build:", err)

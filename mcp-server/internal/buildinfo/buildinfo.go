@@ -12,7 +12,7 @@ import (
 
 // Version is stamped at link time:
 //
-//	go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.2.0" ./cmd/server
+//	go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.3.0" ./cmd/server
 var Version = "dev"
 
 // Info identifies the running binary.
