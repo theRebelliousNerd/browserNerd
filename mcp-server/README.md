@@ -219,8 +219,8 @@ Useful flags:
 
 Common multi-project layouts:
 
-- Repo-owned workspace: run `browsernerd --init-workspace --workspace-dir C:\CodeProjects\MyApp` once, then register an MCP entry that always passes `--workspace-dir C:\CodeProjects\MyApp`.
-- Shared/global profile: run with `--no-workspace --config C:\Users\you\.browsernerd\global.yaml` when you want one personal BrowserNERD config and no repo-local overrides.
+- Repo-owned workspace: run `browsernerd --init-workspace --workspace-dir ~/projects/myapp` once, then register an MCP entry that always passes `--workspace-dir ~/projects/myapp`.
+- Shared/global profile: run with `--no-workspace --config ~/.browsernerd/global.yaml` when you want one personal BrowserNERD config and no repo-local overrides.
 - Monorepo or partial trace: keep the workspace at the umbrella repo if that is where shared schema and Docker config belong, but set `repo_root` to the specific package or service tree you want `browser-audit` to scan.
 
 Example client configs:
@@ -231,10 +231,10 @@ Claude project config (`.mcp.json`):
 {
   "mcpServers": {
     "browsernerd-myapp": {
-      "command": "C:\\CodeProjects\\SybioGenv3\\crossthread\\dev_tools\\BrowserNERD\\mcp-server\\bin\\browsernerd.exe",
+      "command": "/path/to/browserNerd/mcp-server/bin/browsernerd",
       "args": [
         "--workspace-dir",
-        "C:\\CodeProjects\\MyApp"
+        "/path/to/myapp"
       ]
     }
   }
@@ -245,12 +245,12 @@ Codex config (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.browsernerd_myapp]
-command = "C:\\CodeProjects\\SybioGenv3\\crossthread\\dev_tools\\BrowserNERD\\mcp-server\\bin\\browsernerd.exe"
-args = ["--workspace-dir", "C:\\CodeProjects\\MyApp"]
+command = "/path/to/browserNerd/mcp-server/bin/browsernerd"
+args = ["--workspace-dir", "/path/to/myapp"]
 
 [mcp_servers.browsernerd_shared]
-command = "C:\\CodeProjects\\SybioGenv3\\crossthread\\dev_tools\\BrowserNERD\\mcp-server\\bin\\browsernerd.exe"
-args = ["--no-workspace", "--config", "C:\\Users\\you\\.browsernerd\\global.yaml"]
+command = "/path/to/browserNerd/mcp-server/bin/browsernerd"
+args = ["--no-workspace", "--config", "/home/you/.browsernerd/global.yaml"]
 ```
 
 Audit-focused workspace example:
@@ -305,18 +305,19 @@ The phased audit system is not just a UI workflow. It persists and emits Mangle 
 ## Build And Run
 
 ```bash
-# Build (stamps the version; works while an MCP host holds the binary)
+# Build bin/browsernerd (bin/browsernerd.exe on Windows), stamping the
+# version; works while an MCP host holds the binary
 go run ./cmd/rebuild
 
 # Stdio mode (Claude Code / MCP host)
-./bin/browsernerd.exe --config config.yaml
+./bin/browsernerd --config config.yaml
 
 # SSE mode
-./bin/browsernerd.exe --config config.yaml --sse-port 8080
+./bin/browsernerd --config config.yaml --sse-port 8080
 
 # Identity and self-diagnosis
-./bin/browsernerd.exe -version
-./bin/browsernerd.exe -doctor --workspace-dir <repo>
+./bin/browsernerd -version
+./bin/browsernerd -doctor --workspace-dir <repo>
 ```
 
 Build, staleness, the doctor and per-call deadlines are specified in
@@ -343,9 +344,9 @@ uses Go, including the official MCP Go client:
 
 ```bash
 go test ./...
-go build -o bin/browsernerd.exe ./cmd/server
-go run ./cmd/smoke -mode list -server bin/browsernerd.exe
-go run ./cmd/smoke -mode smoke -server bin/browsernerd.exe -url https://example.com/
+go run ./cmd/rebuild
+go run ./cmd/smoke -mode list
+go run ./cmd/smoke -mode smoke -url https://example.com/
 go run ./cmd/smoke -mode probe -workspace-dir <repo>   # tour testdata/probe, price every call
 ```
 

@@ -548,6 +548,7 @@ func resolveRelativePaths(cfg Config, baseDir string) Config {
 
 	cfg.Server.LogFile = resolve(cfg.Server.LogFile)
 	cfg.Browser.SessionStore = resolve(cfg.Browser.SessionStore)
+	cfg.Browser.DownloadDir = resolve(cfg.Browser.DownloadDir)
 	cfg.Browser.RepoTrace.RootDir = resolve(cfg.Browser.RepoTrace.RootDir)
 	cfg.Mangle.SchemaPath = resolve(cfg.Mangle.SchemaPath)
 	cfg.Recorder.TraceDir = resolve(cfg.Recorder.TraceDir)
@@ -569,11 +570,6 @@ func resolveRelativePaths(cfg Config, baseDir string) Config {
 func (c *Config) Validate() error {
 	if c.Server.Name == "" {
 		return errors.New("server.name is required")
-	}
-	if c.Browser.AutoStart {
-		if c.Browser.DebuggerURL == "" && len(c.Browser.Launch) == 0 {
-			return errors.New("browser.debugger_url or browser.launch must be provided")
-		}
 	}
 	if c.Browser.RepoTrace.Enabled {
 		if c.Browser.RepoTrace.MaxFiles <= 0 {

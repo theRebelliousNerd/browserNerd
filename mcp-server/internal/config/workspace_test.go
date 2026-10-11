@@ -561,6 +561,7 @@ func TestExplicitConfigPathsAnchorToConfigFile(t *testing.T) {
 		"browser:\n" +
 		"  auto_start: false\n" +
 		"  session_store: \"data/sessions.json\"\n" +
+		"  download_dir: \"data/downloads\"\n" +
 		"mangle:\n" +
 		"  schema_path: \"schemas/browser.mg\"\n"
 	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
@@ -591,6 +592,7 @@ func TestExplicitConfigPathsAnchorToConfigFile(t *testing.T) {
 	}{
 		{"server.log_file", cfg.Server.LogFile, filepath.Join(configDir, "data", "browsernerd-mcp.log")},
 		{"browser.session_store", cfg.Browser.SessionStore, filepath.Join(configDir, "data", "sessions.json")},
+		{"browser.download_dir", cfg.Browser.DownloadDir, filepath.Join(configDir, "data", "downloads")},
 		{"mangle.schema_path", cfg.Mangle.SchemaPath, filepath.Join(configDir, "schemas", "browser.mg")},
 	}
 	for _, c := range checks {

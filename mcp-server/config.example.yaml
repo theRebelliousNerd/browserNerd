@@ -4,8 +4,11 @@ server:
   log_file: data/browsernerd-mcp.log
 
 browser:
-  # Leave both fields empty to let Rod discover/download Chrome and choose a
-  # private debugging endpoint. Set debugger_url only to attach externally.
+  # Leave both fields empty to launch the installed Chrome/Chromium/Edge (Rod
+  # downloads Chromium only when none is installed) on a private debugging
+  # endpoint. launch: ["/usr/bin/google-chrome", "--flag=value"] names the
+  # binary and extra flags. Set debugger_url ("ws://localhost:9222") only to
+  # attach to a browser started with --remote-debugging-port.
   debugger_url: ""
   launch: []
   default_navigation_timeout: 15s
@@ -47,8 +50,8 @@ specs:
       indexes: []
   # A target project can add any Markdown spec/index layout:
   # - name: product
-  #   roots: ["C:/CodeProjects/example/docs/specs"]
-  #   indexes: ["C:/CodeProjects/example/docs/indexes/spec-catalog.md"]
+  #   roots: ["/path/to/example/docs/specs"]
+  #   indexes: ["/path/to/example/docs/indexes/spec-catalog.md"]
   max_files: 2000
   max_file_bytes: 2097152
   max_results: 12

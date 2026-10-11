@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
@@ -238,7 +239,7 @@ func writeJSON(value interface{}) error {
 }
 
 func defaultServerPath() string {
-	if _, err := os.Stat(filepath.Join("bin", "browsernerd.exe")); err == nil {
+	if runtime.GOOS == "windows" {
 		return filepath.Join("bin", "browsernerd.exe")
 	}
 	return filepath.Join("bin", "browsernerd")

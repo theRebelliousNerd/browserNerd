@@ -261,7 +261,8 @@ Browser events will be logged to stdout.
 Error: Failed to start browser: exec: "chrome": executable file not found
 ```
 
-**Solution:** Install Chrome/Chromium or set CHROME_BIN:
+**Solution:** Install Chrome/Chromium (the launcher finds it on PATH or in
+the standard install locations), or point at a binary:
 ```bash
 # Ubuntu/Debian
 sudo apt-get install chromium-browser
@@ -269,8 +270,9 @@ sudo apt-get install chromium-browser
 # macOS
 brew install --cask google-chrome
 
-# Or specify path
-export CHROME_BIN=/usr/bin/chromium-browser
+# Live tests: name the binary explicitly
+export BROWSERNERD_CHROME_BIN=/usr/bin/google-chrome
+# Server: set browser.launch: ["/usr/bin/google-chrome"] in the config
 ```
 
 ### Port Already in Use

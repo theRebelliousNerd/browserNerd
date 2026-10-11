@@ -2,6 +2,8 @@ package browser
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -89,5 +91,34 @@ func TestCreateTabRequiresConnectedBrowser(t *testing.T) {
 	manager := NewSessionManager(config.BrowserConfig{}, nil)
 	if _, err := manager.CreateTab(context.Background(), "", "about:blank", false); err == nil {
 		t.Fatal("expected disconnected browser error")
+	}
+}
+
+// Chrome accepts CDP only on /devtools/browser/<id>, so an endpoint-only
+// debugger_url is resolved through /json/version and a full socket URL is kept.
+func TestStartControlURLResolvesDebuggerEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/abc"}`))
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	m := NewSessionManager(config.BrowserConfig{DebuggerURL: "ws://" + host}, nil)
+	got, err := m.startControlURL()
+	if err != nil {
+		t.Fatalf("startControlURL: %v", err)
+	}
+	if want := "ws://" + host + "/devtools/browser/abc"; got != want {
+		t.Fatalf("resolved %q, want %q", got, want)
+	}
+
+	full := "ws://" + host + "/devtools/browser/kept"
+	m = NewSessionManager(config.BrowserConfig{DebuggerURL: full}, nil)
+	if got, err := m.startControlURL(); err != nil || got != full {
+		t.Fatalf("full socket URL changed: %q, %v", got, err)
 	}
 }

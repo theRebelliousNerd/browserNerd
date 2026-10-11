@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -95,29 +94,7 @@ func liveChromeBinary() string {
 			return candidate
 		}
 	}
-	candidates := []string{
-		"/usr/bin/google-chrome",
-		"/usr/bin/google-chrome-stable",
-		"/usr/bin/chromium",
-		"/usr/bin/chromium-browser",
-	}
-	if runtime.GOOS == "windows" {
-		candidates = append(candidates,
-			filepath.Join(os.Getenv("ProgramFiles"), "Google", "Chrome", "Application", "chrome.exe"),
-			filepath.Join(os.Getenv("ProgramFiles(x86)"), "Google", "Chrome", "Application", "chrome.exe"),
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "Google", "Chrome", "Application", "chrome.exe"),
-		)
-		if roaming := os.Getenv("APPDATA"); roaming != "" {
-			matches, _ := filepath.Glob(filepath.Join(roaming, "rod", "browser", "chromium-*", "chrome.exe"))
-			candidates = append(candidates, matches...)
-		}
-	}
-	for _, candidate := range candidates {
-		if isExecutableFile(candidate) {
-			return candidate
-		}
-	}
-	return ""
+	return ChromeBinary(config.BrowserConfig{})
 }
 
 func isExecutableFile(path string) bool {

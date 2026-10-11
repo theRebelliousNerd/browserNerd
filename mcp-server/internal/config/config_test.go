@@ -241,13 +241,13 @@ func TestValidate(t *testing.T) {
 			errMsg:  "server.name is required",
 		},
 		{
+			// The launcher finds the installed Chrome, or Rod downloads one.
 			name: "auto_start without debugger_url or launch",
 			cfg: Config{
 				Server:  ServerConfig{Name: "test"},
 				Browser: BrowserConfig{AutoStart: true},
 			},
-			wantErr: true,
-			errMsg:  "browser.debugger_url or browser.launch must be provided",
+			wantErr: false,
 		},
 		{
 			name: "auto_start with debugger_url",

@@ -2,11 +2,15 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
+
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 )
 
 // NavigateURLTool navigates an existing session to a new URL.
@@ -336,9 +340,9 @@ func (t *BrowserHistoryTool) Execute(ctx context.Context, args map[string]interf
 	var err error
 	switch action {
 	case "back":
-		err = bounded.NavigateBack()
+		err = navigateHistory(bounded, -1)
 	case "forward":
-		err = bounded.NavigateForward()
+		err = navigateHistory(bounded, 1)
 	case "reload":
 		err = bounded.Reload()
 	default:
@@ -377,4 +381,34 @@ func (t *BrowserHistoryTool) Execute(ctx context.Context, args map[string]interf
 		"action":  action,
 		"url":     newURL,
 	}, nil
+}
+
+// navigateHistory moves the tab delta entries through its session history and
+// returns once the main frame has committed that entry.
+//
+// Rod's NavigateBack/NavigateForward evaluate history.back()/forward(), which
+// races the navigation it starts: when the entry commits before the evaluation
+// answers (about:blank, a cross-process swap, a back-forward cache restore),
+// Chrome reports "Inspected target navigated or closed" for a navigation that
+// succeeded. Page.navigateToHistoryEntry has no such race, says plainly when
+// there is no entry to go to, and the commit is observed as an event instead
+// of being polled for through a frame that is mid-swap.
+func navigateHistory(page *rod.Page, delta int) error {
+	history, err := proto.PageGetNavigationHistory{}.Call(page)
+	if err != nil {
+		return err
+	}
+	target := history.CurrentIndex + delta
+	if target < 0 || target >= len(history.Entries) {
+		return errors.New("no history entry in that direction")
+	}
+	committed := page.EachEvent(
+		func(e *proto.PageFrameNavigated) bool { return e.Frame.ParentID == "" },
+		func(e *proto.PageNavigatedWithinDocument) bool { return e.FrameID == page.FrameID },
+	)
+	if err := (proto.PageNavigateToHistoryEntry{EntryID: history.Entries[target].ID}).Call(page); err != nil {
+		return err
+	}
+	committed()
+	return page.GetContext().Err()
 }

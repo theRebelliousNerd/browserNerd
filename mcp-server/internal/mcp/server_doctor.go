@@ -114,6 +114,7 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 	report["credentials"] = map[string]interface{}{"set": set, "unset": unset}
 
 	report["config"] = map[string]interface{}{
+		"chrome":           doctorChrome(cfg.Browser),
 		"headless":         cfg.Browser.IsHeadless(),
 		"progressive_only": cfg.MCP.IsProgressiveOnly(),
 		"tool_timeout":     cfg.MCP.GetToolTimeout().String(),
@@ -227,4 +228,15 @@ func (s *Server) doctorReport(ctx context.Context) map[string]interface{} {
 		Docker:   s.dockerClient,
 		Calls:    s.calls,
 	})
+}
+
+// doctorChrome names the browser the server attaches to or launches.
+func doctorChrome(cfg config.BrowserConfig) string {
+	if cfg.DebuggerURL != "" {
+		return "attach to browser.debugger_url"
+	}
+	if bin := browser.ChromeBinary(cfg); bin != "" {
+		return bin
+	}
+	return "none installed: Rod downloads Chromium on first launch"
 }

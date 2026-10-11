@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"runtime"
 	"strings"
 	"time"
+
+	"browsernerd-mcp-server/internal/config"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
@@ -316,20 +319,39 @@ func (m *SessionManager) browserRecordLocked(browserID string) (*browserRecord, 
 	return nil, browserID
 }
 
-// newLauncher builds a Chrome launcher without Rod's leakless guard. Leakless
-// execs a helper binary it drops in %TEMP%, and Windows Defender quarantines
-// that helper as potentially unwanted software, so every launch fails with
-// "the file contains a virus". The guard only kills Chrome if this server dies;
-// shutdown-browser and session teardown already own the browser's lifetime.
+// ChromeBinary names the browser executable a managed launch runs:
+// browser.launch[0] when configured, else the installed Chrome, Chromium or
+// Edge that Rod finds on this platform. Empty means none is installed and Rod
+// downloads its pinned Chromium build on first launch.
+func ChromeBinary(cfg config.BrowserConfig) string {
+	if len(cfg.Launch) > 0 {
+		return cfg.Launch[0]
+	}
+	if path, ok := launcher.LookPath(); ok {
+		return path
+	}
+	return ""
+}
+
+// newLauncher builds a Chrome launcher for ChromeBinary.
+//
+// Rod's leakless guard kills Chrome when this server dies without shutting it
+// down, so a crashed or killed server leaves no orphaned browser. Leakless execs
+// a helper binary it drops in the temp directory, and Windows Defender
+// quarantines that helper ("the file contains a virus"), so on Windows the
+// guard is off and shutdown-browser and session teardown own Chrome's lifetime.
 func (m *SessionManager) newLauncher() *launcher.Launcher {
-	return launcher.New().Headless(m.cfg.IsHeadless()).Leakless(false)
+	launch := launcher.New().Headless(m.cfg.IsHeadless()).Leakless(runtime.GOOS != "windows")
+	if bin := ChromeBinary(m.cfg); bin != "" {
+		launch = launch.Bin(bin)
+	}
+	return launch
 }
 
 func (m *SessionManager) launchChrome() (string, error) {
 	launch := m.newLauncher()
 	flagStart := 0
 	if len(m.cfg.Launch) > 0 {
-		launch = launch.Bin(m.cfg.Launch[0])
 		flagStart = 1
 	}
 	for _, rawFlag := range m.cfg.Launch[flagStart:] {
@@ -345,11 +367,7 @@ func (m *SessionManager) launchChrome() (string, error) {
 	if err == nil {
 		return controlURL, nil
 	}
-	fallback := m.newLauncher()
-	if len(m.cfg.Launch) > 0 {
-		fallback = fallback.Bin(m.cfg.Launch[0])
-	}
-	alternate, fallbackErr := fallback.Launch()
+	alternate, fallbackErr := m.newLauncher().Launch()
 	if fallbackErr != nil {
 		return "", fmt.Errorf("launch chrome: %w (fallback: %v)", err, fallbackErr)
 	}

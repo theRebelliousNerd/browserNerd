@@ -351,6 +351,19 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		if !resultMap["success"].(bool) {
 			t.Errorf("expected success, got error: %v", resultMap["error"])
 		}
+
+		// The newest entry has nothing ahead of it.
+		result, err = tool.Execute(ctx, map[string]interface{}{
+			"session_id": sessionID,
+			"action":     "forward",
+		})
+		if err != nil {
+			t.Fatalf("Execute failed: %v", err)
+		}
+		resultMap = result.(map[string]interface{})
+		if resultMap["success"].(bool) {
+			t.Errorf("forward past the newest entry reported success: %v", resultMap)
+		}
 	})
 
 	t.Run("DiscoverHiddenContentTool", func(t *testing.T) {

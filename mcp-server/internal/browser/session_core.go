@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"browsernerd-mcp-server/internal/security"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/google/uuid"
 )
@@ -251,13 +253,9 @@ func (m *SessionManager) Start(_ context.Context) error {
 		return fmt.Errorf("load sessions: %w", err)
 	}
 
-	controlURL := m.cfg.DebuggerURL
-	if controlURL == "" {
-		var err error
-		controlURL, err = m.launchChrome()
-		if err != nil {
-			return err
-		}
+	controlURL, err := m.startControlURL()
+	if err != nil {
+		return err
 	}
 
 	// Browser lifetime must not depend on request-scoped tool contexts.
@@ -296,6 +294,25 @@ func (m *SessionManager) Start(_ context.Context) error {
 	m.startIdleReaper()
 	log.Printf("Browser connected at %s", controlURL)
 	return nil
+}
+
+// startControlURL returns the DevTools WebSocket URL Start connects to: the
+// configured debugger_url, or a freshly launched managed Chrome. A debugger_url
+// naming only the endpoint ("ws://localhost:9222", "127.0.0.1:9222") is
+// resolved to the browser's /devtools/browser/<id> socket, which is the only
+// URL Chrome accepts a CDP connection on.
+func (m *SessionManager) startControlURL() (string, error) {
+	if m.cfg.DebuggerURL == "" {
+		return m.launchChrome()
+	}
+	if strings.Contains(m.cfg.DebuggerURL, "/devtools/") {
+		return m.cfg.DebuggerURL, nil
+	}
+	resolved, err := launcher.ResolveURL(m.cfg.DebuggerURL)
+	if err != nil {
+		return "", fmt.Errorf("resolve debugger_url %s: %w", m.redactor.SanitizeString(m.cfg.DebuggerURL), err)
+	}
+	return resolved, nil
 }
 
 // ControlURL returns the WebSocket debugger URL for the connected browser.

@@ -22,15 +22,15 @@ Automated gates are formatting, `go vet ./...`, `go test ./...`, and
 
 ## Building and knowing what is running
 
-`go run ./cmd/rebuild` (from `mcp-server/`) builds `bin/browsernerd.exe`
-stamped with `internal/buildinfo.Version`. A running MCP server holds that file
-open; Windows refuses to overwrite a running executable but allows renaming
-it, so the tool moves the held binary aside to
-`bin/browsernerd.<timestamp>.old.exe`, builds into its place, deletes older
+`go run ./cmd/rebuild` (from `mcp-server/`) builds `bin/browsernerd`
+(`bin/browsernerd.exe` on Windows) stamped with `internal/buildinfo.Version`.
+A running MCP server holds that file open; Windows refuses to overwrite a
+running executable but allows renaming it, so the tool moves the held binary
+aside to `bin/browsernerd.<timestamp>.old`, builds into its place, deletes older
 moved-aside binaries no longer running, and puts the previous binary back if
 the build fails. The next server spawn (a `/mcp` reconnect) runs the new build.
 
-Every binary can name itself: `browsernerd.exe -version` prints version, VCS
+Every binary can name itself: `browsernerd -version` prints version, VCS
 revision (with `+dirty` for an uncommitted tree), build time and Go version,
 and the MCP server identifies as `<version>+<revision>`. At start the server
 compares its own build time with the newest non-test `.go`/`.mg` file of the
@@ -38,7 +38,7 @@ module it was built from (`bin/` sits under the module root); when source is
 newer, `launch-browser` carries a `warning` and the doctor lists it as a
 problem.
 
-`browsernerd.exe -doctor` (same config flags as the server) and
+`browsernerd -doctor` (same config flags as the server) and
 `browser-observe mode:doctor` run the self-diagnosis in
 `internal/mcp/server_doctor.go`: binary identity and staleness, resolved schema
 and writable paths, whether each credential variable fixtures resolve through

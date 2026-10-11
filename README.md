@@ -202,6 +202,14 @@ go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.2.0" -
 ./bin/browsernerd --config config.yaml
 ```
 
+### Add to Claude Code
+
+```bash
+claude mcp add --scope user browsernerd -- \
+  /path/to/browserNerd/mcp-server/bin/browsernerd \
+  --no-workspace --config ~/.browsernerd/global.yaml
+```
+
 ### Add to Claude Desktop
 
 Edit `~/.config/claude/mcp.json` (Linux/macOS) or `%APPDATA%\Claude\mcp.json` (Windows):
@@ -230,11 +238,11 @@ Pinned-project Claude Desktop example:
 ```json
 {
   "mcpServers": {
-    "browsernerd-cross-thread": {
-      "command": "C:\\CodeProjects\\SybioGenv3\\crossthread\\dev_tools\\BrowserNERD\\mcp-server\\bin\\browsernerd.exe",
+    "browsernerd-myapp": {
+      "command": "/path/to/browserNerd/mcp-server/bin/browsernerd",
       "args": [
         "--workspace-dir",
-        "C:\\CodeProjects\\SybioGenv3\\crossthread"
+        "/path/to/myapp"
       ]
     }
   }
@@ -244,13 +252,13 @@ Pinned-project Claude Desktop example:
 Pinned-project and shared-global Codex examples:
 
 ```toml
-[mcp_servers.browsernerd_cross-thread]
-command = "C:\\CodeProjects\\SybioGenv3\\crossthread\\dev_tools\\BrowserNERD\\mcp-server\\bin\\browsernerd.exe"
-args = ["--workspace-dir", "C:\\CodeProjects\\SybioGenv3\\crossthread"]
+[mcp_servers.browsernerd_myapp]
+command = "/path/to/browserNerd/mcp-server/bin/browsernerd"
+args = ["--workspace-dir", "/path/to/myapp"]
 
 [mcp_servers.browsernerd_shared]
-command = "C:\\CodeProjects\\SybioGenv3\\crossthread\\dev_tools\\BrowserNERD\\mcp-server\\bin\\browsernerd.exe"
-args = ["--no-workspace", "--config", "C:\\Users\\you\\.browsernerd\\global.yaml"]
+command = "/path/to/browserNerd/mcp-server/bin/browsernerd"
+args = ["--no-workspace", "--config", "/home/you/.browsernerd/global.yaml"]
 ```
 
 Create one MCP entry per project when you want different repo-trace defaults, schema paths, or Docker container lists.
@@ -261,7 +269,10 @@ Create one MCP entry per project when you want different repo-trace defaults, sc
 
 ### Mode 1: Auto-Launch (Zero Config)
 
-BrowserNERD automatically launches and manages Chrome via Rod:
+BrowserNERD automatically launches and manages Chrome via Rod. It runs
+`browser.launch[0]` when set, else the installed Chrome, Chromium or Edge, and
+downloads Rod's Chromium only when none is installed. On Linux and macOS a
+leakless guard closes managed Chrome if the server dies.
 
 ```
 launch-browser                         ->  Chrome starts with CDP enabled
@@ -275,8 +286,9 @@ shutdown-browser                       ->  Clean exit
 Connect to a Chrome instance you're already using:
 
 ```bash
-# Start Chrome with remote debugging
-chrome --remote-debugging-port=9222
+# Start Chrome with remote debugging (Chrome requires a non-default profile)
+google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.browsernerd/chrome-debug"
+# Windows: mcp-server/start-chrome-debug.bat
 ```
 
 Configure `config.yaml`:

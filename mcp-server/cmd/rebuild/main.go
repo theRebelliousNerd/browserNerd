@@ -1,14 +1,14 @@
-// Command rebuild compiles bin/browsernerd.exe (bin/browsernerd elsewhere)
+// Command rebuild compiles bin/browsernerd (bin/browsernerd.exe on Windows)
 // stamped with its version, beside a server that may be running it.
 //
 // A running MCP server holds its binary open. Windows refuses to overwrite a
-// running executable but allows renaming it, so the current binary is moved
-// aside to bin/browsernerd.<timestamp>.old(.exe), the new build takes its
-// place, and the next server spawn (a /mcp reconnect) runs it. Old binaries no
-// longer running are deleted on the way; a failed build puts the previous
-// binary back so bin/ is never left without a server.
+// running executable but allows renaming it (Linux and macOS allow both), so
+// the current binary is moved aside to bin/browsernerd.<timestamp>.old(.exe),
+// the new build takes its place, and the next server spawn (a /mcp reconnect)
+// runs it. Old binaries no longer running are deleted on the way; a failed
+// build puts the previous binary back so bin/ is never left without a server.
 //
-//	cd dev_tools/BrowserNERD/mcp-server && go run ./cmd/rebuild
+//	cd mcp-server && go run ./cmd/rebuild
 //	go run ./cmd/rebuild -version 1.3.0
 package main
 
@@ -34,7 +34,7 @@ func main() {
 
 func build(version string) error {
 	if _, err := os.Stat("go.mod"); err != nil {
-		return fmt.Errorf("run from dev_tools/BrowserNERD/mcp-server (no go.mod here)")
+		return fmt.Errorf("run from the mcp-server directory (no go.mod here)")
 	}
 	ext := ""
 	if runtime.GOOS == "windows" {
