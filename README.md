@@ -572,7 +572,7 @@ BrowserNERD exposes read-only MCP resources for context-aware integrations:
 
 ## Mangle: Logic Programming for Browser State
 
-BrowserNERD uses [TauCeti Mangle Go v0.5.0](https://codeberg.org/TauCeti/mangle-go) for declarative reasoning.
+BrowserNERD uses [TauCeti Mangle Go v0.6.0](https://codeberg.org/TauCeti/mangle-go) for declarative reasoning.
 
 The built-in schema is compiled into the binary; a project adds its own
 modules on top through `.browsernerd/schemas/*.mg` or `mangle.schema_path`.

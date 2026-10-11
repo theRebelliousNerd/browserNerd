@@ -187,9 +187,12 @@ browser ingestion, recorder output, MCP logging, and export code.
 - CI runs formatting, vet, tests, and a build on Windows and Linux.
 
 As verified on 2026-10-11, the targets are Go 1.27.2,
-`codeberg.org/TauCeti/mangle-go` v0.5.0,
+`codeberg.org/TauCeti/mangle-go` v0.6.0,
 `github.com/go-rod/rod` v0.116.2, and
-`github.com/mark3labs/mcp-go` v0.57.0.
+`github.com/mark3labs/mcp-go` v1.2.1. Rod 0.116.2 is the newest Rod tag;
+its helpers are held at the newest tags it still compiles against
+(`ysmood/fetchup` v0.3.0, whose v0.4 changed `fetchup.New`, and
+`ysmood/got` v0.42.4, whose v0.43 removed `lib/lcs`).
 
 ## Verification
 

@@ -322,3 +322,26 @@ func TestAuditPlanningRunResumeState(t *testing.T) {
 		t.Fatalf("expected no resume actions for completed run, got %+v", completeResumeRows)
 	}
 }
+
+// A completed or skipped step must leave the pending set. Mangle 0.5 dropped a
+// negated premise whose wildcards no other premise bound, so every step read as
+// pending; the rule now negates a projection keyed by the step.
+func TestAuditPlanStepPendingExcludesResolvedSteps(t *testing.T) {
+	engine := newContractAuditEngine(t)
+	facts := []Fact{
+		contractFact(100, "audit_plan_step", "s1", "a1", int64(1), "step-done", "interact", false),
+		contractFact(101, "audit_plan_step", "s1", "a1", int64(2), "step-skipped", "navigate", true),
+		contractFact(102, "audit_plan_step", "s1", "a1", int64(3), "step-open", "observe", false),
+		contractFact(110, "audit_plan_step_completed", "s1", "a1", "step-done", int64(110)),
+		contractFact(120, "audit_plan_step_skipped", "s1", "a1", "step-skipped", "risky", int64(120)),
+	}
+	if err := engine.AddFacts(context.Background(), facts); err != nil {
+		t.Fatalf("AddFacts failed: %v", err)
+	}
+
+	rows := queryAuditResults(t, engine, `audit_plan_step_pending("s1", "a1", Step, StepId, Tool, Risky).`)
+	if len(rows) != 1 {
+		t.Fatalf("expected only the open step to be pending, got %+v", rows)
+	}
+	requireQueryRow(t, rows, map[string]interface{}{"StepId": "step-open"})
+}

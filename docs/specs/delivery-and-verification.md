@@ -15,7 +15,7 @@ sessions, and repository tracing are split by responsibility. The nearest
 `agents.md` files describe ownership after large refactors.
 
 The 2026-10-11 direct-dependency baseline is Go language level 1.27.0 with
-toolchain 1.27.2, Mangle 0.5.0, Rod 0.116.2, and mcp-go 0.57.0.
+toolchain 1.27.2, Mangle 0.6.0, Rod 0.116.2, and mcp-go 1.2.1.
 
 Automated gates are formatting, `go vet ./...`, `go test ./...`, and
 `go build ./cmd/server`, plus focused security and lifecycle regressions.

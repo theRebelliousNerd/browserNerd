@@ -59,7 +59,6 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 		serverVersion,
 		mcpserver.WithResourceCapabilities(true, true),
 		mcpserver.WithToolCapabilities(true),
-		mcpserver.WithLogging(),
 		mcpserver.WithPromptCapabilities(false),
 		mcpserver.WithRecovery(),
 	)

@@ -14,11 +14,18 @@ Decl audit_plan_step_skipped(SessionId, AuditId, StepId, Reason, Timestamp).
 Decl audit_discovered_action(SessionId, AuditId, Step, Ref, Action, Label, Route).
 Decl audit_hazard_fact(SessionId, AuditId, Step, Hazard, Severity).
 
+# A negated premise may only use variables bound elsewhere in the rule, so the
+# completion and skip records are projected to the step key before negation.
+Decl audit_plan_step_resolved(SessionId, AuditId, StepId).
+audit_plan_step_resolved(SessionId, AuditId, StepId) :-
+    audit_plan_step_completed(SessionId, AuditId, StepId, _).
+audit_plan_step_resolved(SessionId, AuditId, StepId) :-
+    audit_plan_step_skipped(SessionId, AuditId, StepId, _, _).
+
 Decl audit_plan_step_pending(SessionId, AuditId, Step, StepId, Tool, Risky).
 audit_plan_step_pending(SessionId, AuditId, Step, StepId, Tool, Risky) :-
     audit_plan_step(SessionId, AuditId, Step, StepId, Tool, Risky),
-    !audit_plan_step_completed(SessionId, AuditId, StepId, _),
-    !audit_plan_step_skipped(SessionId, AuditId, StepId, _, _).
+    !audit_plan_step_resolved(SessionId, AuditId, StepId).
 
 Decl audit_navigation_action(SessionId, AuditId, Step).
 audit_navigation_action(SessionId, AuditId, Step) :-

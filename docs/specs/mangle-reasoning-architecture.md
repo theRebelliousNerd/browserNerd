@@ -13,7 +13,7 @@ indexes: [browsernerd-corpus, mangle]
 Mangle is the shared semantic layer between browser capture, repository
 evidence, specifications, automation, testing, and diagnosis.
 
-The maintained runtime is `codeberg.org/TauCeti/mangle-go` v0.5.0. Release
+The maintained runtime is `codeberg.org/TauCeti/mangle-go` v0.6.0. Release
 tags, not the moving upstream main branch, define the production dependency
 boundary. Any upgrade requires a freshness check, upstream behavior review,
 complete schema analysis, derivation tests, and bounded performance profiling.
