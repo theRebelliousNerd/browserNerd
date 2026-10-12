@@ -9,7 +9,7 @@
 // build puts the previous binary back so bin/ is never left without a server.
 //
 //	cd mcp-server && go run ./cmd/rebuild
-//	go run ./cmd/rebuild -version 1.3.0
+//	go run ./cmd/rebuild -version 1.4.0
 package main
 
 import (
@@ -24,7 +24,7 @@ import (
 )
 
 func main() {
-	version := flag.String("version", "1.3.0", "version stamped into the binary")
+	version := flag.String("version", "1.4.0", "version stamped into the binary")
 	flag.Parse()
 	if err := build(*version); err != nil {
 		fmt.Fprintln(os.Stderr, "build:", err)

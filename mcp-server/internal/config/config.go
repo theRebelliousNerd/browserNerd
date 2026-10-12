@@ -239,7 +239,7 @@ func DefaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
 			Name:    "browsernerd-mcp",
-			Version: "1.3.0",
+			Version: "1.4.0",
 			LogFile: filepath.Join(dataRoot, "browsernerd-mcp.log"),
 		},
 		Browser: BrowserConfig{

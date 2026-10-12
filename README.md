@@ -18,9 +18,30 @@ Stop burning 50,000+ tokens on raw HTML dumps. BrowserNERD gives your AI agent s
 [![Go](https://img.shields.io/badge/Go-1.27.2-00ADD8?logo=go)](https://go.dev)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-green)](https://modelcontextprotocol.io)
 [![Tools](https://img.shields.io/badge/MCP_Tools-48-blue)](https://modelcontextprotocol.io)
-[![Version](https://img.shields.io/badge/version-1.3.0-orange)](#whats-new-in-130)
+[![Version](https://img.shields.io/badge/version-1.4.0-orange)](#whats-new-in-140)
 
 ---
+
+## What's new in 1.4.0
+
+One BrowserNERD again: the work done in Cross-Thread's vendored copy since
+1.2.0 joins the 1.3.0 Go 1.27/Linux line.
+
+- **Responsive layout audit:** `browser-observe mode:"layout"` finds overlap,
+  text bleed, horizontal overflow, offscreen, clipped, toolbar cut-off and tap
+  target defects with refs, geometry and an annotated screenshot, after waiting
+  for the page to finish loading.
+- **Device emulation:** `browser-act {type:"viewport", preset:"iphone-14"}` (or
+  explicit width/height/scale/mobile/touch/UA), per tab, surviving navigation.
+- **Chrome lifetime:** server exit closes the Chrome it launched, and startup
+  reaps Chrome left by a server that died, recognised by an owner mark in its
+  profile. An attached `debugger_url` browser is never closed.
+- **Streamable HTTP:** the network transport serves MCP at `/mcp`;
+  `--sse-port`/`mcp.sse_port` and `--sse-host`/`mcp.sse_host` are now
+  `--http-port`/`mcp.http_port` and `--http-host`/`mcp.http_host`.
+- Friction fixes from live use: absent assertions fail, same-URL navigate
+  reloads, toasts deduplicate, the network view is scoped to the current
+  navigation, contradictions are scoped to the selected evidence.
 
 ## What's new in 1.3.0
 
@@ -205,7 +226,7 @@ cd browserNerd/mcp-server
 
 # Build, stamping the release version into the binary
 go mod tidy
-go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.3.0" -o bin/browsernerd ./cmd/server
+go build -ldflags "-X browsernerd-mcp-server/internal/buildinfo.Version=1.4.0" -o bin/browsernerd ./cmd/server
 
 # Confirm which build you are running (version, revision, build time)
 ./bin/browsernerd -version
@@ -910,7 +931,7 @@ docker:
 ```yaml
 server:
   name: "browsernerd-mcp"
-  version: "1.3.0"
+  version: "1.4.0"
   log_file: "data/browsernerd-mcp.log"
 
 browser:
