@@ -177,14 +177,14 @@ Decl submit_from_url(SessionId, UrlBefore, TSubmit, Bucket).
 submit_from_url(SessionId, UrlBefore, TSubmit, Bucket) :-
     form_submitted(SessionId, _, TSubmit),
     url_before_submit(SessionId, UrlBefore, TBefore),
-    TSubmit > TBefore,
+    TSubmit >= TBefore,
     Bucket = fn:div(TSubmit, 5000).
 
 Decl url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav).
 url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav) :-
     submit_from_url(SessionId, UrlBefore, TSubmit, Bucket),
     navigation_bucket(SessionId, Bucket, UrlAfter, TNav),
-    TNav > TSubmit,
+    TNav >= TSubmit,
     Delta = fn:minus(TNav, TSubmit),
     Delta < 5000,
     UrlBefore != UrlAfter.
@@ -193,7 +193,7 @@ url_changed_after_submit(SessionId, UrlBefore, UrlAfter, TNav) :-
     submit_from_url(SessionId, UrlBefore, TSubmit, Bucket),
     Next = fn:plus(Bucket, 1),
     navigation_bucket(SessionId, Next, UrlAfter, TNav),
-    TNav > TSubmit,
+    TNav >= TSubmit,
     Delta = fn:minus(TNav, TSubmit),
     Delta < 5000,
     UrlBefore != UrlAfter.
@@ -229,7 +229,7 @@ Decl login_failed_no_navigation(SessionId).
 login_failed_no_navigation(SessionId) :-
     form_submitted(SessionId, _, TSubmit),
     url_before_submit(SessionId, UrlBefore, TBefore),
-    TSubmit > TBefore,
+    TSubmit >= TBefore,
     current_url(SessionId, UrlBefore).
 
 Decl login_failed_api_error(SessionId, ReqId, Status).
@@ -247,7 +247,7 @@ Decl login_attempt_pending(SessionId, Timestamp).
 login_attempt_pending(SessionId, TSubmit) :-
     form_submitted(SessionId, _, TSubmit),
     url_before_submit(SessionId, _, TBefore),
-    TSubmit > TBefore.
+    TSubmit >= TBefore.
 
 # --- Authenticated session indicator ---
 # Generic indicator that can be filled by code-level detection

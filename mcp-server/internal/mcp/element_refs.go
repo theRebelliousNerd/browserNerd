@@ -45,7 +45,7 @@ const elementRefScript = `
 			buttons: 'button, input[type="submit"], input[type="button"], input[type="reset"], input[type="image"], summary, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="treeitem"], [role="option"], [role="switch"], [role="checkbox"], [role="radio"], [role="row"][aria-rowindex], [role="row"][data-rowindex], [role="row"][data-row-id], [role="row"][data-row-key], [role="gridcell"][tabindex], tr[aria-rowindex], tr[data-rowindex], tr[data-row-id], tr[data-row-key], .ag-row, .MuiDataGrid-row',
 			inputs: 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, [contenteditable="true"], [contenteditable=""]',
 			links: 'a[href], [role="link"]',
-			selects: 'select, [role="combobox"], [role="listbox"]'
+			selects: 'select, [role="combobox"], [role="listbox"], [role="option"], option'
 		};
 		const __bnAllSelector = Object.values(__bnSelectors).join(', ');
 		const __bnEncodeRefPart = (value) => encodeURIComponent(String(value ?? '')).substring(0, 120);

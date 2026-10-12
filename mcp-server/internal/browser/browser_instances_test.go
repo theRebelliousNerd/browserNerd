@@ -96,7 +96,7 @@ func TestCreateTabRequiresConnectedBrowser(t *testing.T) {
 
 // Chrome accepts CDP only on /devtools/browser/<id>, so an endpoint-only
 // debugger_url is resolved through /json/version and a full socket URL is kept.
-func TestStartControlURLResolvesDebuggerEndpoint(t *testing.T) {
+func TestStartBrowserResolvesDebuggerEndpoint(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/json/version" {
 			http.NotFound(w, r)
@@ -108,17 +108,20 @@ func TestStartControlURLResolvesDebuggerEndpoint(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 
 	m := NewSessionManager(config.BrowserConfig{DebuggerURL: "ws://" + host}, nil)
-	got, err := m.startControlURL()
+	got, err := m.startBrowser()
 	if err != nil {
-		t.Fatalf("startControlURL: %v", err)
+		t.Fatalf("startBrowser: %v", err)
 	}
-	if want := "ws://" + host + "/devtools/browser/abc"; got != want {
-		t.Fatalf("resolved %q, want %q", got, want)
+	if got.pid != 0 || got.tempDir {
+		t.Fatalf("an attached browser was recorded as launched: %+v", got)
+	}
+	if want := "ws://" + host + "/devtools/browser/abc"; got.controlURL != want {
+		t.Fatalf("resolved %q, want %q", got.controlURL, want)
 	}
 
 	full := "ws://" + host + "/devtools/browser/kept"
 	m = NewSessionManager(config.BrowserConfig{DebuggerURL: full}, nil)
-	if got, err := m.startControlURL(); err != nil || got != full {
-		t.Fatalf("full socket URL changed: %q, %v", got, err)
+	if got, err := m.startBrowser(); err != nil || got.controlURL != full {
+		t.Fatalf("full socket URL changed: %+v, %v", got, err)
 	}
 }

@@ -710,31 +710,25 @@ func latestNavigationTimestamp(ctx context.Context, engine *mangle.Engine, sessi
 	return latest
 }
 
-func detectContradictions(ctx context.Context, engine *mangle.Engine, sessionID string) []map[string]interface{} {
+func detectContradictions(evidence *browserEvidence) []map[string]interface{} {
 	contradictions := make([]map[string]interface{}, 0)
-	if engine == nil || sessionID == "" {
+	if evidence == nil {
 		return contradictions
 	}
 
-	// failed_request is derived; query the store, scoped to the session.
-	failedRows := queryToRows(ctx, engine, fmt.Sprintf("failed_request(%q, ReqId, Url, Status).", sessionID))
-	if len(failedRows) == 0 {
+	failedRequestCount := 0
+	for _, request := range evidence.calls {
+		if request != nil && request.failed() {
+			failedRequestCount++
+		}
+	}
+	if failedRequestCount == 0 {
 		return contradictions
 	}
 
-	// toast_notification is a base event stored in the temporal buffer.
-	toasts := engine.FactsByPredicate("toast_notification")
 	successToastCount := 0
-	for _, t := range toasts {
-		// toast_notification(SessionId, Text, Level, Source, Timestamp)
-		if len(t.Args) < 3 {
-			continue
-		}
-		if fmt.Sprintf("%v", t.Args[0]) != sessionID {
-			continue
-		}
-		level := fmt.Sprintf("%v", t.Args[2])
-		if level == "success" {
+	for _, toast := range evidence.toasts {
+		if toast.level == "success" {
 			successToastCount++
 		}
 	}
@@ -742,7 +736,7 @@ func detectContradictions(ctx context.Context, engine *mangle.Engine, sessionID 
 	if successToastCount > 0 {
 		contradictions = append(contradictions, map[string]interface{}{
 			"type":                    "success_toast_with_failed_requests",
-			"failed_request_count":    len(failedRows),
+			"failed_request_count":    failedRequestCount,
 			"success_toast_count":     successToastCount,
 			"confidence_impact_delta": -0.25,
 		})

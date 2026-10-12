@@ -17,6 +17,16 @@ then defaults. Discovery walks a bounded number of parents for
 `.browsernerd/config.yaml`. A discovered file is untrusted unless the user
 explicitly passes `--trust-workspace-config`.
 
+Machine settings belong in the explicit `--config` file and project settings in
+the workspace: Docker log correlation (`docker.enabled`, the project's
+`containers`) is a project setting. The machine config shipped as
+`mcp-server/config.yaml` sets no `docker` block, so a project's correlation
+survives it. An explicit config that does turn the workspace's Docker
+correlation off, or names other containers, still wins as every later layer
+does, and the load records it in `Config.Overrides` - naming the file that
+overrode and the workspace file it overrode - which `doctor` lists under
+`config.overrides` and as a problem.
+
 Untrusted workspace configuration may tune in-workspace schemas, traces,
 repository bounds, and spec corpora. It may not choose a browser executable,
 launch arguments, attach endpoint, auto-start behavior, or paths outside the

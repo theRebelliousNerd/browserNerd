@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"runtime"
+	"os"
 	"strings"
 	"time"
 
@@ -48,26 +48,34 @@ func (m *SessionManager) LaunchAdditional(_ context.Context) (*BrowserInstance, 
 	if browserCount >= m.cfg.GetMaxBrowsers() {
 		return nil, fmt.Errorf("browser limit reached (%d)", m.cfg.GetMaxBrowsers())
 	}
-	controlURL, err := m.launchChrome()
+	launched, err := m.launchChrome()
 	if err != nil {
 		return nil, err
 	}
-	browser := rod.New().ControlURL(controlURL).Context(context.Background())
+	browser := rod.New().ControlURL(launched.controlURL).Context(context.Background())
 	if err := browser.Connect(); err != nil {
+		m.killLaunchedChrome(launched)
 		return nil, fmt.Errorf("connect additional chrome: %w", err)
 	}
 
 	now := time.Now()
 	meta := BrowserInstance{
 		ID:         uuid.NewString(),
-		ControlURL: m.redactor.SanitizeString(controlURL),
+		ControlURL: m.redactor.SanitizeString(launched.controlURL),
 		Status:     "connected",
 		Managed:    true,
 		CreatedAt:  now,
 		LastActive: now,
 	}
 	m.mu.Lock()
-	m.browsers[meta.ID] = &browserRecord{meta: meta, browser: browser, controlURL: controlURL}
+	m.browsers[meta.ID] = &browserRecord{
+		meta:        meta,
+		browser:     browser,
+		controlURL:  launched.controlURL,
+		pid:         launched.pid,
+		userDataDir: launched.userDataDir,
+		tempDir:     launched.tempDir,
+	}
 	m.mu.Unlock()
 	m.enableDownloads(browser, "")
 	m.listenForDownloads(browser)
@@ -289,20 +297,44 @@ func (m *SessionManager) CloseBrowser(browserID string) (bool, error) {
 			break
 		}
 	}
+	if m.querier == nil {
+		m.querier = DefaultProcessQuerier()
+	}
+	q := m.querier
 	m.mu.Unlock()
+
 	var err error
 	for _, session := range sessionRecords {
 		if closeErr := closeSessionResources(session); closeErr != nil && err == nil {
 			err = closeErr
 		}
 	}
-	if record.browser != nil {
-		if closeErr := record.browser.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
+	if closeErr := teardownBrowser(q, record); closeErr != nil && err == nil {
+		err = closeErr
 	}
 	_ = m.persistSessions()
 	return true, err
+}
+
+// teardownBrowser ends a browser record. A managed browser is closed, its
+// process tree killed and its temporary profile deleted; an attached browser
+// (debugger_url) is the user's own and keeps running.
+func teardownBrowser(q ProcessQuerier, record *browserRecord) error {
+	var err error
+	if record.browser != nil && record.meta.Managed {
+		err = record.browser.Close()
+	}
+	if record.pid > 0 {
+		if killErr := q.KillProcessTree(record.pid); killErr != nil && err == nil {
+			err = killErr
+		}
+	}
+	if record.tempDir && record.userDataDir != "" {
+		if rmErr := removeUserDataDir(record.userDataDir); rmErr != nil && err == nil {
+			err = rmErr
+		}
+	}
+	return err
 }
 
 func (m *SessionManager) browserRecordLocked(browserID string) (*browserRecord, string) {
@@ -333,22 +365,49 @@ func ChromeBinary(cfg config.BrowserConfig) string {
 	return ""
 }
 
-// newLauncher builds a Chrome launcher for ChromeBinary.
-//
-// Rod's leakless guard kills Chrome when this server dies without shutting it
-// down, so a crashed or killed server leaves no orphaned browser. Leakless execs
-// a helper binary it drops in the temp directory, and Windows Defender
-// quarantines that helper ("the file contains a virus"), so on Windows the
-// guard is off and shutdown-browser and session teardown own Chrome's lifetime.
+// launchedChrome is a Chrome process this server started: its DevTools URL,
+// process id and temporary profile.
+type launchedChrome struct {
+	controlURL  string
+	pid         int
+	userDataDir string
+	tempDir     bool
+}
+
+func (m *SessionManager) killLaunchedChrome(l *launchedChrome) {
+	if l == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.querier == nil {
+		m.querier = DefaultProcessQuerier()
+	}
+	q := m.querier
+	m.mu.Unlock()
+
+	if l.pid > 0 {
+		_ = q.KillProcessTree(l.pid)
+	}
+	if l.tempDir && l.userDataDir != "" {
+		_ = removeUserDataDir(l.userDataDir)
+	}
+}
+
+// newLauncher builds a launcher for ChromeBinary without Rod's leakless guard.
+// The server owns managed Chrome's lifetime on every platform: shutdown and
+// browser teardown kill the process tree and delete its temporary profile,
+// server exit runs that shutdown, and the next start reaps any tree whose
+// owning server died (see ReapOrphans). Leakless would be a second mechanism
+// for the same job, and Windows Defender quarantines its helper binary.
 func (m *SessionManager) newLauncher() *launcher.Launcher {
-	launch := launcher.New().Headless(m.cfg.IsHeadless()).Leakless(runtime.GOOS != "windows")
+	launch := launcher.New().Headless(m.cfg.IsHeadless()).Leakless(false)
 	if bin := ChromeBinary(m.cfg); bin != "" {
 		launch = launch.Bin(bin)
 	}
 	return launch
 }
 
-func (m *SessionManager) launchChrome() (string, error) {
+func (m *SessionManager) launchChrome() (*launchedChrome, error) {
 	launch := m.newLauncher()
 	flagStart := 0
 	if len(m.cfg.Launch) > 0 {
@@ -365,13 +424,42 @@ func (m *SessionManager) launchChrome() (string, error) {
 	}
 	controlURL, err := launch.Launch()
 	if err == nil {
-		return controlURL, nil
+		return launchedFrom(launch, controlURL), nil
 	}
-	alternate, fallbackErr := m.newLauncher().Launch()
+	discardProfile(launch)
+
+	fallback := m.newLauncher()
+	alternate, fallbackErr := fallback.Launch()
 	if fallbackErr != nil {
-		return "", fmt.Errorf("launch chrome: %w (fallback: %v)", err, fallbackErr)
+		discardProfile(fallback)
+		return nil, fmt.Errorf("launch chrome: %w (fallback: %v)", err, fallbackErr)
 	}
-	return alternate, nil
+	return launchedFrom(fallback, alternate), nil
+}
+
+// launchedFrom records a started Chrome and marks its temporary profile as
+// owned by this server, which is what ReapOrphans checks.
+func launchedFrom(l *launcher.Launcher, controlURL string) *launchedChrome {
+	dir := l.Get(flags.UserDataDir)
+	launched := &launchedChrome{
+		controlURL:  controlURL,
+		pid:         l.PID(),
+		userDataDir: dir,
+		tempDir:     isBrowserNERDUserDataDir(dir),
+	}
+	if launched.tempDir {
+		if err := markProfileOwner(dir); err != nil {
+			log.Printf("warning: cannot mark Chrome profile %s as owned: %v", dir, err)
+		}
+	}
+	return launched
+}
+
+// discardProfile deletes the temporary profile of a launch that failed.
+func discardProfile(l *launcher.Launcher) {
+	if dir := l.Get(flags.UserDataDir); isBrowserNERDUserDataDir(dir) {
+		_ = os.RemoveAll(dir)
+	}
 }
 
 func (m *SessionManager) startIdleReaper() {

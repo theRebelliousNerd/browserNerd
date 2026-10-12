@@ -46,8 +46,11 @@ An unknown topic is an error listing the topics. `intent` presets map
 `triage` to `health`, `act_now` to `next_best_action`, `debug_failure` to
 `why_failed` at `view: full`, and `unblock` to `blocking_issue`. Scope narrows
 with `since_action: true` (evidence since the session's last click, input,
-key or submit), `since_navigation: true` (the current route), and
-`time_window_ms` (default 300000; 0 means all).
+key or submit), `since_navigation` (the page on screen: from the latest
+navigation, moved back to the start of the document request that loaded it,
+since that request starts before the navigation commits; default true for
+`network`, false for every other topic), and `time_window_ms` (default 300000;
+0 means all).
 
 A diagnosis leads with its answer: `status`, a one-line `verdict` naming the
 root cause, a `summary`, a `confidence`, and `next` - the one call worth
@@ -77,12 +80,38 @@ evidence.
   as a tunnel answering Unauthorized. When Docker cannot answer, one short
   `unavailable: <why>` note stands in for the lines.
 
-The `network` topic groups requests by method and normalized URL - numeric,
-UUID and opaque-token path segments collapse to `{id}`, query values drop and
-their keys stay, and a same-origin URL loses its origin - failures first, then
-storms, then by count. A storm is at least 10 calls in any 30 s, or at least 5
-at a steady interval of 2 s or less. WebSockets are grouped by URL, and three
-or more connections in scope are a reconnect loop. `expand=<URL substring>`
+The `network` topic answers for the page on screen: by default it reads only
+the requests since that page began, so the 502s of a load during a backend
+restart are not the groups of the reload that followed. `earlier` counts the
+`requests` it left out and how many `failed`; `since_navigation: false`
+includes them, and then each group's `before_navigation` counts its calls from
+before the page on screen, as does the summary, and each expanded call carries
+`before_navigation: true`. `scope` names the window read.
+
+It groups requests by method and normalized URL - numeric, UUID and
+opaque-token path segments collapse to `{id}`, query values drop and their
+keys stay, and a same-origin URL loses its origin. A group's failure is
+`recovered` when a later call to the exact same URL succeeded; a failure on
+the same normalized URL with other parameters is not recovered by it. Groups
+order open failures first (worst class first), then storms, then data calls
+before page scaffolding, then recovered groups, then by count. A group with a
+failure carries `latest`, the outcome of its most recent call, and its summary
+line leads with that status and says `(recovered from <status>)`. `status` is
+`error` while any group has an open failure and `warning` for recovered groups,
+storms or WebSocket failures. A storm is at least 10 calls in any 30 s, or at
+least 5 at a steady interval of 2 s or less.
+
+Page scaffolding is a request for a static file by extension (an HTML document
+excepted), a dev server's chunk, image, font or hot-update path
+(`/_next/static/`, `/_next/image`, `/_next/webpack-hmr`, `/__nextjs`, `/@vite/`,
+`/@fs/`, `/@react-refresh`, `/node_modules/`, `/static/`),
+or the favicon; anything under an `api` or `graphql` path is a data call. In
+the compact and summary views a scaffolding group with no failure and no storm
+folds into one `assets` summary (`groups`, `requests`, `statuses`, `failed`):
+a Next.js dev load is mostly chunks and fonts, and a list ordered by count
+spent most of its rows on them and pushed data calls into `more_groups`.
+`view: full` lists every group. WebSockets are grouped by URL, and three or
+more connections in scope are a reconnect loop. `expand=<URL substring>`
 lists the matching groups and their individual calls. With `expand`,
 `body: true` fetches the latest matching responses - up to three - from
 Chrome's network buffer and returns each one's `body_shape`: a JSON body's

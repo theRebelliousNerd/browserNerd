@@ -124,6 +124,25 @@ func settleEffects(ctx context.Context, engine *mangle.Engine, w effectsWindow, 
 	}
 }
 
+// pageDrainBound bounds the drain of one page's tracker buffer before the
+// digest is read; a wedged renderer costs this and no more.
+const pageDrainBound = 1500 * time.Millisecond
+
+// drainTouchedPages turns what each touched page's trackers buffered since
+// their last 500 ms poll - toasts, clicks, input - into facts, so the digest
+// reads a toast raised during the settle window instead of missing it or
+// seeing it only as a live region.
+func drainTouchedPages(ctx context.Context, sessions *browser.SessionManager, touched map[string]bool) {
+	if sessions == nil {
+		return
+	}
+	for id := range touched {
+		drainCtx, cancel := context.WithTimeout(ctx, pageDrainBound)
+		_ = sessions.DrainPageEvents(drainCtx, id)
+		cancel()
+	}
+}
+
 // downloadsInProgress reports a download in the window whose latest state is
 // not yet completed or canceled.
 func downloadsInProgress(engine *mangle.Engine, w effectsWindow) bool {
@@ -249,28 +268,21 @@ func collectActEffects(
 		}
 	}
 
-	var toasts countedList
-	seenToast := map[string]bool{}
+	var sightings []toastSighting
 	if engine != nil {
 		for _, f := range engine.FactsByPredicate("toast_notification") {
 			if !w.covers(f) || len(f.Args) < 3 {
 				continue
 			}
-			text, level := clip(fmt.Sprint(f.Args[1])), fmt.Sprint(f.Args[2])
+			level := fmt.Sprint(f.Args[2])
 			// An info-level notification is usually a status region's passing
 			// text ("loading"); what it settled on is read from the live
 			// regions below.
-			if level != "error" && level != "warning" && level != "success" {
-				continue
-			}
-			if seenToast[text] {
-				continue
-			}
-			seenToast[text] = true
-			if level == "error" || level == "warning" {
-				toasts.add(level + ": " + text)
-			} else {
-				toasts.add(text)
+			switch level {
+			case "error", "warning":
+				sightings = append(sightings, toastSighting{label: level, text: fmt.Sprint(f.Args[1])})
+			case "success":
+				sightings = append(sightings, toastSighting{text: fmt.Sprint(f.Args[1])})
 			}
 		}
 	}
@@ -279,18 +291,14 @@ func collectActEffects(
 			if base.regions[region] && active == base.session {
 				continue
 			}
-			text := region
+			role, text := "", region
 			if i := strings.Index(region, ": "); i >= 0 {
-				text = region[i+2:]
+				role, text = region[:i], region[i+2:]
 			}
-			if seenToast[clip(text)] {
-				continue
-			}
-			seenToast[clip(text)] = true
-			toasts.add(clip(region))
+			sightings = append(sightings, toastSighting{label: role, text: text})
 		}
 	}
-	if items := toasts.items(); len(items) > 0 {
+	if items := digestToasts(sightings); len(items) > 0 {
 		effects["toasts"] = items
 	}
 
@@ -441,6 +449,114 @@ func collectActEffects(
 }
 
 var wsFailurePattern = regexp.MustCompile(`(?i)error|fail|abnormal`)
+
+// toastSighting is one sighting of a notification: a toast fact, labelled
+// with its level (error, warning; empty for success), or a live region read
+// when the batch settled, labelled with its role (alert, status, toast).
+type toastSighting struct {
+	label string
+	text  string
+}
+
+// toastPartMinimum is the shortest key that may merge into a longer one as its
+// title or description; a shorter one ("ok") is a coincidence, not a part.
+const toastPartMinimum = 6
+
+// toastKey is a notification's text without whitespace or case, so the fact
+// read from textContent ("Login failedInvalid credentials") and the region
+// read from innerText ("Login failed Invalid credentials") are one key.
+func toastKey(text string) string {
+	return strings.ToLower(strings.Join(strings.Fields(text), ""))
+}
+
+// sameToast reports whether two keys are sightings of one notification: the
+// same text, or one is the other's title (prefix) or description (suffix).
+func sameToast(a, b string) bool {
+	if a == b {
+		return true
+	}
+	short, long := a, b
+	if len(short) > len(long) {
+		short, long = long, short
+	}
+	return len(short) >= toastPartMinimum && (strings.HasPrefix(long, short) || strings.HasSuffix(long, short))
+}
+
+// toastLabelRank orders labels by what they tell the reader: a level beats a
+// role, and a role beats nothing.
+func toastLabelRank(label string) int {
+	switch label {
+	case "error":
+		return 3
+	case "warning":
+		return 2
+	case "":
+		return 0
+	}
+	return 1
+}
+
+// digestToasts folds the sightings of each notification into one entry. A
+// toast is seen as a fact and again as a live region, and a toast library
+// re-renders its title and description as parts: listing each sighting
+// reported one failed login as four toasts. Each entry keeps the fullest
+// text, the spelling with its words separated, and the most telling label.
+func digestToasts(sightings []toastSighting) []string {
+	type entry struct{ label, text, key string }
+	var entries []*entry
+	merge := func(into *entry, label, text, key string) {
+		if len(key) > len(into.key) || (len(key) == len(into.key) && strings.Count(text, " ") > strings.Count(into.text, " ")) {
+			into.text, into.key = text, key
+		}
+		if toastLabelRank(label) > toastLabelRank(into.label) {
+			into.label = label
+		}
+	}
+	for _, s := range sightings {
+		text := strings.Join(strings.Fields(s.text), " ")
+		key := toastKey(text)
+		if key == "" {
+			continue
+		}
+		var host *entry
+		for _, e := range entries {
+			if sameToast(e.key, key) {
+				host = e
+				break
+			}
+		}
+		if host == nil {
+			entries = append(entries, &entry{label: s.label, text: text, key: key})
+			continue
+		}
+		merge(host, s.label, text, key)
+	}
+	// An entry that grew can now contain one listed after it.
+	kept := entries[:0:0]
+	for _, e := range entries {
+		var host *entry
+		for _, k := range kept {
+			if sameToast(k.key, e.key) {
+				host = k
+				break
+			}
+		}
+		if host == nil {
+			kept = append(kept, e)
+			continue
+		}
+		merge(host, e.label, e.text, e.key)
+	}
+	var list countedList
+	for _, e := range kept {
+		if e.label == "" {
+			list.add(clip(e.text))
+			continue
+		}
+		list.add(clip(e.label + ": " + e.text))
+	}
+	return list.items()
+}
 
 // assetResourceTypes are the CDP resource types failed_request treats as page
 // assets rather than data calls.

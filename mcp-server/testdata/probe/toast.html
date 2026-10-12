@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Toast Probe</title>
+<style>
+  ol.toaster { position: fixed; bottom: 8px; right: 8px; list-style: none; margin: 0; padding: 0; }
+  li.toast { border: 1px solid #c00; padding: 8px; background: #fff; }
+</style>
+</head>
+<body>
+<!--
+  A failed login the way the Cross-Thread login fails: a sonner toast whose
+  title and description are separate blocks, the description rendered a frame
+  after the title as the library's second render does, and the form's inline
+  alert repeating the description. One notification was once reported as four
+  toasts, with the title and description run together ("Login failedInvalid").
+-->
+<main>
+  <form id="login" onsubmit="event.preventDefault(); failLogin();">
+    <label for="email">Email</label><input id="email" name="email">
+    <button type="submit">Sign in</button>
+    <p id="form-error" role="alert"></p>
+  </form>
+</main>
+<section aria-label="Notifications" aria-live="polite" id="notifications"></section>
+<script>
+  function failLogin() {
+    const ol = document.createElement('ol');
+    ol.className = 'toaster group';
+    ol.setAttribute('data-sonner-toaster', 'true');
+    const li = document.createElement('li');
+    li.className = 'group toast';
+    li.setAttribute('data-sonner-toast', '');
+    li.setAttribute('data-type', 'error');
+    const content = document.createElement('div');
+    content.setAttribute('data-content', '');
+    const title = document.createElement('div');
+    title.setAttribute('data-title', '');
+    title.textContent = 'Login failed';
+    content.appendChild(title);
+    li.appendChild(content);
+    ol.appendChild(li);
+    document.getElementById('notifications').appendChild(ol);
+    requestAnimationFrame(function () {
+      const description = document.createElement('div');
+      description.setAttribute('data-description', '');
+      description.className = 'group-[.toast]:text-muted-foreground';
+      description.textContent = 'Invalid credentials';
+      content.appendChild(description);
+      document.getElementById('form-error').textContent = 'Invalid credentials';
+    });
+  }
+</script>
+</body>
+</html>

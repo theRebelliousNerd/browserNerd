@@ -31,7 +31,7 @@ func (t *BrowserReasonTool) Description() string {
 	return `Diagnose the page from what the browser recorded. Pick the topic by the question:
   why_failed: what broke, or what did my click break -> verdict, the failed request (status, body), the console error/toast/alert it caused, backend log lines, other issues
   health: is anything wrong -> scorecard (failed 5xx/4xx/network, console errors, storms, ws failures, dialogs, page load failures) and the top issue
-  network: is something looping, which calls fail -> requests grouped by method+URL with counts, statuses, storms; expand=<url> lists that URL's calls; add body=true to see what the latest ones returned (JSON shape: items: array[0] means it answered empty)
+  network: is something looping, which calls fail -> the page on screen's requests grouped by method+URL (data calls first, healthy chunks/fonts folded into assets), counts, statuses, storms, latest status of a failing group; earlier counts what came before the navigation (since_navigation=false includes it); expand=<url> lists that URL's calls; add body=true to see what the latest ones returned (JSON shape: items: array[0] means it answered empty)
   blocking_issue: why is the page empty or stuck -> load failure, dismissed dialog, overlay, login wall, failed data call
   next_best_action: what can I do here -> deduped action candidates
   what_changed_since: issues inside time_window_ms, newest first
@@ -63,7 +63,7 @@ func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
 			},
 			"since_navigation": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Only evidence since the latest navigation",
+				"description": "Only evidence since the latest navigation (default true for network, false otherwise)",
 			},
 			"time_window_ms": map[string]interface{}{
 				"type":        "integer",
@@ -147,7 +147,10 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	if timeWindowMs > 86400000 {
 		timeWindowMs = 86400000
 	}
-	sinceNavigation := getBoolArg(args, "since_navigation", false)
+	// The network topic answers for the page on screen unless told otherwise:
+	// requests from before the latest navigation (the 502s of a backend
+	// restart minutes ago) are another page's traffic.
+	sinceNavigation := getBoolArg(args, "since_navigation", topic == "network")
 	sinceAction := getBoolArg(args, "since_action", false)
 	_, hasExplicitTimeWindow := args["time_window_ms"]
 
@@ -155,9 +158,14 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	if timeWindowMs > 0 {
 		effectiveSinceMs = time.Now().UnixMilli() - int64(timeWindowMs)
 	}
+	windowSinceMs := effectiveSinceMs
+	pageStartMs := int64(0)
+	if sinceNavigation || topic == "network" {
+		pageStartMs = currentPageStartMs(t.engine, sessionID)
+	}
 	navigationSinceMs := int64(0)
 	if sinceNavigation {
-		navigationSinceMs = latestNavigationTimestamp(ctx, t.engine, sessionID)
+		navigationSinceMs = pageStartMs
 		if navigationSinceMs > effectiveSinceMs {
 			effectiveSinceMs = navigationSinceMs
 		}
@@ -184,7 +192,14 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	var response map[string]interface{}
 	switch topic {
 	case "network":
-		response = renderNetwork(d, view, getStringArg(args, "expand"), maxItems)
+		response = renderNetwork(d, view, getStringArg(args, "expand"), maxItems, pageStartMs)
+		response["scope"] = label
+		if sinceNavigation && navigationSinceMs > windowSinceMs {
+			wide := collectBrowserEvidence(ctx, t.engine, reasonScope{sessionID: sessionID, sinceMs: windowSinceMs, strict: hasExplicitTimeWindow})
+			if earlier := trafficBefore(wide.calls, navigationSinceMs); earlier != nil {
+				response["earlier"] = earlier
+			}
+		}
 		if getBoolArg(args, "body", false) && getStringArg(args, "expand") != "" {
 			attachBodies(ctx, t.sessions, sessionID, response)
 		}
@@ -270,6 +285,64 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	_ = t.engine.AddFacts(ctx, emitFacts)
 	emitDisclosureFacts(ctx, t.engine, sessionID, handles, "reason")
 	return response, nil
+}
+
+// currentPageStartMs is where the page on screen began: the latest navigation,
+// moved back to the start of the document request that loaded it (the request
+// starts before the navigation commits). A same-document route change has no
+// document request and starts at its navigation. 0 when nothing navigated.
+func currentPageStartMs(engine *mangle.Engine, sessionID string) int64 {
+	if engine == nil {
+		return 0
+	}
+	navMs, navURL := int64(0), ""
+	for _, f := range engine.FactsByPredicate("navigation_event") {
+		if factInSession(f, sessionID) {
+			if ts := factTime(f, 2); ts >= navMs {
+				navMs, navURL = ts, factString(f, 1)
+			}
+		}
+	}
+	if navMs == 0 {
+		return 0
+	}
+	start := navMs
+	for _, f := range engine.FactsByPredicate("net_request") {
+		if !factInSession(f, sessionID) || factString(f, 3) != navURL {
+			continue
+		}
+		if ts := factTime(f, 5); ts > 0 && ts <= navMs && navMs-ts <= documentRequestLeadMs && ts < start {
+			start = ts
+		}
+	}
+	return start
+}
+
+// documentRequestLeadMs bounds how long before its navigation commits a
+// document request may have started and still be the one that loaded it.
+const documentRequestLeadMs = 30000
+
+// trafficBefore summarizes the calls a navigation-scoped read left out: how
+// many started before startMs and how many of those failed.
+func trafficBefore(calls []*netCall, startMs int64) map[string]interface{} {
+	requests, failed := 0, 0
+	for _, c := range calls {
+		if c.startMs <= 0 || c.startMs >= startMs {
+			continue
+		}
+		requests++
+		if c.diagnosticFailure() {
+			failed++
+		}
+	}
+	if requests == 0 {
+		return nil
+	}
+	return map[string]interface{}{
+		"requests": requests,
+		"failed":   failed,
+		"note":     "requests from before the page on screen; since_navigation=false includes them",
+	}
 }
 
 func reasonScopeLabel(sinceAction, sinceNavigation bool, timeWindowMs int) string {

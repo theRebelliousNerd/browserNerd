@@ -43,11 +43,18 @@ default, or `absent`) and `scope` (`fresh` or `current`). Steps written under
 `actions` are read as `operations`, and every fixture this server writes
 carries `operations`; a fixture with both is refused. An unknown fixture or
 assertion key, an invalid `expect` or `scope`, and a fixture with neither
-operations nor assertions are refused before anything runs, as is a run with
-no assertions. The operations meet the validation `browser-act` applies to a
-batch ([declarative automation](declarative-browser-automation.md)), so a
+operations nor assertions are refused before anything runs. The operations
+meet the validation `browser-act` applies to a batch
+([declarative automation](declarative-browser-automation.md)), so a
 misspelled field fails the fixture instead of being skipped, and replay runs
 with `browser-act`'s upload path policy and credential redactor.
+
+A fixture with operations and no assertions (the key left out or `[]`) is a
+replay: a login replay needs its `value_env` steps and nothing checked. It
+runs and reports `status: replayed` with `replay_only: true` and `replayed`,
+never `passed`, because it proves the steps ran - every locator resolved,
+every typed value read back - and nothing about what they caused. `create`
+and `inspect` say so in a warning.
 
 ## Credentials
 
@@ -63,10 +70,30 @@ redacted.
 
 ## Running
 
-Execution establishes a per-assertion baseline, replays through `browser-act`,
-and evaluates complete bounded queries. Action tests default to `scope:
-fresh`, so errors that existed before the test do not cause false failure.
-Assertion-only tests default to the current fact state. The result carries
+Execution reads a per-assertion baseline, marks the run's start once the
+clock has moved past the baseline read, replays through `browser-act`, and
+evaluates complete bounded queries. Action tests default to `scope: fresh`;
+assertion-only tests default to `current`, every buffered row.
+
+A fresh assertion counts the rows that are true for the run:
+
+- a row the baseline did not have - the run caused it;
+- a row the baseline had that still holds without any event from before the
+  run - a state, such as the tab's `current_url`, which the engine keeps only
+  at its latest value. `QuerySince` evaluates the query over the facts
+  stamped after the run's start, the eternal facts, and each superseding
+  predicate's current fact, and a carried row counts as `still_true` when
+  that view still derives it.
+
+A row that only an earlier event supports - a failed request from before the
+run - does not count, so errors that existed before the test cause no false
+failure. A state that never changed does count: an absence check on
+`current_url(S, "/login")` fails while the tab is still on /login, and a
+presence check on the dashboard URL passes when the run started there.
+Subtracting every baseline row would read an unchanged state as gone and
+pass that absence check with its fact true. Each fresh result carries
+`matched` (rows that count), `total_matched` (every buffered row) and
+`still_true` when carried state is among the matches. The result carries
 `replay` (the `browser-act` response, `results` and `effects` included),
 `assertions` with each one's outcome, `passed`, and on failure a `diagnosis`.
 

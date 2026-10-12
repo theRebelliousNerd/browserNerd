@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"browsernerd-mcp-server/internal/security"
 )
 
 func TestDiscoverWorkspace_Found(t *testing.T) {
@@ -262,6 +264,62 @@ docker:
 	// Explicit config should override workspace containers
 	if len(cfg.Docker.Containers) != 2 || cfg.Docker.Containers[0] != "explicit-backend" {
 		t.Errorf("expected explicit containers to override workspace, got %v", cfg.Docker.Containers)
+	}
+}
+
+// The shipped machine config (mcp-server/config.yaml) is loaded with --config
+// on top of a workspace that correlates Docker logs. It must leave the
+// workspace's docker block in effect: it once restated the disabled default,
+// and every why_failed ran without backend log lines.
+func TestShippedMachineConfigKeepsTheWorkspaceDockerBlock(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, WorkspaceDirName), 0755); err != nil {
+		t.Fatal(err)
+	}
+	wsConfig := "docker:\n  enabled: true\n  containers:\n    - app-backend\n    - app-frontend\n  log_window: \"30s\"\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, WorkspaceDirName, WorkspaceConfigFile), []byte(wsConfig), 0644); err != nil {
+		t.Fatal(err)
+	}
+	shipped, err := filepath.Abs(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadWithWorkspace(shipped, WorkspaceOptions{ExplicitDir: tmpDir})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.Docker.Enabled || strings.Join(cfg.Docker.Containers, ",") != "app-backend,app-frontend" {
+		t.Fatalf("the workspace's docker block must survive the shipped --config, got %+v", cfg.Docker)
+	}
+	if len(cfg.Overrides) != 0 {
+		t.Fatalf("nothing was overridden, got %v", cfg.Overrides)
+	}
+}
+
+// A --config that does turn off the Docker correlation a workspace configures
+// still wins, as every later layer does, and the load says so: a setting the
+// workspace asked for is never dropped without a word.
+func TestExplicitConfigThatDisablesWorkspaceDockerIsNamed(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, WorkspaceDirName), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, WorkspaceDirName, WorkspaceConfigFile), []byte("docker:\n  enabled: true\n  containers: [app-backend]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	explicitPath := filepath.Join(tmpDir, "machine.yaml")
+	if err := os.WriteFile(explicitPath, []byte("browser:\n  auto_start: false\ndocker:\n  enabled: false\n  containers: []\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadWithWorkspace(explicitPath, WorkspaceOptions{ExplicitDir: tmpDir})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Docker.Enabled {
+		t.Fatalf("an explicit --config still overrides the workspace, got %+v", cfg.Docker)
+	}
+	if len(cfg.Overrides) != 1 || !strings.Contains(cfg.Overrides[0], "docker") || !strings.Contains(cfg.Overrides[0], "machine.yaml") {
+		t.Fatalf("the override must be named with the file that made it, got %v", cfg.Overrides)
 	}
 }
 
@@ -599,5 +657,59 @@ func TestExplicitConfigPathsAnchorToConfigFile(t *testing.T) {
 		if c.got != c.want {
 			t.Errorf("%s: expected %q, got %q", c.name, c.want, c.got)
 		}
+	}
+}
+
+// TestArtifactsWritableRootAdmitsEvidenceWrites verifies that an artifacts/
+// directory named in security.writable_roots, by a workspace config or by an
+// explicit machine config, admits evidence writes through the path policy.
+func TestArtifactsWritableRootAdmitsEvidenceWrites(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, WorkspaceDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wsConfig := "security:\n  writable_roots: [\"artifacts\"]\n"
+	if err := os.WriteFile(filepath.Join(repoRoot, WorkspaceDirName, WorkspaceConfigFile), []byte(wsConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	machineConfig := filepath.Join(repoRoot, "machine.yaml")
+	if err := os.WriteFile(machineConfig, []byte("browser:\n  auto_start: false\nsecurity:\n  writable_roots: [\"artifacts\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := filepath.Join(repoRoot, "artifacts")
+	target := filepath.Join(artifacts, "live-verification", "test-evidence.png")
+
+	for _, tc := range []struct {
+		name     string
+		explicit string
+		opts     WorkspaceOptions
+	}{
+		{"workspace config", "", WorkspaceOptions{ExplicitDir: repoRoot}},
+		{"explicit machine config", machineConfig, WorkspaceOptions{Disable: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _, err := LoadWithWorkspace(tc.explicit, tc.opts)
+			if err != nil {
+				t.Fatalf("LoadWithWorkspace: %v", err)
+			}
+			found := false
+			for _, root := range cfg.Security.WritableRoots {
+				found = found || filepath.Clean(root) == artifacts
+			}
+			if !found {
+				t.Fatalf("expected %s in writable_roots, got %v", artifacts, cfg.Security.WritableRoots)
+			}
+			policy, err := security.NewPathPolicy(cfg.Security.BaseDir, cfg.Security.WritableRoots)
+			if err != nil {
+				t.Fatalf("NewPathPolicy: %v", err)
+			}
+			resolved, err := policy.ResolveForWrite(target, policy.DefaultRoot(), "test-evidence.png")
+			if err != nil {
+				t.Fatalf("expected write to %s to be allowed: %v", target, err)
+			}
+			if filepath.Clean(resolved) != target {
+				t.Errorf("expected %s, got %s", target, resolved)
+			}
+		})
 	}
 }

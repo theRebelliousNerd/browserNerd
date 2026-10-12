@@ -83,7 +83,12 @@ A TEST HAS:
   variable stops the run before the first step.
 - assertions[]: {name, query, expect, scope}. query is a Mangle query. expect
   is "present" (default: pass if the query matches at least one row) or
-  "absent" (pass if it matches nothing, e.g. "no console errors").
+  "absent" (pass if it matches nothing, e.g. "no console errors"). scope
+  "fresh" (default when the test has operations) counts what the run caused
+  plus state that still holds, such as the tab's current URL; an event from
+  before the run never counts. "current" counts every buffered row.
+  Omit assertions to replay the operations only: the result says
+  replayed, never passed.
 
 EXAMPLE (inline):
 run-test(test: {
@@ -102,8 +107,9 @@ run-test(test: {
 
 You may pass the test as a "test" object or a "test_yaml" string.
 
-Returns: {name, passed, assertions[], replay?, diagnosis?}. When passed is false,
-diagnosis contains derived causal facts (error_chain, failed_request, slow_api, ...).`
+Returns: {name, passed, assertions[], replay?, diagnosis?}, or {replay_only,
+replayed} for a fixture without assertions. When the run fails, diagnosis
+contains derived causal facts (error_chain, failed_request, slow_api, ...).`
 }
 
 func (t *RunTestTool) InputSchema() map[string]interface{} {
@@ -139,9 +145,6 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	if err != nil {
 		return map[string]interface{}{"success": false, "error": err.Error()}, nil
 	}
-	if len(spec.Assertions) == 0 {
-		return map[string]interface{}{"success": false, "error": "test has no assertions; add at least one {name, query, expect}"}, nil
-	}
 	operations, issues := validateTestOperations(spec.Operations)
 	if len(issues) > 0 {
 		return map[string]interface{}{
@@ -155,13 +158,8 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	if sessionID == "" {
 		sessionID = spec.SessionID
 	}
-
-	result := map[string]interface{}{
-		"name":          spec.Name,
-		"started_at_ms": time.Now().UnixMilli(),
-	}
-	if sessionID != "" {
-		result["session_id"] = sessionID
+	if len(operations) > 0 && sessionID == "" {
+		return map[string]interface{}{"success": false, "error": "session_id is required when a test has operations"}, nil
 	}
 
 	resolvedOperations, secrets, err := resolveTestOperations(operations)
@@ -175,14 +173,27 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 			baselines[idx], _ = queryAssertionRows(ctx, t.engine, assertion.Query)
 		}
 	}
+	// The run starts once its baselines are read, and acts only after the
+	// clock has moved past that instant: a clock that advances in coarse ticks
+	// would otherwise stamp the last fact before the run and the run's first
+	// fact alike, and a fresh assertion could not tell them apart.
+	runStart := time.Now()
+	if len(operations) > 0 {
+		waitForClockPast(ctx, runStart)
+	}
+
+	result := map[string]interface{}{
+		"name":          spec.Name,
+		"started_at_ms": runStart.UnixMilli(),
+	}
+	if sessionID != "" {
+		result["session_id"] = sessionID
+	}
 
 	// Replay through browser-act so fixtures use the same operation vocabulary
 	// as interactive MCP automation.
 	replayOK := true
 	if len(operations) > 0 {
-		if sessionID == "" {
-			return map[string]interface{}{"success": false, "error": "session_id is required when a test has operations"}, nil
-		}
 		act := &BrowserActTool{
 			sessions:                t.sessions,
 			engine:                  t.engine,
@@ -216,16 +227,25 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	assertionResults := make([]map[string]interface{}, 0, len(spec.Assertions))
 	allPassed := true
 	for i, a := range spec.Assertions {
-		ar, passed := t.evaluateAssertion(ctx, i, a, baselines[i], len(operations) > 0)
+		ar, passed := t.evaluateAssertion(ctx, i, a, baselines[i], len(operations) > 0, runStart)
 		if !passed {
 			allPassed = false
 		}
 		assertionResults = append(assertionResults, ar)
 	}
 
-	passed := allPassed && replayOK
 	result["assertions"] = assertionResults
-	result["passed"] = passed
+	passed := allPassed && replayOK
+	if len(spec.Assertions) == 0 {
+		// A replay with nothing asserted proves its steps ran - every locator
+		// resolved and every typed value read back - and nothing about what
+		// they did. It is reported as replayed, never as passed.
+		result["replay_only"] = true
+		result["replayed"] = replayOK
+		result["note"] = "no assertions were checked: this proves the steps ran, not what they caused"
+	} else {
+		result["passed"] = passed
+	}
 
 	// On failure, surface derived causal facts for token-efficient drill-down.
 	if !passed && getBoolArg(args, "diagnose_on_failure", true) {
@@ -243,13 +263,26 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	return result, nil
 }
 
+// waitForClockPast returns once time.Now() is after instant, or when ctx ends.
+// It waits at most one clock tick.
+func waitForClockPast(ctx context.Context, instant time.Time) {
+	for !time.Now().After(instant) {
+		if sleepWithContext(ctx, time.Millisecond) != nil {
+			return
+		}
+	}
+}
+
 // evaluateAssertion runs one assertion's query and scores it against Expect.
+// runStart is the instant after the test's baselines were read; the test's
+// own facts are stamped after it.
 func (t *RunTestTool) evaluateAssertion(
 	ctx context.Context,
 	index int,
 	a TestAssertion,
 	baseline []mangle.QueryResult,
 	actionTest bool,
+	runStart time.Time,
 ) (map[string]interface{}, bool) {
 	name := a.Name
 	if name == "" {
@@ -264,16 +297,23 @@ func (t *RunTestTool) evaluateAssertion(
 		}
 	}
 	if scope == "fresh" {
-		return evaluateQueryExpectFresh(ctx, t.engine, name, a.Query, a.Expect, baseline)
+		return evaluateQueryExpectFresh(ctx, t.engine, name, a.Query, a.Expect, baseline, runStart)
 	}
 	return evaluateQueryExpect(ctx, t.engine, name, a.Query, a.Expect)
 }
 
+// evaluateQueryExpectFresh scores the rows that are true for the run started
+// at runStart. A row the baseline did not have is the run's own. A row the
+// baseline already had counts only while it still holds without the events
+// from before the run - the tab still on /login, not a failed request from an
+// earlier page. Subtracting every baseline row instead reads a state that
+// never changed as absent, so an absence assertion passed with its fact true.
 func evaluateQueryExpectFresh(
 	ctx context.Context,
 	engine *mangle.Engine,
 	name, query, expect string,
 	baseline []mangle.QueryResult,
+	runStart time.Time,
 ) (map[string]interface{}, bool) {
 	expect = strings.ToLower(strings.TrimSpace(expect))
 	if expect == "" {
@@ -287,15 +327,29 @@ func evaluateQueryExpectFresh(
 		return out, false
 	}
 	fresh := subtractQueryRows(rows, baseline)
-	out["matched"] = len(fresh)
+	stillTrue := []mangle.QueryResult{}
+	if carried := subtractQueryRows(rows, fresh); len(carried) > 0 {
+		viewRows, viewErr := queryAssertionRowsSince(ctx, engine, query, runStart)
+		if viewErr != nil {
+			out["passed"] = false
+			out["error"] = fmt.Sprintf("could not tell whether rows from before the run still hold: %v", viewErr)
+			return out, false
+		}
+		stillTrue = intersectQueryRows(carried, subtractQueryRows(viewRows, fresh))
+	}
+	matched := append(append([]mangle.QueryResult{}, fresh...), stillTrue...)
+	out["matched"] = len(matched)
 	out["total_matched"] = len(rows)
-	passed := len(fresh) > 0
+	if len(stillTrue) > 0 {
+		out["still_true"] = len(stillTrue)
+	}
+	passed := len(matched) > 0
 	if expect == "absent" {
-		passed = len(fresh) == 0
+		passed = len(matched) == 0
 	}
 	out["passed"] = passed
-	if len(fresh) > 0 {
-		sample := fresh
+	if len(matched) > 0 {
+		sample := matched
 		if len(sample) > 3 {
 			sample = sample[:3]
 		}
@@ -304,15 +358,50 @@ func evaluateQueryExpectFresh(
 	return out, passed
 }
 
+func queryAssertionRowsSince(ctx context.Context, engine *mangle.Engine, query string, since time.Time) ([]mangle.QueryResult, error) {
+	statement, err := assertionStatement(query)
+	if err != nil {
+		return nil, err
+	}
+	return engine.QuerySince(ctx, statement, since)
+}
+
+// intersectQueryRows keeps each row of rows as many times as other has it.
+func intersectQueryRows(rows, other []mangle.QueryResult) []mangle.QueryResult {
+	counts := make(map[string]int, len(other))
+	for _, row := range other {
+		counts[queryResultFingerprint(row)]++
+	}
+	kept := make([]mangle.QueryResult, 0, len(rows))
+	for _, row := range rows {
+		key := queryResultFingerprint(row)
+		if counts[key] == 0 {
+			continue
+		}
+		counts[key]--
+		kept = append(kept, row)
+	}
+	return kept
+}
+
 func queryAssertionRows(ctx context.Context, engine *mangle.Engine, query string) ([]mangle.QueryResult, error) {
+	statement, err := assertionStatement(query)
+	if err != nil {
+		return nil, err
+	}
+	return engine.Query(ctx, statement)
+}
+
+// assertionStatement is an assertion's query as a terminated statement.
+func assertionStatement(query string) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return nil, fmt.Errorf("no query")
+		return "", fmt.Errorf("no query")
 	}
 	if !strings.HasSuffix(query, ".") {
 		query += "."
 	}
-	return engine.Query(ctx, query)
+	return query, nil
 }
 
 func subtractQueryRows(rows, baseline []mangle.QueryResult) []mangle.QueryResult {

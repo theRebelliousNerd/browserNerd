@@ -49,8 +49,30 @@ resource growth. `max_tabs` counts OPEN tabs - sessions holding a page. A
 detached session (reloaded from the session store after a restart, or left
 when its browser went away) owns no tab and never counts toward the limit
 (`internal/browser/browser_instances.go` `openTabCountLocked`). Pollers back off and terminate after repeated failure.
-Shutdown detaches resources under the manager lock, then closes pages and
-browsers outside the lock.
+Shutdown detaches resources under the manager lock, closes pages and browsers outside
+the lock, terminates launched Chrome process trees, and removes their temporary
+user-data directories on all exit paths (MCP client disconnect, stdin EOF, signals,
+and errors). An attached browser (`debugger_url`) is never closed: its tabs we
+opened are, the browser keeps running. Each launched profile carries a
+`browsernerd-owner` file naming the server process. On startup, the server
+reaps Chrome process trees whose profile names a server that is no longer
+running (the parent process proves nothing on Linux, where init or a subreaper
+such as `systemd --user` adopts orphans), never touching a profile without the
+mark, deletes their temp user-data directories, and reports the reaped count in
+`browser-observe mode=doctor`.
+
+## Several server instances
+
+Every MCP client spawns its own BrowserNERD process, and a process with an
+empty `debugger_url` and `launch` launches its own Chrome with a private
+temporary profile and a random debugging port, so two clients never drive the
+same browser or tab. Processes started with the same config do share the files
+it names - the session store, the log and the trace directory - so a session
+another process persisted is listed as `detached`, and it cannot be attached:
+its target lives in that process's Chrome. A tab that navigates without a
+BrowserNERD operation - the page redirecting itself, or a person using a
+headful window - is reported by the next `browser-act` or `browser-observe` on
+it as `tab_moved` ([declarative automation](declarative-browser-automation.md)).
 
 ## Opening a tab
 

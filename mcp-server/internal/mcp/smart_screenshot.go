@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/layout"
 	"browsernerd-mcp-server/internal/mangle"
 	"browsernerd-mcp-server/internal/security"
 
@@ -93,6 +94,11 @@ func (t *ScreenshotTool) InputSchema() map[string]interface{} {
 				"type":        "integer",
 				"description": "JPEG quality 1-100 (default: 90). Ignored for png.",
 			},
+			"filter": map[string]interface{}{
+				"type":        "string",
+				"description": "annotate: filter by control kind ('all', 'buttons', 'inputs', 'links', 'selects', default 'all')",
+				"enum":        []string{"all", "buttons", "inputs", "links", "selects"},
+			},
 		},
 		"required": []string{"session_id"},
 	}
@@ -142,6 +148,10 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	if quality > 100 {
 		quality = 100
 	}
+	filter, filterErr := normalizeInteractiveFilter(getStringArg(args, "filter"))
+	if filterErr != nil {
+		return map[string]interface{}{"success": false, "error": filterErr.Error()}, nil
+	}
 
 	if sessionID == "" {
 		return map[string]interface{}{"success": false, "error": "session_id is required"}, nil
@@ -188,7 +198,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	var annotated []BoundingBox
 	inView := 0
 	if annotate && elementRef == "" {
-		boxes, extractErr := t.extractBoundingBoxes(capture, !fullPage)
+		boxes, extractErr := t.extractBoundingBoxes(capture, !fullPage, filter)
 		if extractErr != nil {
 			return map[string]interface{}{"success": false, "error": extractErr.Error()}, nil
 		}
@@ -270,12 +280,13 @@ func activateWithin(page *rod.Page, d time.Duration) error {
 }
 
 // boxScript lists the visible interactive elements with their boxes in image pixels.
-// It takes {viewportOnly, document} as data: viewportOnly keeps only elements that
+// It takes {viewportOnly, document, filter} as data: viewportOnly keeps only elements that
 // intersect the viewport, and document offsets boxes by the scroll position for a
 // full-page image. Refs and types come from elementRefScript, which
 // get-interactive-elements and the resolver share, so an overlay ref names the same
 // element and resolves back to it.
 const boxScript = `(opts) => {` + elementRefScript + `
+	const filter = opts.filter || 'all';
 	const vw = window.innerWidth;
 	const vh = window.innerHeight;
 	const dpr = window.devicePixelRatio || 1;
@@ -283,6 +294,7 @@ const boxScript = `(opts) => {` + elementRefScript + `
 	const sy = opts.document ? window.scrollY : 0;
 	const boxes = [];
 	__bnElementRefs().forEach((record) => {
+		if (!__bnMatchesFilter(record, filter)) return;
 		const el = record.el;
 		const rect = el.getBoundingClientRect();
 		const style = getComputedStyle(el);
@@ -294,12 +306,23 @@ const boxScript = `(opts) => {` + elementRefScript + `
 		if (opts.viewportOnly && (rect.bottom <= 0 || rect.right <= 0 || rect.top >= vh || rect.left >= vw)) {
 			return;
 		}
+		const classified = __bnClassify(record);
+		if (filter !== 'all') {
+			const allowedButtons = new Set(['button', 'clickable', 'tab', 'menuitem', 'option', 'row']);
+			const allowedInputs = new Set(['input', 'checkbox', 'radio', 'combobox']);
+			const allowedLinks = new Set(['link']);
+			const allowedSelects = new Set(['select', 'combobox', 'listbox', 'option']);
+			if (filter === 'buttons' && !allowedButtons.has(classified.type)) return;
+			if (filter === 'inputs' && !allowedInputs.has(classified.type)) return;
+			if (filter === 'links' && !allowedLinks.has(classified.type)) return;
+			if (filter === 'selects' && !allowedSelects.has(classified.type)) return;
+		}
 		boxes.push({
 			x: (rect.x + sx) * dpr,
 			y: (rect.y + sy) * dpr,
 			width: rect.width * dpr,
 			height: rect.height * dpr,
-			type: __bnClassify(record).type,
+			type: classified.type,
 			label: __bnAccessibleLabel(el),
 			ref: record.ref
 		});
@@ -309,13 +332,18 @@ const boxScript = `(opts) => {` + elementRefScript + `
 
 // extractBoundingBoxes returns the visible interactive elements in document order,
 // numbered from 0. viewportOnly keeps only those intersecting the viewport; otherwise
-// boxes are placed in full-page image coordinates.
+// boxes are placed in full-page image coordinates. Optional filter restricts elements by kind.
 func (t *ScreenshotTool) extractBoundingBoxes(page interface {
 	Eval(string, ...interface{}) (*proto.RuntimeRemoteObject, error)
-}, viewportOnly bool) ([]BoundingBox, error) {
+}, viewportOnly bool, filter ...string) ([]BoundingBox, error) {
+	f := "all"
+	if len(filter) > 0 && filter[0] != "" {
+		f = filter[0]
+	}
 	result, err := page.Eval(boxScript, map[string]interface{}{
 		"viewportOnly": viewportOnly,
 		"document":     !viewportOnly,
+		"filter":       f,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract elements: %w", err)
@@ -572,10 +600,10 @@ func drawBoundingBoxOverlays(imgData []byte, boxes []BoundingBox, format string,
 		}
 
 		// Draw rectangle outline
-		drawRect(rgba, x1, y1, x2, y2, c, 2)
+		layout.DrawRect(rgba, x1, y1, x2, y2, c, 2)
 
 		// Draw numbered label badge
-		drawNumberBadge(rgba, x1, y1, box.Index, c)
+		layout.DrawNumberBadge(rgba, x1, y1, box.Index, c)
 	}
 
 	var buf bytes.Buffer
@@ -588,101 +616,6 @@ func drawBoundingBoxOverlays(imgData []byte, boxes []BoundingBox, format string,
 	}
 
 	return buf.Bytes(), nil
-}
-
-// drawRect draws a rectangle outline
-func drawRect(img *image.RGBA, x1, y1, x2, y2 int, c color.RGBA, thickness int) {
-	bounds := img.Bounds()
-	for t := 0; t < thickness; t++ {
-		for x := x1; x < x2; x++ {
-			if y1+t >= 0 && y1+t < bounds.Max.Y && x >= 0 && x < bounds.Max.X {
-				img.SetRGBA(x, y1+t, c)
-			}
-			if y2-1-t >= 0 && y2-1-t < bounds.Max.Y && x >= 0 && x < bounds.Max.X {
-				img.SetRGBA(x, y2-1-t, c)
-			}
-		}
-		for y := y1; y < y2; y++ {
-			if x1+t >= 0 && x1+t < bounds.Max.X && y >= 0 && y < bounds.Max.Y {
-				img.SetRGBA(x1+t, y, c)
-			}
-			if x2-1-t >= 0 && x2-1-t < bounds.Max.X && y >= 0 && y < bounds.Max.Y {
-				img.SetRGBA(x2-1-t, y, c)
-			}
-		}
-	}
-}
-
-// drawNumberBadge draws a small badge with the element index number
-func drawNumberBadge(img *image.RGBA, x, y, num int, boxColor color.RGBA) {
-	bounds := img.Bounds()
-	numStr := fmt.Sprintf("%d", num)
-
-	// Badge dimensions
-	charWidth := 6
-	charHeight := 9
-	padding := 2
-	badgeWidth := len(numStr)*charWidth + padding*2
-	badgeHeight := charHeight + padding*2
-
-	// Position badge at top-left of box, offset slightly inside
-	badgeX := x
-	badgeY := y - badgeHeight // Above the box
-	if badgeY < 0 {
-		badgeY = y // Inside if no room above
-	}
-
-	// Draw badge background (same color as box)
-	for by := badgeY; by < badgeY+badgeHeight && by < bounds.Max.Y; by++ {
-		for bx := badgeX; bx < badgeX+badgeWidth && bx < bounds.Max.X; bx++ {
-			if bx >= 0 && by >= 0 {
-				img.SetRGBA(bx, by, boxColor)
-			}
-		}
-	}
-
-	// Draw number in white
-	textX := badgeX + padding
-	textY := badgeY + padding
-	white := color.RGBA{255, 255, 255, 255}
-
-	for i, ch := range numStr {
-		drawDigit(img, textX+i*charWidth, textY, int(ch-'0'), white)
-	}
-}
-
-// 5x7 bitmap font for digits 0-9
-var digitPatterns = [10][7]uint8{
-	{0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, // 0
-	{0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}, // 1
-	{0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, // 2
-	{0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}, // 3
-	{0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, // 4
-	{0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}, // 5
-	{0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, // 6
-	{0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}, // 7
-	{0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, // 8
-	{0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}, // 9
-}
-
-func drawDigit(img *image.RGBA, x, y, digit int, c color.RGBA) {
-	if digit < 0 || digit > 9 {
-		return
-	}
-	bounds := img.Bounds()
-	pattern := digitPatterns[digit]
-
-	for row := 0; row < 7; row++ {
-		for col := 0; col < 5; col++ {
-			if pattern[row]&(1<<(4-col)) != 0 {
-				px := x + col
-				py := y + row
-				if px >= 0 && px < bounds.Max.X && py >= 0 && py < bounds.Max.Y {
-					img.SetRGBA(px, py, c)
-				}
-			}
-		}
-	}
 }
 
 func getFloat64FromMap(m map[string]interface{}, key string) float64 {

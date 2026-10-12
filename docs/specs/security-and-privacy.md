@@ -55,6 +55,15 @@ local authority into queryable or persisted data.
 - Runtime data defaults to the operating-system user cache, outside source
   repositories.
 
+## Network exposure
+
+The stdio transport is the default. The SSE transport (`mcp.sse_port`, or
+`-sse-port`) listens on `mcp.sse_host` (or `-sse-host`), default `127.0.0.1`:
+a server that drives a browser and reads its facts is reachable from other
+machines only when an operator names `0.0.0.0` or an interface. The SSE
+endpoint advertises the bound host to clients, and `localhost` when bound to
+every interface.
+
 ## Authority boundary
 
 Auto-discovered `.browsernerd/config.yaml` is data, not authority. Unless the

@@ -123,6 +123,7 @@ func TestEvaluateQueryExpectFreshIgnoresHistoricalRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("baseline query failed: %v", err)
 	}
+	runStart := time.Now()
 
 	result, passed := evaluateQueryExpectFresh(
 		context.Background(),
@@ -131,6 +132,7 @@ func TestEvaluateQueryExpectFreshIgnoresHistoricalRows(t *testing.T) {
 		"failed_request(S, _, _, _)",
 		"absent",
 		baseline,
+		runStart,
 	)
 	if !passed {
 		t.Fatalf("historical rows should not fail a fresh assertion: %+v", result)
@@ -147,6 +149,7 @@ func TestEvaluateQueryExpectFreshIgnoresHistoricalRows(t *testing.T) {
 		"failed_request(S, _, _, _)",
 		"absent",
 		baseline,
+		runStart,
 	)
 	if passed {
 		t.Fatalf("new failure should fail a fresh assertion: %+v", result)
@@ -366,6 +369,140 @@ func TestRunTestRefusesInvalidOperationsBeforeRunning(t *testing.T) {
 	m := res.(map[string]interface{})
 	if m["success"] != false || m["replay"] != nil || !strings.Contains(fmt.Sprint(m["error"]), "selector") {
 		t.Fatalf("invalid fixture operations must be refused before replay: %+v", m)
+	}
+}
+
+// runOneAssertion replays a one-step fixture (a 1 ms sleep, so the run is an
+// action test and assertions default to scope fresh) and returns its only
+// assertion's result and the test's pass flag.
+func runOneAssertion(t *testing.T, engine *mangle.Engine, assertion map[string]interface{}) (map[string]interface{}, bool) {
+	t.Helper()
+	res, err := (&RunTestTool{engine: engine}).Execute(context.Background(), map[string]interface{}{
+		"test": map[string]interface{}{
+			"name":       "scope",
+			"session_id": testSessionID,
+			"operations": []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 1}},
+			"assertions": []interface{}{assertion},
+		},
+		"diagnose_on_failure": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := res.(map[string]interface{})
+	assertions, ok := m["assertions"].([]map[string]interface{})
+	if !ok || len(assertions) != 1 {
+		t.Fatalf("expected one assertion result: %+v", m)
+	}
+	passed, _ := m["passed"].(bool)
+	return assertions[0], passed
+}
+
+func addCurrentURL(t *testing.T, engine *mangle.Engine, url string, at time.Time) {
+	t.Helper()
+	if err := engine.AddFacts(context.Background(), []mangle.Fact{
+		{Predicate: "current_url", Args: []interface{}{testSessionID, url}, Timestamp: at},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A tab that is still on /login after the run matches current_url(S, /login):
+// the fact predates the run, but it is where the tab IS. The fresh scope once
+// subtracted it as history and passed the absence assertion with the tab on
+// the very URL it forbids (matched 0, total_matched 1).
+func TestFreshAbsentAssertionFailsWhileTheTabIsStillOnTheForbiddenURL(t *testing.T) {
+	engine := setupTestEngine(t)
+	addCurrentURL(t, engine, "http://localhost:3001/login", time.Now().Add(-time.Minute))
+
+	result, passed := runOneAssertion(t, engine, map[string]interface{}{
+		"name": "left the login page", "query": `current_url(S, "http://localhost:3001/login")`, "expect": "absent",
+	})
+	if passed || result["passed"] != false {
+		t.Fatalf("an absence assertion must fail while its fact holds: %+v", result)
+	}
+	if result["matched"] != 1 || result["total_matched"] != 1 {
+		t.Fatalf("the still-current URL should count as matched: %+v", result)
+	}
+}
+
+// The mirror image: a presence assertion on a state that already held before
+// the run and still holds is true for the run, not a failure.
+func TestFreshPresentAssertionPassesOnAStateThatStillHolds(t *testing.T) {
+	engine := setupTestEngine(t)
+	addCurrentURL(t, engine, "http://localhost:3001/dashboard", time.Now().Add(-time.Minute))
+
+	result, passed := runOneAssertion(t, engine, map[string]interface{}{
+		"name": "on the dashboard", "query": `current_url(S, "http://localhost:3001/dashboard")`, "expect": "present",
+	})
+	if !passed || result["matched"] != 1 {
+		t.Fatalf("a state that still holds satisfies present: %+v", result)
+	}
+}
+
+// A URL the tab has since left is superseded, so it neither counts for the run
+// nor lingers as a match.
+func TestFreshAbsentAssertionPassesOnceTheTabHasLeftTheURL(t *testing.T) {
+	engine := setupTestEngine(t)
+	addCurrentURL(t, engine, "http://localhost:3001/login", time.Now().Add(-time.Minute))
+	addCurrentURL(t, engine, "http://localhost:3001/dashboard", time.Now().Add(-30*time.Second))
+
+	result, passed := runOneAssertion(t, engine, map[string]interface{}{
+		"name": "left the login page", "query": `current_url(S, "http://localhost:3001/login")`, "expect": "absent",
+	})
+	if !passed || result["matched"] != 0 {
+		t.Fatalf("a superseded URL does not match: %+v", result)
+	}
+}
+
+// Events keep the fresh scope's purpose: a failure from before the run is
+// history for an absence assertion and no evidence for a presence one.
+func TestFreshScopeStillIgnoresEventsFromBeforeTheRun(t *testing.T) {
+	engine := setupTestEngine(t)
+	addNetFacts(t, engine, "before-run", "https://api.example.com/old", 500, 100)
+
+	result, passed := runOneAssertion(t, engine, map[string]interface{}{
+		"name": "no new failures", "query": "failed_request(S, _, _, _)", "expect": "absent",
+	})
+	if !passed || result["matched"] != 0 || result["total_matched"] != 1 {
+		t.Fatalf("a failure from before the run must not fail a fresh absence check: %+v", result)
+	}
+	result, passed = runOneAssertion(t, engine, map[string]interface{}{
+		"name": "a failure happened", "query": "failed_request(S, _, _, _)", "expect": "present",
+	})
+	if passed || result["matched"] != 0 {
+		t.Fatalf("a failure from before the run is no evidence for a fresh presence check: %+v", result)
+	}
+}
+
+// A login replay needs its credential steps and nothing asserted. It runs,
+// and it is reported as a replay: nothing was checked, so it never reads as
+// passed. A fixture with neither steps nor assertions is still refused.
+func TestBrowserTestRunsAStepsOnlyFixtureAsAReplay(t *testing.T) {
+	engine := setupTestEngine(t)
+	tool := &BrowserTestTool{engine: engine}
+	for _, fixture := range []map[string]interface{}{
+		{"name": "login replay", "session_id": testSessionID, "operations": []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 1}}},
+		{"name": "login replay", "session_id": testSessionID, "operations": []interface{}{map[string]interface{}{"type": "sleep", "duration_ms": 1}}, "assertions": []interface{}{}},
+	} {
+		res, err := tool.Execute(context.Background(), map[string]interface{}{"operation": "run", "test": fixture})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := res.(map[string]interface{})
+		if m["success"] != true || m["status"] != "replayed" || m["replay_only"] != true {
+			t.Fatalf("a steps-only fixture should replay: %+v", m)
+		}
+		if _, claimed := m["passed"]; claimed {
+			t.Fatalf("a replay with nothing asserted must not report passed: %+v", m)
+		}
+	}
+	res, err := tool.Execute(context.Background(), map[string]interface{}{"operation": "run", "test": map[string]interface{}{"name": "nothing"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := res.(map[string]interface{}); m["success"] != false {
+		t.Fatalf("a fixture with no steps and no assertions tests nothing and must be refused: %+v", m)
 	}
 }
 

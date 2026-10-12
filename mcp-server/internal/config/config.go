@@ -41,6 +41,12 @@ type Config struct {
 	Docker   DockerConfig   `yaml:"docker"`
 	Recorder RecorderConfig `yaml:"recorder"`
 	Security SecurityConfig `yaml:"security"`
+
+	// Overrides names each project setting the workspace config made that a
+	// later --config layer replaced, with the file that replaced it, so doctor
+	// can say why a workspace setting is not in effect. LoadWithWorkspace
+	// fills it; it is never read from YAML.
+	Overrides []string `yaml:"-"`
 }
 
 type ServerConfig struct {
@@ -139,6 +145,10 @@ type DockerConfig struct {
 type MCPConfig struct {
 	// When set, starts an SSE server on this port instead of stdio-only.
 	SSEPort int `yaml:"sse_port"`
+	// SSEHost is the interface the SSE server listens on (default 127.0.0.1).
+	// The server drives a browser and reads its facts; exposing it beyond this
+	// machine takes an explicit 0.0.0.0 or a named interface.
+	SSEHost string `yaml:"sse_host"`
 	// ProgressiveOnly controls whether only progressive disclosure tools are registered.
 	// When true (default), agents see 11 tools: browser/session lifecycle,
 	// observe/act/reason/audit/mangle, spec delivery/conformance, and tests.
@@ -408,8 +418,12 @@ func LoadWithWorkspace(explicitConfig string, opts WorkspaceOptions) (Config, st
 		if err != nil {
 			return cfg, wsDir, fmt.Errorf("reading explicit config %s: %w", explicitConfig, err)
 		}
+		workspaceDocker := cfg.Docker
 		if err := yaml.Unmarshal(raw, &cfg); err != nil {
 			return cfg, wsDir, fmt.Errorf("parsing explicit config %s: %w", explicitConfig, err)
+		}
+		if note := dockerOverride(workspaceDocker, cfg.Docker, wsDir, explicitConfig); note != "" {
+			cfg.Overrides = append(cfg.Overrides, note)
 		}
 		// Relative paths in an explicit --config are relative to THAT FILE. The
 		// process working directory belongs to whichever MCP client launched the
@@ -427,6 +441,25 @@ func LoadWithWorkspace(explicitConfig string, opts WorkspaceOptions) (Config, st
 	}
 	cfg.Security.BaseDir = baseDir
 	return cfg, wsDir, cfg.Validate()
+}
+
+// dockerOverride describes a --config layer that turned off, or re-pointed,
+// the Docker log correlation the workspace configured; "" when it did not.
+// Docker targets are a project setting, so a machine config that replaces them
+// silently leaves every diagnosis without backend log lines.
+func dockerOverride(workspace, final DockerConfig, wsDir, explicitConfig string) string {
+	if wsDir == "" || !workspace.Enabled {
+		return ""
+	}
+	switch {
+	case !final.Enabled:
+		return fmt.Sprintf("docker: %s turns off the Docker log correlation %s configures (containers %s); remove its docker block to use the workspace's",
+			explicitConfig, filepath.Join(wsDir, WorkspaceDirName, WorkspaceConfigFile), strings.Join(workspace.Containers, ", "))
+	case strings.Join(final.Containers, "\x00") != strings.Join(workspace.Containers, "\x00"):
+		return fmt.Sprintf("docker: %s replaces the containers %s configures (%s) with %s",
+			explicitConfig, filepath.Join(wsDir, WorkspaceDirName, WorkspaceConfigFile), strings.Join(workspace.Containers, ", "), strings.Join(final.Containers, ", "))
+	}
+	return ""
 }
 
 // InitWorkspace creates a .browsernerd/ directory with template files at root.
@@ -857,6 +890,15 @@ func (b BrowserConfig) GetDownloadDir() string {
 		return b.DownloadDir
 	}
 	return filepath.Join(defaultDataRoot(), "downloads")
+}
+
+// GetSSEHost returns the interface the SSE server listens on (default
+// 127.0.0.1, loopback only).
+func (m MCPConfig) GetSSEHost() string {
+	if host := strings.TrimSpace(m.SSEHost); host != "" {
+		return host
+	}
+	return "127.0.0.1"
 }
 
 // GetToolTimeout returns the per-call deadline (default 120s, floor 5s).

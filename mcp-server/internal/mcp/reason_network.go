@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -136,8 +137,54 @@ type requestGroup struct {
 	maxDurationMs int64
 	failures      int
 	diagFailures  int
-	worstClass    string
-	storm         *requestStorm
+	// recovered counts diagnostic failures whose exact URL later succeeded:
+	// the call works now. A failure on the same normalized URL with other
+	// parameters is not recovered by it.
+	recovered  int
+	worstClass string
+	storm      *requestStorm
+	// asset is page scaffolding: every call is a bundle chunk, stylesheet,
+	// font, image, dev-server hot update or the favicon.
+	asset bool
+}
+
+// openFailures are the group's diagnostic failures that nothing has since
+// recovered: the calls failing now.
+func (g *requestGroup) openFailures() int { return g.diagFailures - g.recovered }
+
+// assetPathMarkers are path fragments that only page scaffolding carries.
+var assetPathMarkers = []string{
+	"/_next/static/", "/_next/image", "/_next/webpack-hmr", "/__nextjs", "/@vite/", "/@fs/",
+	"/@react-refresh", "/node_modules/", "/static/",
+}
+
+// isAssetRequest reports whether a URL is page scaffolding rather than a data
+// call or the document: a static file by extension (an HTML document
+// excepted), a dev server's chunk, image, font or hot-update path, or the
+// favicon. Anything under an api or graphql path is a data call.
+func isAssetRequest(raw string) bool {
+	p := strings.ToLower(requestPath(raw))
+	if strings.HasPrefix(raw, "data:") || strings.HasPrefix(raw, "blob:") {
+		return true
+	}
+	if strings.Contains(p, "/api/") || strings.HasPrefix(p, "/api") || strings.Contains(p, "graphql") {
+		return false
+	}
+	if isFavicon(p) {
+		return true
+	}
+	for _, marker := range assetPathMarkers {
+		if strings.Contains(p, marker) {
+			return true
+		}
+	}
+	ext := path.Ext(p)
+	return staticAssetExtensions[ext] && ext != ".html" && ext != ".htm"
+}
+
+// succeeded reports a call that got a non-error response.
+func (c *netCall) succeeded() bool {
+	return c.status > 0 && c.status < 400 && (c.errorText == "" || c.canceled)
 }
 
 func failureClassRank(class string) int {
@@ -170,10 +217,11 @@ func groupRequests(calls []*netCall, origin string) []*requestGroup {
 		key := method + " " + norm
 		g, ok := byKey[key]
 		if !ok {
-			g = &requestGroup{method: method, url: norm, statuses: make(map[string]int)}
+			g = &requestGroup{method: method, url: norm, statuses: make(map[string]int), asset: true}
 			byKey[key] = g
 			out = append(out, g)
 		}
+		g.asset = g.asset && isAssetRequest(c.url)
 		g.calls = append(g.calls, c)
 		g.statuses[c.statusKey()]++
 		if c.startMs > 0 && (g.firstMs == 0 || c.startMs < g.firstMs) {
@@ -201,14 +249,25 @@ func groupRequests(calls []*netCall, origin string) []*requestGroup {
 			starts = append(starts, c.startMs)
 		}
 		g.storm = detectStorm(starts)
+		g.recovered = recoveredFailures(g.calls)
 	}
+	// Open failures first (worst class first), then storms, then data calls
+	// before scaffolding, then recovered failures among their peers, then by
+	// count: a dev server's page load is mostly chunks and fonts, and a list
+	// ordered by count alone spent its rows on them.
 	sort.SliceStable(out, func(i, j int) bool {
-		ri, rj := failureClassRank(out[i].worstClass), failureClassRank(out[j].worstClass)
+		ri, rj := openFailureRank(out[i]), openFailureRank(out[j])
 		if ri != rj {
 			return ri > rj
 		}
 		if (out[i].storm != nil) != (out[j].storm != nil) {
 			return out[i].storm != nil
+		}
+		if out[i].asset != out[j].asset {
+			return !out[i].asset
+		}
+		if (out[i].recovered > 0) != (out[j].recovered > 0) {
+			return out[i].recovered > 0
 		}
 		if len(out[i].calls) != len(out[j].calls) {
 			return len(out[i].calls) > len(out[j].calls)
@@ -216,6 +275,51 @@ func groupRequests(calls []*netCall, origin string) []*requestGroup {
 		return out[i].url < out[j].url
 	})
 	return out
+}
+
+// openFailureRank is the group's worst failure class while it still has an
+// open failure, and 0 once every failure has recovered.
+func openFailureRank(g *requestGroup) int {
+	if g.openFailures() <= 0 {
+		return 0
+	}
+	return failureClassRank(g.worstClass)
+}
+
+// recoveredFailures counts the diagnostic failures in calls whose exact URL a
+// later call answered without an error.
+func recoveredFailures(calls []*netCall) int {
+	lastSuccess := make(map[string]int64)
+	for _, c := range calls {
+		if c.succeeded() && c.startMs > lastSuccess[c.url] {
+			lastSuccess[c.url] = c.startMs
+		}
+	}
+	recovered := 0
+	for _, c := range calls {
+		if c.diagnosticFailure() && lastSuccess[c.url] > c.startMs {
+			recovered++
+		}
+	}
+	return recovered
+}
+
+// latestCall is the group's most recent call with an outcome, else its most
+// recent call.
+func (g *requestGroup) latestCall() *netCall {
+	var latest, latestDone *netCall
+	for _, c := range g.calls {
+		if latest == nil || c.startMs >= latest.startMs {
+			latest = c
+		}
+		if (c.status > 0 || c.errorText != "") && (latestDone == nil || c.startMs >= latestDone.startMs) {
+			latestDone = c
+		}
+	}
+	if latestDone != nil {
+		return latestDone
+	}
+	return latest
 }
 
 func (g *requestGroup) latestFailure() *netCall {
@@ -249,16 +353,27 @@ func (g *requestGroup) row() map[string]interface{} {
 		} else if f.errorText != "" {
 			row["detail"] = f.errorText
 		}
+		// A group with a failure says what its latest call got, so an old
+		// failure never reads as the current state.
+		if latest := g.latestCall(); latest != nil {
+			row["latest"] = latest.outcome()
+		}
+		if g.recovered > 0 {
+			row["recovered"] = g.recovered
+		}
 	}
 	return row
 }
 
 // line renders a group as one line: its failing (or dominant) status, the
-// call, the count, a storm's interval, and a failure body's detail.
+// call, the count, a storm's interval, and a failure body's detail. A group
+// whose failures all recovered leads with its latest status.
 func (g *requestGroup) line() string {
 	head := ""
-	if f := g.latestFailure(); f != nil {
+	if f := g.latestFailure(); f != nil && g.openFailures() > 0 {
 		head = f.outcome()
+	} else if f != nil {
+		head = g.latestCall().outcome()
 	} else if g.storm != nil {
 		head = "storm"
 	} else {
@@ -278,6 +393,9 @@ func (g *requestGroup) line() string {
 		}
 	}
 	if f := g.latestFailure(); f != nil {
+		if g.openFailures() == 0 {
+			line += fmt.Sprintf(" (recovered from %s)", f.outcome())
+		}
 		if detail := bodyDetail(f.body); detail != "" {
 			line += fmt.Sprintf(" %q", detail)
 		}
@@ -441,14 +559,21 @@ func (g *wsGroup) line() string {
 }
 
 // renderNetwork is the network topic: requests grouped by method and
-// normalized URL, failures first, storms flagged, WebSockets by URL, and one
-// group's individual calls when expand names it.
-func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]interface{} {
+// normalized URL, open failures first, storms flagged, data calls before page
+// scaffolding, WebSockets by URL, and one group's individual calls when expand
+// names it. The compact and summary views fold healthy asset groups (chunks,
+// stylesheets, fonts, hot updates) into one assets summary. pageStartMs, when
+// set, is where the page on screen began: calls before it are marked
+// before_navigation.
+func renderNetwork(d *diagnosis, view, expand string, maxItems int, pageStartMs int64) map[string]interface{} {
 	groups := d.groups
-	failedGroups, storms := 0, 0
+	failedGroups, recoveredGroups, storms := 0, 0, 0
 	for _, g := range groups {
-		if g.diagFailures > 0 {
+		switch {
+		case g.openFailures() > 0:
 			failedGroups++
+		case g.recovered > 0:
+			recoveredGroups++
 		}
 		if g.storm != nil {
 			storms++
@@ -462,10 +587,16 @@ func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]i
 	switch {
 	case failedGroups > 0:
 		status = "error"
-	case storms > 0 || wsFailed > 0:
+	case storms > 0 || wsFailed > 0 || recoveredGroups > 0:
 		status = "warning"
 	}
 	summary := fmt.Sprintf("requests=%d groups=%d failed_groups=%d storms=%d", len(d.ev.calls), len(groups), failedGroups, storms)
+	if recoveredGroups > 0 {
+		summary += fmt.Sprintf(" recovered_groups=%d", recoveredGroups)
+	}
+	if before := callsBefore(d.ev.calls, pageStartMs); before > 0 {
+		summary += fmt.Sprintf(" before_navigation=%d", before)
+	}
 	if len(d.wsGroups) > 0 {
 		summary += fmt.Sprintf(" ws=%d ws_failed=%d", len(d.wsGroups), wsFailed)
 	}
@@ -475,6 +606,13 @@ func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]i
 		"status":  status,
 		"summary": summary,
 	}
+	groupRow := func(g *requestGroup) map[string]interface{} {
+		row := g.row()
+		if before := callsBefore(g.calls, pageStartMs); before > 0 {
+			row["before_navigation"] = before
+		}
+		return row
+	}
 
 	if strings.TrimSpace(expand) != "" {
 		matched := make([]map[string]interface{}, 0)
@@ -483,13 +621,17 @@ func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]i
 			if !g.matches(expand) {
 				continue
 			}
-			matched = append(matched, g.row())
+			matched = append(matched, groupRow(g))
 			calls := g.calls
 			if len(calls) > maxItems {
 				calls = calls[len(calls)-maxItems:]
 			}
 			for _, c := range calls {
-				rows = append(rows, callRow(c, d.ev.origin))
+				row := callRow(c, d.ev.origin)
+				if pageStartMs > 0 && c.startMs > 0 && c.startMs < pageStartMs {
+					row["before_navigation"] = true
+				}
+				rows = append(rows, row)
 			}
 		}
 		for _, g := range d.wsGroups {
@@ -506,9 +648,20 @@ func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]i
 		return out
 	}
 
-	lines := make([]string, 0, 3)
+	// Healthy scaffolding folds into one summary; everything else is listed.
+	listed := make([]*requestGroup, 0, len(groups))
+	assets := assetSummary{statuses: map[string]int{}}
 	for _, g := range groups {
-		if g.diagFailures == 0 && g.storm == nil {
+		if view != "full" && g.healthyAsset() {
+			assets.add(g)
+			continue
+		}
+		listed = append(listed, g)
+	}
+
+	lines := make([]string, 0, 3)
+	for _, g := range listed {
+		if g.openFailures() == 0 && g.storm == nil {
 			continue
 		}
 		lines = append(lines, g.line())
@@ -524,13 +677,16 @@ func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]i
 			lines = append(lines, g.line())
 		}
 	}
-	for _, g := range groups {
+	for _, g := range listed {
 		if len(lines) == 3 {
 			break
 		}
-		if g.diagFailures == 0 && g.storm == nil {
+		if g.openFailures() == 0 && g.storm == nil {
 			lines = append(lines, g.line())
 		}
+	}
+	if len(lines) < 3 && assets.groups > 0 {
+		lines = append(lines, assets.line())
 	}
 
 	switch view {
@@ -539,18 +695,21 @@ func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]i
 	default:
 		limit := maxItems
 		if view == "full" {
-			limit = len(groups)
+			limit = len(listed)
 		}
-		rows := make([]map[string]interface{}, 0, minInt(limit, len(groups)))
-		for i, g := range groups {
+		rows := make([]map[string]interface{}, 0, minInt(limit, len(listed)))
+		for i, g := range listed {
 			if i >= limit {
 				break
 			}
-			rows = append(rows, g.row())
+			rows = append(rows, groupRow(g))
 		}
 		out["groups"] = rows
-		if len(groups) > limit {
-			out["more_groups"] = len(groups) - limit
+		if len(listed) > limit {
+			out["more_groups"] = len(listed) - limit
+		}
+		if assets.groups > 0 {
+			out["assets"] = assets.row()
 		}
 		if len(d.wsGroups) > 0 {
 			ws := make([]map[string]interface{}, 0, len(d.wsGroups))
@@ -561,12 +720,71 @@ func renderNetwork(d *diagnosis, view, expand string, maxItems int) map[string]i
 		}
 	}
 	for _, g := range groups {
-		if g.diagFailures > 0 || g.storm != nil {
+		if g.openFailures() > 0 || g.storm != nil {
 			out["next"] = map[string]interface{}{"tool": "browser-reason", "args": map[string]interface{}{"topic": "network", "expand": expandKey(g)}}
 			break
 		}
 	}
 	return out
+}
+
+// healthyAsset is a scaffolding group with nothing to report: no open or
+// recovered failure and no storm.
+func (g *requestGroup) healthyAsset() bool {
+	return g.asset && g.diagFailures == 0 && g.storm == nil
+}
+
+// assetSummary folds healthy scaffolding groups into one line of counts.
+type assetSummary struct {
+	groups, requests, failed int
+	statuses                 map[string]int
+}
+
+func (a *assetSummary) add(g *requestGroup) {
+	a.groups++
+	a.requests += len(g.calls)
+	a.failed += g.failures
+	for status, n := range g.statuses {
+		a.statuses[status] += n
+	}
+}
+
+func (a *assetSummary) row() map[string]interface{} {
+	row := map[string]interface{}{
+		"groups":   a.groups,
+		"requests": a.requests,
+		"statuses": a.statuses,
+		"failed":   a.failed,
+		"note":     "healthy page assets; view=full lists them",
+	}
+	return row
+}
+
+func (a *assetSummary) line() string {
+	keys := make([]string, 0, len(a.statuses))
+	for status := range a.statuses {
+		keys = append(keys, status)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, status := range keys {
+		parts = append(parts, fmt.Sprintf("%s x%d", status, a.statuses[status]))
+	}
+	return fmt.Sprintf("assets %d requests in %d groups: %s", a.requests, a.groups, strings.Join(parts, ", "))
+}
+
+// callsBefore counts the calls that started before startMs; 0 when unset.
+func callsBefore(calls []*netCall, startMs int64) int {
+	if startMs <= 0 {
+		return 0
+	}
+	n := 0
+	for _, c := range calls {
+		if c.startMs > 0 && c.startMs < startMs {
+			n++
+		}
+	}
+	return n
 }
 
 // expandKey is the shortest string that selects a group for expand: its URL

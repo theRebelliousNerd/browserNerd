@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
+	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/buildinfo"
@@ -21,6 +23,29 @@ import (
 	"browsernerd-mcp-server/internal/security"
 )
 
+var (
+	exitCleanupsMu sync.Mutex
+	exitCleanups   []func()
+)
+
+func registerExitCleanup(fn func()) {
+	exitCleanupsMu.Lock()
+	defer exitCleanupsMu.Unlock()
+	exitCleanups = append(exitCleanups, fn)
+}
+
+func runExitCleanups() {
+	exitCleanupsMu.Lock()
+	cleanups := make([]func(), len(exitCleanups))
+	copy(cleanups, exitCleanups)
+	exitCleanups = nil
+	exitCleanupsMu.Unlock()
+
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		cleanups[i]()
+	}
+}
+
 // fatalf reports an unrecoverable startup failure to BOTH the configured log
 // sink and stderr, then exits.
 //
@@ -30,6 +55,7 @@ import (
 // the failure is real, the diagnosis is invisible. Only STDOUT is the MCP
 // protocol channel, so mirroring to stderr is safe and is what clients surface.
 func fatalf(format string, args ...any) {
+	runExitCleanups()
 	log.Printf(format, args...)
 	fmt.Fprintf(os.Stderr, "browsernerd: "+format+"\n", args...)
 	os.Exit(1)
@@ -38,6 +64,7 @@ func fatalf(format string, args ...any) {
 func main() {
 	configPath := flag.String("config", "", "Path to the BrowserNERD MCP config file (overrides workspace config)")
 	ssePort := flag.Int("sse-port", 0, "Optional SSE port override (falls back to config)")
+	sseHost := flag.String("sse-host", "", "Interface the SSE server listens on (falls back to config mcp.sse_host, default 127.0.0.1)")
 	noWorkspace := flag.Bool("no-workspace", false, "Disable .browsernerd/ workspace discovery")
 	workspaceDir := flag.String("workspace-dir", "", "Explicit workspace root (skip walk-up discovery)")
 	trustWorkspace := flag.Bool("trust-workspace-config", false, "Allow workspace config to launch/attach browsers or access paths outside the workspace")
@@ -64,11 +91,12 @@ func main() {
 		return
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	defer func() {
 		if r := recover(); r != nil {
+			runExitCleanups()
 			log.Printf("FATAL PANIC IN MAIN: %v", r)
 			os.Exit(1)
 		}
@@ -119,6 +147,9 @@ func main() {
 	if *ssePort != 0 {
 		cfg.MCP.SSEPort = *ssePort
 	}
+	if *sseHost != "" {
+		cfg.MCP.SSEHost = *sseHost
+	}
 
 	mangleEngine, err := mangle.NewEngine(cfg.Mangle)
 	if err != nil {
@@ -130,6 +161,20 @@ func main() {
 		browserRedactor = security.NewRedactor(cfg.Security.ExtraSensitiveKeys)
 	}
 	sessionManager := browser.NewSessionManagerWithSecurity(cfg.Browser, mangleEngine, browserRedactor)
+	cleanupManager := func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = sessionManager.Shutdown(cleanupCtx)
+	}
+	registerExitCleanup(cleanupManager)
+	defer cleanupManager()
+
+	if reaped, err := sessionManager.ReapOrphans(ctx); err != nil {
+		log.Printf("warning: failed to reap orphaned Chrome processes: %v", err)
+	} else if reaped > 0 {
+		log.Printf("reaped %d orphaned Chrome process tree(s) and temp profile(s)", reaped)
+	}
+
 	if cfg.Browser.AutoStart {
 		if err := sessionManager.Start(ctx); err != nil {
 			fatalf("failed to initialize Rod session manager: %v", err)
@@ -150,8 +195,8 @@ func main() {
 
 	var startErr error
 	if cfg.MCP.SSEPort > 0 {
-		log.Printf("starting BrowserNERD MCP SSE server on port %d", cfg.MCP.SSEPort)
-		startErr = server.StartSSE(ctx, cfg.MCP.SSEPort)
+		log.Printf("starting BrowserNERD MCP SSE server on %s:%d", cfg.MCP.GetSSEHost(), cfg.MCP.SSEPort)
+		startErr = server.StartSSE(ctx, cfg.MCP.GetSSEHost(), cfg.MCP.SSEPort)
 	} else {
 		log.Printf("starting BrowserNERD MCP stdio server")
 		startErr = server.Start(ctx)
@@ -168,6 +213,10 @@ func main() {
 // own env block, so run it with the same variables to mirror the server.
 func doctor(ctx context.Context, cfg config.Config, wsDir string) int {
 	deps := mcpserver.DoctorDeps{Config: cfg}
+	sm := browser.NewSessionManager(cfg.Browser, nil)
+	if reaped, err := sm.ReapOrphans(ctx); err == nil {
+		deps.ReapedOrphans = reaped
+	}
 	schemaErr := ""
 	if engine, err := mangle.NewEngine(cfg.Mangle); err != nil {
 		schemaErr = err.Error()

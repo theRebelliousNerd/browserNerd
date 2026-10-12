@@ -89,6 +89,19 @@ unlabeled_input(SessionId, Ref) :-
     interactive(SessionId, Ref, "input", "", _).
 
 # =============================================================================
+# VECTOR 10b: RESPONSIVE LAYOUT (viewport emulation and the layout audit)
+# =============================================================================
+# Pushed by browser-act {type: viewport} and browser-observe mode: layout.
+# Mobile is "true" or "false"; Severity is "high", "medium" or "low".
+Decl viewport_emulated(SessionId, Width, Height, Scale, Mobile, Timestamp).
+Decl layout_finding(SessionId, FindingId, Type, Severity, Selector, ViewportWidth, Timestamp).
+
+# --- Derived: a high-severity layout defect at some viewport width ---
+Decl layout_defect(SessionId, Type, Selector, ViewportWidth).
+layout_defect(SessionId, Type, Selector, Width) :-
+    layout_finding(SessionId, _, Type, "high", Selector, Width, _).
+
+# =============================================================================
 # VECTOR 11: FORM VALIDATION DETECTION
 # =============================================================================
 # Detects form validation states for testing form submissions.

@@ -180,7 +180,7 @@ func (t *FillFormTool) Execute(ctx context.Context, args map[string]interface{})
 		}, nil
 	}
 
-	// Handle submission
+	var preSubmitTime time.Time
 	if submit || submitButton != "" {
 		// Capture URL before submit for login success detection
 		// This enables universal login_succeeded rule to work on any site
@@ -188,7 +188,7 @@ func (t *FillFormTool) Execute(ctx context.Context, args map[string]interface{})
 		if info, err := page.Info(); err == nil && info != nil {
 			preSubmitURL = info.URL
 		}
-		preSubmitTime := time.Now()
+		preSubmitTime = time.Now()
 		_ = t.engine.AddFacts(ctx, []mangle.Fact{{
 			Predicate: "url_before_submit",
 			Args:      []interface{}{sessionID, preSubmitURL, preSubmitTime.UnixMilli()},
@@ -228,11 +228,10 @@ func (t *FillFormTool) Execute(ctx context.Context, args map[string]interface{})
 
 	// Emit form submission fact
 	if submit || submitButton != "" {
-		now := time.Now()
 		_ = t.engine.AddFacts(ctx, []mangle.Fact{{
 			Predicate: "form_submitted",
-			Args:      []interface{}{sessionID, len(filledFields), now.UnixMilli()},
-			Timestamp: now,
+			Args:      []interface{}{sessionID, len(filledFields), preSubmitTime.UnixMilli()},
+			Timestamp: preSubmitTime,
 		}})
 	}
 

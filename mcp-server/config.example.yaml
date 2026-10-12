@@ -24,6 +24,8 @@ browser:
 mcp:
   # When zero, stdio mode is used. Set to 2024 for SSE/HTTP testing.
   sse_port: 0
+  # Interface the SSE transport listens on (default 127.0.0.1, this machine only).
+  sse_host: "127.0.0.1"
   # Keep the focused 11-tool interface by default.
   progressive_only: true
 

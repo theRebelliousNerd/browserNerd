@@ -1,0 +1,8 @@
+/* Shared base for the layout-audit fixtures: a plain mobile page. */
+html, body { margin: 0; padding: 0; }
+body { font: 16px/1.4 Arial, Helvetica, sans-serif; color: #111; background: #fff; }
+main { padding: 16px; }
+section { margin: 0 0 32px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #1d4ed8; color: #fff; font-size: 12px; line-height: 16px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; min-height: 48px; padding: 0 16px; border: 1px solid #333; background: #f3f4f6; font: inherit; }
+.card { border: 1px solid #ccc; border-radius: 8px; padding: 12px; background: #fff; }

@@ -279,6 +279,33 @@ func TestFilterInteractiveDataCountsGroupedRows(t *testing.T) {
 	}
 }
 
+// Dead controls are isolated to matching filter types and do not leak across types.
+func TestFilterInteractiveDataDeadControlsIsolation(t *testing.T) {
+	data := map[string]interface{}{
+		"summary": map[string]interface{}{"total": 3, "returned": 3, "groups": 3},
+		"dead_controls": map[string]interface{}{
+			"count":  1,
+			"labels": []string{"Dead Button"},
+		},
+		"elements": []interface{}{
+			map[string]interface{}{"ref": "btn1", "type": "button", "label": "Dead Button", "dead": true},
+			map[string]interface{}{"ref": "input1", "type": "input", "label": "Active Input"},
+			map[string]interface{}{"ref": "link1", "type": "link", "label": "Active Link"},
+		},
+	}
+
+	inputs := filterInteractiveData(data, "inputs")
+	if dead, ok := inputs["dead_controls"]; ok && dead != nil {
+		t.Fatalf("inputs must not have dead_controls when only buttons are dead: %v", dead)
+	}
+
+	buttons := filterInteractiveData(data, "buttons")
+	dead, ok := buttons["dead_controls"].(map[string]interface{})
+	if !ok || asInt(dead["count"]) != 1 {
+		t.Fatalf("buttons must report dead button: %v", buttons["dead_controls"])
+	}
+}
+
 // browser-observe's description and schema are sent with every tools/list, so they are
 // budgeted like any response.
 func TestObserveToolDefinitionBudget(t *testing.T) {

@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Secure Declarative Browser Automation
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-09-30
 doc_type: spec
 subsystem: infra
 read_when: Changing BrowserNERD security, browser automation, spec delivery, test generation, or workspace configuration
@@ -66,6 +66,18 @@ input corpus, not BrowserNERD-owned platform surfaces.
    and execution-time limits. Panics are converted to explicit errors.
 9. Every browser session can be closed independently. Maximum session count
    and idle reaping prevent unbounded contexts, goroutines, and pollers.
+
+## Scoped Diagnostic Evidence
+
+`browser_reason` derives success-toast/request-failure contradictions from the
+same joined, deduplicated evidence used by its scorecard. Session, navigation,
+action and time-window boundaries apply to both requests and toasts. An old
+failure cannot turn a fresh successful action into an error, and an old toast
+cannot contradict a fresh request failure. Strict bounded reads exclude
+untimestamped events; an explicit unbounded history read retains its normal
+history semantics. Cancelled network requests without an HTTP error do not
+count as failures. A contradiction is coincident evidence within the selected
+scope, not proof that a toast and request have a causal relationship.
 
 ## Configuration Contract
 
@@ -149,6 +161,15 @@ current session and reports causal evidence for violations.
   pass/fail facts plus compact causal diagnosis.
 - Query and assertion failures are explicit; no fallback may turn evaluation
   failure into a passing or ordinary failed assertion.
+- Form-submit evidence uses the instant before dispatching the
+  submit action for both the starting URL and submission timestamp. A POST
+  initiated synchronously by the click remains eligible as login evidence;
+  timestamps equal to submission are valid. Failed dispatches emit no
+  submission fact.
+- Toast severity follows explicit variants and status attributes before
+  falling back to message text. ARIA alert roles and assertive live regions
+  announce urgency, not error severity. A successful authentication
+  notification is not a user-visible error.
 
 ## Lifecycle Contract
 
@@ -160,7 +181,15 @@ current session and reports causal evidence for violations.
 - Session creation fails fast at `max_tabs` open tabs (detached sessions do not
   count); browser launch fails fast at `max_browsers`.
 - Idle reaping is configurable and disabled only by an explicit zero timeout.
-- Browser shutdown closes every session before closing Rod.
+- Browser shutdown terminates launched Chrome process trees and removes their
+  temporary user-data directories on all exit paths (MCP client disconnect, stdin
+  EOF, SIGINT/SIGTERM, panic recovery, and normal exit). Removal retries for up
+  to five seconds while Windows releases profile file handles; persistent
+  removal failures remain errors.
+- On startup, the server reaps Chrome process trees whose temporary profile's
+  `browsernerd-owner` mark names a server that is no longer running (never
+  touching an unmarked profile), removes their temporary directories, and
+  reports `reaped_orphans` in `browser-observe mode=doctor`.
 
 ## File and Module Boundaries
 

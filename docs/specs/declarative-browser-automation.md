@@ -122,6 +122,18 @@ An operation that runs out of time fails with an error naming the usual
 cause, a JavaScript dialog or a busy renderer, and with `stop_on_error` the
 operations after it are counted as `skipped`.
 
+## Navigating
+
+`navigate` loads its URL and waits per `wait_until` (`load`, the default;
+`networkidle`; `none`). A navigate to the URL the tab is already on reloads the
+page, as entering the URL in the address bar does, and its result carries
+`reloaded: true` and a note, lifted into the compact entry. The reload waits
+for the new document to commit before the wait condition is read, so a caller
+verifying a fix sees the page the server serves now and never the copy that
+was on screen before it. `plan`'s navigate step does the same. A URL that only
+resolves to the current page (a redirect from `/index.html` to `/`) is a
+normal navigation.
+
 ## Waiting on state
 
 An agent waits for route, network, console, component, toast and stable-state
@@ -143,7 +155,10 @@ After a batch that touched a page (`navigate`, `interact`, `fill`, `upload`,
 `key`, `history`, `js`, `plan`, `session_create`, `session_fork`),
 `browser-act` waits up to `settle_ms` (default 1500, cap 10000) for the
 requests the batch started to be answered, its downloads to finish, and their
-console output and toasts to land, then reports an `effects` digest read from
+console output and toasts to land, drains each touched page's in-page
+trackers once (bounded at 1.5 s) so a toast or click raised after their last
+500 ms poll is a fact before the digest is read, then reports an `effects`
+digest read from
 the facts recorded since the batch began, in every session it touched, plus a
 before-and-after read of the page's alert, status and toast regions. Only keys
 with something in them appear:
@@ -152,7 +167,7 @@ with something in them appear:
 |---|---|
 | `url_changed` | `{from, to}` |
 | `title` | the new title, when it changed |
-| `toasts` | error, warning and success toast facts, and the alert, status and toast regions newly visible when the batch settled; an info-level toast fact is left to that live-region read, which shows what the page settled on rather than a passing "loading" |
+| `toasts` | one entry per notification: error, warning and success toast facts, and the alert, status and toast regions newly visible when the batch settled, folded together when they are sightings of the same notification - the same text ignoring whitespace and case, or one sighting is the other's title (prefix) or description (suffix) of at least six characters. An entry keeps the fullest text, the spelling with its words apart, and the level over the role (`error: Login failed Invalid credentials`). An info-level toast fact is left to the live-region read, which shows what the page settled on rather than a passing "loading" |
 | `errors` | console errors and failed assertions |
 | `failed_requests` | `METHOD /path STATUS`, with a snippet of the failure body when one was captured; a 4xx on a page asset (the resource types `failed_request` treats as assets) is left out |
 | `pending` | requests still unanswered after the settle window |
@@ -160,6 +175,17 @@ with something in them appear:
 | `downloads` | each download's file name and final state |
 | `ws_failures` | WebSocket errors and abnormal closes |
 | `load_failed` | navigations that failed to load, with the network error |
+
+A tab can navigate while no call is looking at it: a redirect that lands
+after an act reported, the page navigating on its own, or a person using the
+visible browser window. Each session remembers when the last `browser-act` or
+page-reading `browser-observe` on it ended, and the next such call reports the
+navigations recorded after that moment as `tab_moved` - `from`, `to`, `at_ms`,
+`hops` when there were several, and a note naming the likely causes - in every
+view, and `browser-act` leads its summary with it ("Before this call the tab
+moved /dashboard -> /projects on its own."). A move is reported once; the
+navigations an act makes itself are its effects, never a move. The session's
+navigation buffer holds the latest eight.
 
 A URL on the page's own origin is shown as its path, including in a batch
 that opened its tab. Each list holds at most five entries plus `+N more`,

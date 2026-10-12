@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -127,23 +128,31 @@ func (s *Server) Start(ctx context.Context) error {
 	return stdio.Listen(ctx, os.Stdin, os.Stdout)
 }
 
-// StartSSE hosts the server over HTTP using SSE endpoints with graceful shutdown.
-func (s *Server) StartSSE(ctx context.Context, port int) error {
-	sseServer := mcpserver.NewSSEServer(s.mcpServer, mcpserver.WithBaseURL("http://localhost:"+strconv.Itoa(port)))
+// StartSSE hosts the server over HTTP using SSE endpoints with graceful
+// shutdown, listening on host:port. host is the interface to bind
+// (config mcp.sse_host, default 127.0.0.1): a server that drives a browser and
+// reads its facts is reachable from other machines only when asked to be.
+func (s *Server) StartSSE(ctx context.Context, host string, port int) error {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen for SSE on %s: %w", addr, err)
+	}
+	sseServer := mcpserver.NewSSEServer(s.mcpServer, mcpserver.WithBaseURL("http://"+net.JoinHostPort(sseAdvertisedHost(host), strconv.Itoa(port))))
 
 	mux := http.NewServeMux()
 	mux.Handle("/sse", sseServer.SSEHandler())
 	mux.Handle("/message", sseServer.MessageHandler())
 
 	httpServer := &http.Server{
-		Addr:    ":" + strconv.Itoa(port),
+		Addr:    addr,
 		Handler: mux,
 	}
 
 	// Start server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 		close(errCh)
@@ -161,15 +170,35 @@ func (s *Server) StartSSE(ctx context.Context, port int) error {
 	}
 }
 
-// Close releases optional recorder resources.
-func (s *Server) Close() error {
-	if s.recorder == nil {
-		return nil
+// sseAdvertisedHost is the host the SSE endpoint tells clients to post to: the
+// bound host, or localhost when bound to every interface.
+func sseAdvertisedHost(host string) string {
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return "localhost"
 	}
-	s.recorder.Log("server_stop", "", map[string]interface{}{
-		"server_name": s.cfg.Server.Name,
-	})
-	return s.recorder.Close()
+	return host
+}
+
+// Close releases optional recorder resources and shuts down active sessions.
+func (s *Server) Close() error {
+	var firstErr error
+	if s.sessions != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.sessions.Shutdown(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if s.recorder != nil {
+		s.recorder.Log("server_stop", "", map[string]interface{}{
+			"server_name": s.cfg.Server.Name,
+		})
+		if err := s.recorder.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // ExecuteTool executes a tool directly (used by demos/tests).

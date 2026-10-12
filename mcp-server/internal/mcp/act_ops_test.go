@@ -213,6 +213,36 @@ func TestBrowserActIncludeSpecsDefaultsOff(t *testing.T) {
 	}
 }
 
+// One failed login with a sonner toast was sighted four times: the toast fact
+// read from textContent with its title and description run together, a fact
+// for the title alone from the first render, the toast region read with
+// innerText, and the description again in the form's inline alert. Listed one
+// per sighting, that was four toasts for one notification.
+func TestDigestToastsFoldsSightingsOfOneNotification(t *testing.T) {
+	sightings := []toastSighting{
+		{label: "error", text: "Login failedInvalid credentials"},
+		{label: "error", text: "Login failed"},
+		{label: "toast", text: "Login failed Invalid credentials"},
+		{label: "alert", text: "Invalid credentials"},
+	}
+	got := digestToasts(sightings)
+	if len(got) != 1 || got[0] != "error: Login failed Invalid credentials" {
+		t.Fatalf("one notification, labelled by its level and spelled with its words apart; got %q", got)
+	}
+
+	distinct := digestToasts([]toastSighting{
+		{label: "error", text: "Login failed Invalid credentials"},
+		{label: "status", text: "Saved"},
+		{label: "", text: "Profile updated"},
+		{label: "alert", text: "ok"},
+		{label: "status", text: "Look up the account"},
+	})
+	want := []string{"error: Login failed Invalid credentials", "status: Saved", "Profile updated", "alert: ok", "status: Look up the account"}
+	if strings.Join(distinct, "|") != strings.Join(want, "|") {
+		t.Fatalf("distinct notifications stay apart, and a short key is never a part of a longer one: got %q", distinct)
+	}
+}
+
 func TestCollectActEffectsDigestsFailuresFromFacts(t *testing.T) {
 	engine := setupTestEngine(t)
 	since := time.Now()

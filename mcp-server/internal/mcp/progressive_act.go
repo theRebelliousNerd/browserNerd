@@ -45,10 +45,13 @@ upload{ref,files} sleep{duration_ms<=60000} await_stable await_fact{predicate,ar
 await_conditions{conditions} wait{predicate,match_args} dialog{accept,prompt_text}
 session_create{url} (later ops use the new session_id) session_focus session_close
 session_fork session_attach{target_id} browser_launch browser_close js{script} plan
+viewport{preset:phone|iphone-14|pixel-7|phone-small|tablet|laptop|desktop, or width,height,device_scale_factor,
+mobile,touch,orientation,toolbar_height; reset:true} sizes this tab only
 
-type/fill read the value back; select verifies the widget shows the option; any
-op may carry dialog:accept|dismiss. Results give each op's error and effects:
-url change, console errors, failed requests, dialogs, toasts, downloads.`
+type/fill read the value back; select verifies the widget shows the option;
+navigate to the tab's current URL reloads it (reloaded:true); any op may carry
+dialog:accept|dismiss. Results give each op's error and effects: url change,
+console errors, failed requests, dialogs, toasts, downloads.`
 }
 
 func (t *BrowserActTool) InputSchema() map[string]interface{} {
@@ -91,7 +94,7 @@ var actPageOps = map[string]bool{
 }
 
 // actCompactKeys are lifted from an op's result into its compact entry.
-var actCompactKeys = []string{"session_id", "url", "title", "located", "selected", "verified_by", "armed", "warning", "note", "dialogs"}
+var actCompactKeys = []string{"session_id", "url", "title", "reloaded", "located", "selected", "verified_by", "armed", "warning", "note", "dialogs"}
 
 func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
@@ -127,6 +130,7 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 	if sessionID != "" {
 		run.touched[sessionID] = true
 	}
+	moved := unattendedMove(t.sessions, sessionID)
 	base := captureActBaseline(ctx, t.sessions, sessionID)
 	batchStart := time.Now()
 	lastOp := batchStart
@@ -195,8 +199,12 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 		w := effectsWindow{since: batchStart, sessions: run.touched}
 		if pageTouched {
 			settleEffects(ctx, t.engine, w, lastOp, settle)
+			drainTouchedPages(ctx, t.sessions, run.touched)
 		}
 		effects = collectActEffects(ctx, t.engine, t.sessions, base, run.session, w)
+	}
+	for id := range run.touched {
+		markAttended(t.sessions, id)
 	}
 
 	now := time.Now().UnixMilli()
@@ -210,6 +218,11 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 	}
 	if firstFailure != "" {
 		summary += "; first failure " + firstFailure
+	}
+	if moved != nil {
+		// Said in every view: an agent that believes the tab is where its last
+		// call left it acts on the wrong page.
+		summary = fmt.Sprintf("Before this call the tab moved %v -> %v on its own. %s", moved["from"], moved["to"], summary)
 	}
 	counts := map[string]interface{}{"total": len(ops), "succeeded": succeeded, "failed": failed}
 	if skipped > 0 {
@@ -229,6 +242,9 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 	}
 	if len(notes) > 0 {
 		response["normalized"] = notes
+	}
+	if moved != nil {
+		response["tab_moved"] = moved
 	}
 
 	switch view {
@@ -332,6 +348,9 @@ func liftActFields(entry map[string]interface{}, opType string, result interface
 	case "navigate", "history":
 		if u, ok := m["url"].(string); ok && u != "" {
 			entry["url"] = u
+		}
+		if reloaded, ok := m["reloaded"].(bool); ok && reloaded {
+			entry["reloaded"] = true
 		}
 	}
 	for _, key := range []string{"located", "selected", "verified_by", "armed", "warning", "note"} {
@@ -584,6 +603,8 @@ func (r *actRun) dispatch(ctx context.Context, sessionID string, op map[string]i
 		planArgs := passThrough("actions", "predicate", "delay_ms")
 		planArgs["session_id"] = sessionID
 		return (&ExecutePlanTool{sessions: t.sessions, engine: t.engine}).Execute(ctx, planArgs)
+	case "viewport":
+		return runViewportOp(ctx, t.sessions, t.engine, sessionID, op)
 	}
 	return nil, fmt.Errorf("unknown operation type: %s", getStringFromMap(op, "type"))
 }

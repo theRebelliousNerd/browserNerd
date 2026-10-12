@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layout fixture: loading, then a defect</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+  @keyframes pulse { 50% { opacity: 0.5; } }
+  .skeleton-card { animation: pulse 2s ease-in-out infinite; }
+  .skeleton-line { height: 16px; margin: 0 0 12px; border-radius: 4px; background: #e5e7eb; }
+</style>
+</head>
+<body>
+<main>
+  <!--
+    The page an app shows while its data call is pending: a skeleton card and
+    a "Loading services..." status. It holds no defect, so an audit of this
+    frame alone comes back clean - the false negative readiness exists to stop.
+    /slow-data answers after a delay the test server sets; with ?never=1 it
+    never answers and the skeleton stays. With ?bare=1 the page shows nothing
+    while it waits, so only the pending request says it is still loading.
+  -->
+  <p id="status" role="status">Loading services...</p>
+  <section id="content" class="card skeleton-card" aria-busy="true">
+    <div class="skeleton-line" style="width: 60%;"></div>
+    <div class="skeleton-line" style="width: 90%;"></div>
+    <div class="skeleton-line" style="width: 75%;"></div>
+  </section>
+</main>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.has('bare')) {
+    document.getElementById('status').remove();
+    const content = document.getElementById('content');
+    content.removeAttribute('aria-busy');
+    content.className = '';
+    content.innerHTML = '';
+  }
+  fetch('/slow-data' + (params.has('never') ? '?never=1' : ''))
+    .then((r) => r.json())
+    .then((data) => {
+      const status = document.getElementById('status');
+      if (status) status.remove();
+      const content = document.getElementById('content');
+      content.removeAttribute('aria-busy');
+      content.className = 'card';
+      content.style.position = 'relative';
+      content.style.height = '90px';
+      // Defect, present only once the data arrives: two badges on each other.
+      content.innerHTML =
+        '<span id="badge-a" class="badge" data-expect="overlap" style="position: absolute; top: 12px; right: 12px;">' + data.label + '</span>' +
+        '<span id="badge-b" class="badge" data-expect="overlap" style="position: absolute; top: 14px; right: 48px;">' + data.label + '</span>' +
+        '<h3 style="margin: 44px 0 0; font-size: 16px;">' + data.title + '</h3>';
+    });
+</script>
+</body>
+</html>

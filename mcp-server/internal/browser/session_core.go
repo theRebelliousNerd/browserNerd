@@ -31,6 +31,9 @@ type Session struct {
 	CreatedAt  time.Time `json:"created_at"`
 	LastActive time.Time `json:"last_active"`
 	Isolated   bool      `json:"isolated"`
+	// Viewport is the device the tab emulates after a viewport operation; nil
+	// means the configured default.
+	Viewport *Viewport `json:"viewport,omitempty"`
 }
 
 // BrowserInstance describes a connected Chrome process or external endpoint.
@@ -46,9 +49,12 @@ type BrowserInstance struct {
 }
 
 type browserRecord struct {
-	meta       BrowserInstance
-	browser    *rod.Browser
-	controlURL string
+	meta        BrowserInstance
+	browser     *rod.Browser
+	controlURL  string
+	pid         int
+	userDataDir string
+	tempDir     bool
 }
 
 type sessionRecord struct {
@@ -57,7 +63,11 @@ type sessionRecord struct {
 	isolated     *rod.Browser
 	registry     *ElementRegistry // Per-session element cache for reliable re-identification
 	activity     *sessionRuntimeEvidenceBuffer
+	net          *networkActivity   // Requests in flight; nil without an event stream
 	streamCancel context.CancelFunc // Cancels long-lived background event ingestion for this session
+	// attendedMs is when the last tool call that acted on or observed this
+	// tab ended; a navigation after it happened while no call was looking.
+	attendedMs int64
 }
 
 type eventThrottler struct {
@@ -200,6 +210,8 @@ type SessionManager struct {
 	reaperCancel     context.CancelFunc
 	dialogs          dialogBook
 	downloads        downloadBook
+	querier          ProcessQuerier
+	reapedOrphans    int
 }
 
 // EngineSink defines the minimal interface we need from the logic layer.
@@ -224,11 +236,12 @@ func NewSessionManagerWithSecurity(cfg config.BrowserConfig, sink EngineSink, re
 		sessions: make(map[string]*sessionRecord),
 		redactor: redactor,
 		browsers: make(map[string]*browserRecord),
+		querier:  DefaultProcessQuerier(),
 	}
 }
 
 // Start connects to an existing Chrome or launches a new one using Rod's launcher.
-func (m *SessionManager) Start(_ context.Context) error {
+func (m *SessionManager) Start(ctx context.Context) error {
 	// If we already have a browser, verify it's still alive
 	if m.browser != nil {
 		// Try a simple operation to test connection health
@@ -241,27 +254,48 @@ func (m *SessionManager) Start(_ context.Context) error {
 		_ = m.browser.Close()
 		m.browser = nil
 		m.controlURL = ""
-		// Clear all sessions since they're orphaned
+
 		m.mu.Lock()
+		if m.querier == nil {
+			m.querier = DefaultProcessQuerier()
+		}
+		q := m.querier
+		staleRecords := make([]*browserRecord, 0, len(m.browsers))
+		for _, rec := range m.browsers {
+			if rec != nil {
+				staleRecords = append(staleRecords, rec)
+			}
+		}
 		m.clearSessionsLocked(false)
 		m.browsers = make(map[string]*browserRecord)
 		m.defaultBrowserID = ""
 		m.mu.Unlock()
+
+		for _, rec := range staleRecords {
+			if rec.pid > 0 {
+				_ = q.KillProcessTree(rec.pid)
+			}
+			if rec.tempDir && rec.userDataDir != "" {
+				_ = removeUserDataDir(rec.userDataDir)
+			}
+		}
 	}
 
 	if err := m.loadSessions(); err != nil {
 		return fmt.Errorf("load sessions: %w", err)
 	}
 
-	controlURL, err := m.startControlURL()
+	launched, err := m.startBrowser()
 	if err != nil {
 		return err
 	}
 
 	// Browser lifetime must not depend on request-scoped tool contexts.
 	// Use a long-lived background context so later tool calls can reuse the same connection.
+	controlURL := launched.controlURL
 	browser := rod.New().ControlURL(controlURL).Context(context.Background())
 	if err := browser.Connect(); err != nil {
+		m.killLaunchedChrome(launched)
 		return fmt.Errorf("connect to chrome: %w", err)
 	}
 
@@ -271,7 +305,7 @@ func (m *SessionManager) Start(_ context.Context) error {
 	browserID := uuid.NewString()
 	now := time.Now()
 	m.defaultBrowserID = browserID
-	m.browsers[browserID] = &browserRecord{
+	record := &browserRecord{
 		meta: BrowserInstance{
 			ID:         browserID,
 			ControlURL: m.redactor.SanitizeString(controlURL),
@@ -284,6 +318,10 @@ func (m *SessionManager) Start(_ context.Context) error {
 		browser:    browser,
 		controlURL: controlURL,
 	}
+	record.pid = launched.pid
+	record.userDataDir = launched.userDataDir
+	record.tempDir = launched.tempDir
+	m.browsers[browserID] = record
 	m.mu.Unlock()
 	if m.cfg.DebuggerURL == "" {
 		// Only a browser this server launched is redirected to the download
@@ -296,23 +334,23 @@ func (m *SessionManager) Start(_ context.Context) error {
 	return nil
 }
 
-// startControlURL returns the DevTools WebSocket URL Start connects to: the
-// configured debugger_url, or a freshly launched managed Chrome. A debugger_url
-// naming only the endpoint ("ws://localhost:9222", "127.0.0.1:9222") is
-// resolved to the browser's /devtools/browser/<id> socket, which is the only
-// URL Chrome accepts a CDP connection on.
-func (m *SessionManager) startControlURL() (string, error) {
+// startBrowser launches a managed Chrome, or names the browser debugger_url
+// attaches to (no process or profile of ours). A debugger_url naming only the
+// endpoint ("ws://localhost:9222", "127.0.0.1:9222") is resolved to the
+// browser's /devtools/browser/<id> socket, the only URL Chrome accepts a CDP
+// connection on.
+func (m *SessionManager) startBrowser() (*launchedChrome, error) {
 	if m.cfg.DebuggerURL == "" {
 		return m.launchChrome()
 	}
 	if strings.Contains(m.cfg.DebuggerURL, "/devtools/") {
-		return m.cfg.DebuggerURL, nil
+		return &launchedChrome{controlURL: m.cfg.DebuggerURL}, nil
 	}
 	resolved, err := launcher.ResolveURL(m.cfg.DebuggerURL)
 	if err != nil {
-		return "", fmt.Errorf("resolve debugger_url %s: %w", m.redactor.SanitizeString(m.cfg.DebuggerURL), err)
+		return nil, fmt.Errorf("resolve debugger_url %s: %w", m.redactor.SanitizeString(m.cfg.DebuggerURL), err)
 	}
-	return resolved, nil
+	return &launchedChrome{controlURL: resolved}, nil
 }
 
 // ControlURL returns the WebSocket debugger URL for the connected browser.
@@ -329,7 +367,9 @@ func (m *SessionManager) IsConnected() bool {
 	return m.browser != nil
 }
 
-// Shutdown closes tracked pages and the underlying browser.
+// Shutdown closes tracked pages, closes managed browsers, terminates the
+// Chrome process trees this server launched and deletes their temporary
+// profiles. An attached browser (debugger_url) is left running.
 func (m *SessionManager) Shutdown(_ context.Context) error {
 	m.mu.Lock()
 	sessionRecords := make([]*sessionRecord, 0, len(m.sessions))
@@ -346,16 +386,20 @@ func (m *SessionManager) Shutdown(_ context.Context) error {
 		m.reaperCancel()
 		m.reaperCancel = nil
 	}
-	browsers := make([]*rod.Browser, 0, len(m.browsers))
+	records := make([]*browserRecord, 0, len(m.browsers))
 	for id, record := range m.browsers {
-		if record != nil && record.browser != nil {
-			browsers = append(browsers, record.browser)
+		if record != nil {
+			records = append(records, record)
 		}
 		delete(m.browsers, id)
 	}
 	m.browser = nil
 	m.controlURL = ""
 	m.defaultBrowserID = ""
+	if m.querier == nil {
+		m.querier = DefaultProcessQuerier()
+	}
+	q := m.querier
 	m.mu.Unlock()
 
 	var err error
@@ -364,8 +408,8 @@ func (m *SessionManager) Shutdown(_ context.Context) error {
 			err = closeErr
 		}
 	}
-	for _, browser := range browsers {
-		if closeErr := browser.Close(); closeErr != nil && err == nil {
+	for _, record := range records {
+		if closeErr := teardownBrowser(q, record); closeErr != nil && err == nil {
 			err = closeErr
 		}
 	}

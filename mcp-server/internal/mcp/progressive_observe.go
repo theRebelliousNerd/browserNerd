@@ -38,6 +38,11 @@ func (t *BrowserObserveTool) Description() string {
   captures one element.
 - storage: signed out / 401? cookies and web-storage keys with flags and expiry, and when
   each JWT (even one nested in a JSON state blob) expires. Never values.
+- layout: spatial defects at this size (overlaps, text bleeding out of or cut by its box, sideways
+  scroll, content unreachable in drawers/menus or under a phone toolbar, columns that never stack,
+  small tap targets, covered content), DOM geometry checked against pixels, annotated screenshot.
+  viewports:["phone","tablet"] audits each size (restored after); url reloads per size.
+  Waits out skeletons and pending requests; readiness:"still_loading" if they never end.
 - sessions: live tabs. doctor: BrowserNERD's own health (stale binary, wedged calls, env).
   state|nav|hidden|grids|react|dom_snapshot: narrow slices.
 view: summary < compact (default) < full.`
@@ -59,7 +64,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			"mode": map[string]interface{}{
 				"type":        "string",
 				"description": "Default composite",
-				"enum":        []string{"composite", "text", "interactive", "screenshot", "storage", "sessions", "state", "nav", "hidden", "grids", "react", "dom_snapshot", "doctor"},
+				"enum":        []string{"composite", "text", "interactive", "screenshot", "layout", "storage", "sessions", "state", "nav", "hidden", "grids", "react", "dom_snapshot", "doctor"},
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
@@ -97,7 +102,28 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"full_page": map[string]interface{}{
 				"type":        "boolean",
-				"description": "screenshot: whole page",
+				"description": "screenshot/layout: whole page",
+			},
+			"viewports": map[string]interface{}{
+				"type":        "array",
+				"description": "layout: presets (phone, iphone-14, pixel-7, phone-small, tablet, laptop, desktop) or viewport objects",
+			},
+			"url": map[string]interface{}{
+				"type":        "string",
+				"description": "layout: load this URL at each viewport first",
+			},
+			"checks": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "layout: finding types to run (default all)",
+			},
+			"thresholds": map[string]interface{}{
+				"type":        "object",
+				"description": "layout: min_overlap_px, tap_target_px, min_column_px, collapse_below, max_findings",
+			},
+			"ready_timeout_ms": map[string]interface{}{
+				"type":        "integer",
+				"description": "layout: max wait per viewport for loading (default 20000)",
 			},
 			"format": map[string]interface{}{
 				"type":        "string",
@@ -171,7 +197,31 @@ func withIntent(response map[string]interface{}, hasIntent bool, intent string, 
 	return response
 }
 
+// Execute observes the page and says when the tab navigated since the last act
+// or observe on it ended; a successful observation marks the tab as seen.
 func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	sessionID := getStringArg(args, "session_id")
+	moved := unattendedMove(t.sessions, sessionID)
+	res, err := t.observe(ctx, args)
+	if err != nil {
+		return res, err
+	}
+	m, ok := res.(map[string]interface{})
+	if !ok || m["success"] != true || sessionID == "" {
+		return res, nil
+	}
+	// doctor and sessions report on the server, not on the page.
+	if mode, _ := m["mode"].(string); mode == "doctor" || mode == "sessions" {
+		return res, nil
+	}
+	markAttended(t.sessions, sessionID)
+	if moved != nil {
+		m["tab_moved"] = moved
+	}
+	return res, nil
+}
+
+func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
 	intent := normalizeObserveIntent(getStringArg(args, "intent"))
 	intentCfg, hasIntent := resolveObserveIntentDefaults(intent)
@@ -236,8 +286,14 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	if maxItems <= 0 {
 		maxItems = defaultProgressiveMaxItems
 	}
-	if filter == "" {
-		filter = "all"
+	var filterErr error
+	filter, filterErr = normalizeInteractiveFilter(filter)
+	if filterErr != nil {
+		return map[string]interface{}{
+			"success": false,
+			"status":  "error",
+			"error":   filterErr.Error(),
+		}, nil
 	}
 
 	// Handle new delegating modes that return early
@@ -279,6 +335,16 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		}
 		return withIntent(response, hasIntent, intent, intentApplied), nil
 
+	case "layout":
+		if sessionID == "" {
+			return map[string]interface{}{"success": false, "error": "session_id is required for layout mode"}, nil
+		}
+		response, err := t.observeLayout(ctx, sessionID, args, view)
+		if err != nil {
+			return nil, err
+		}
+		return withIntent(response, hasIntent, intent, intentApplied), nil
+
 	case "screenshot":
 		if sessionID == "" {
 			return map[string]interface{}{"success": false, "error": "session_id is required for screenshot mode"}, nil
@@ -287,10 +353,13 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		delegateArgs := map[string]interface{}{
 			"session_id": sessionID,
 		}
-		for _, key := range []string{"full_page", "save_path", "format", "quality", "annotate"} {
+		for _, key := range []string{"full_page", "save_path", "format", "quality", "annotate", "filter"} {
 			if v, ok := args[key]; ok {
 				delegateArgs[key] = v
 			}
+		}
+		if _, hasFilter := delegateArgs["filter"]; !hasFilter && filter != "" {
+			delegateArgs["filter"] = filter
 		}
 		if ref := getStringArg(args, "ref"); ref != "" {
 			delegateArgs["element_ref"] = ref
@@ -523,7 +592,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	var health map[string]interface{}
 
 	fetchState := mode == "state" || mode == "composite"
-	fetchNav := mode == "nav" || mode == "composite"
+	fetchNav := (mode == "nav" || mode == "composite") && (filter == "all" || filter == "links")
 	fetchInteractive := mode == "interactive" || mode == "composite"
 	fetchHidden := mode == "hidden" || (mode == "composite" && view == "full")
 	fetchContent := mode == "composite" && view != "summary"
@@ -536,8 +605,6 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	planningFilter := filter
 	if includeActionPlan {
 		planningLimit = maxInt(maxItems, observePlanningGroups)
-		// Action planning benefits from seeing all interactive elements even if output filter is narrower.
-		planningFilter = "all"
 	}
 
 	if fetchState {
@@ -559,6 +626,14 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			return nil, err
 		}
 		navData = asMap(res)
+	} else if mode == "nav" {
+		navData = map[string]interface{}{
+			"nav":    map[string]interface{}{},
+			"side":   map[string]interface{}{},
+			"main":   map[string]interface{}{},
+			"foot":   map[string]interface{}{},
+			"counts": map[string]interface{}{"total": 0, "internal": 0, "external": 0},
+		}
 	}
 
 	if fetchInteractive {
@@ -674,8 +749,12 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 
 		// Keep only candidates that match the *current* snapshot (prevents stale actions
 		// from prior pages), then collapse repeats and rank for the next decision.
-		current := filterActionCandidates(raw, buildRefSet(interactivePlanningData), buildHrefSet(navData))
-		annotateCandidatesFromRows(current, interactivePlanningData)
+		var allowedHrefs map[string]bool
+		if filter == "all" || filter == "links" {
+			allowedHrefs = buildHrefSet(navData)
+		}
+		current := filterActionCandidates(raw, buildRefSet(interactiveData), allowedHrefs)
+		annotateCandidatesFromRows(current, interactiveData)
 		actionCandidates = rankActionCandidates(groupActionCandidates(current))
 
 		currentURL := getStringFromMap(stateData, "url")
@@ -753,7 +832,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		}
 		// Composite carries links as interactive rows with their href; the area map is
 		// mode nav.
-		if fetchNav && mode == "nav" {
+		if (fetchNav || mode == "nav") && len(navData) > 0 {
 			data["nav"] = navData
 		}
 		if fetchInteractive {
@@ -783,7 +862,7 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 		if fetchState {
 			data["state"] = stateData
 		}
-		if fetchNav {
+		if (fetchNav || mode == "nav") && len(navData) > 0 {
 			data["nav"] = navData
 		}
 		if fetchInteractive {
@@ -814,7 +893,11 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 			handles = append(handles, "observe:"+sessionID+":spec_context")
 		}
 	}
-	summary := observeSummaryLine(stateData, interactiveData, navData, health, len(actionCandidates))
+	var summaryNav map[string]interface{}
+	if filter == "all" || filter == "links" {
+		summaryNav = navData
+	}
+	summary := observeSummaryLine(stateData, interactiveData, summaryNav, health, len(actionCandidates))
 	emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
 
 	return withIntent(map[string]interface{}{
