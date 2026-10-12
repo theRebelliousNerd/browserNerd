@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -128,56 +129,46 @@ func (s *Server) Start(ctx context.Context) error {
 	return stdio.Listen(ctx, os.Stdin, os.Stdout)
 }
 
-// StartSSE hosts the server over HTTP using SSE endpoints with graceful
-// shutdown, listening on host:port. host is the interface to bind
-// (config mcp.sse_host, default 127.0.0.1): a server that drives a browser and
-// reads its facts is reachable from other machines only when asked to be.
-func (s *Server) StartSSE(ctx context.Context, host string, port int) error {
+// httpEndpointPath is where StartHTTP serves MCP.
+const httpEndpointPath = "/mcp"
+
+// StartHTTP serves MCP over Streamable HTTP at http://host:port/mcp until ctx
+// ends. host is the interface to bind (config mcp.http_host, default
+// 127.0.0.1): a server that drives a browser and reads its facts is reachable
+// from other machines only when asked to be. mcp-go rejects loopback requests
+// whose Host header is not localhost, which closes the DNS-rebinding route
+// from a web page to this server.
+func (s *Server) StartHTTP(ctx context.Context, host string, port int) error {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listen for SSE on %s: %w", addr, err)
+		return fmt.Errorf("listen for HTTP on %s: %w", addr, err)
 	}
-	sseServer := mcpserver.NewSSEServer(s.mcpServer, mcpserver.WithBaseURL("http://"+net.JoinHostPort(sseAdvertisedHost(host), strconv.Itoa(port))))
-
+	mcpHTTP := mcpserver.NewStreamableHTTPServer(s.mcpServer, mcpserver.WithEndpointPath(httpEndpointPath))
 	mux := http.NewServeMux()
-	mux.Handle("/sse", sseServer.SSEHandler())
-	mux.Handle("/message", sseServer.MessageHandler())
+	mux.Handle(httpEndpointPath, mcpHTTP)
+	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 
-	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: mux,
-	}
-
-	// Start server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)
 	}()
 
-	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
-		log.Printf("SSE server shutting down gracefully...")
+		log.Printf("HTTP server shutting down gracefully...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if err := mcpHTTP.Shutdown(shutdownCtx); err != nil {
+			log.Printf("closing MCP HTTP sessions: %v", err)
+		}
 		return httpServer.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		return err
 	}
-}
-
-// sseAdvertisedHost is the host the SSE endpoint tells clients to post to: the
-// bound host, or localhost when bound to every interface.
-func sseAdvertisedHost(host string) string {
-	switch host {
-	case "", "0.0.0.0", "::", "[::]":
-		return "localhost"
-	}
-	return host
 }
 
 // Close releases optional recorder resources and shuts down active sessions.

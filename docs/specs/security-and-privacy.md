@@ -57,12 +57,13 @@ local authority into queryable or persisted data.
 
 ## Network exposure
 
-The stdio transport is the default. The SSE transport (`mcp.sse_port`, or
-`-sse-port`) listens on `mcp.sse_host` (or `-sse-host`), default `127.0.0.1`:
-a server that drives a browser and reads its facts is reachable from other
-machines only when an operator names `0.0.0.0` or an interface. The SSE
-endpoint advertises the bound host to clients, and `localhost` when bound to
-every interface.
+The stdio transport is the default. The Streamable HTTP transport
+(`mcp.http_port`, or `-http-port`) serves MCP at `/mcp` and listens on
+`mcp.http_host` (or `-http-host`), default `127.0.0.1`: a server that drives a
+browser and reads its facts is reachable from other machines only when an
+operator names `0.0.0.0` or an interface. Requests arriving over loopback
+with a Host header other than localhost are refused, which closes the
+DNS-rebinding route from a web page to the server.
 
 ## Authority boundary
 

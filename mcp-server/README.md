@@ -315,8 +315,9 @@ go run ./cmd/rebuild
 # Stdio mode (Claude Code / MCP host)
 ./bin/browsernerd --config config.yaml
 
-# SSE mode (listens on 127.0.0.1; --sse-host or mcp.sse_host names another interface)
-./bin/browsernerd --config config.yaml --sse-port 8080
+# Streamable HTTP mode: MCP at http://127.0.0.1:8080/mcp (--http-host or
+# mcp.http_host names another interface)
+./bin/browsernerd --config config.yaml --http-port 8080
 
 # Identity and self-diagnosis
 ./bin/browsernerd -version

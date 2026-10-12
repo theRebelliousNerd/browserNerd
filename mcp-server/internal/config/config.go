@@ -143,12 +143,13 @@ type DockerConfig struct {
 }
 
 type MCPConfig struct {
-	// When set, starts an SSE server on this port instead of stdio-only.
-	SSEPort int `yaml:"sse_port"`
-	// SSEHost is the interface the SSE server listens on (default 127.0.0.1).
-	// The server drives a browser and reads its facts; exposing it beyond this
-	// machine takes an explicit 0.0.0.0 or a named interface.
-	SSEHost string `yaml:"sse_host"`
+	// HTTPPort, when set, serves MCP over Streamable HTTP at /mcp on this
+	// port instead of stdio.
+	HTTPPort int `yaml:"http_port"`
+	// HTTPHost is the interface the HTTP server listens on (default
+	// 127.0.0.1). The server drives a browser and reads its facts; exposing it
+	// beyond this machine takes an explicit 0.0.0.0 or a named interface.
+	HTTPHost string `yaml:"http_host"`
 	// ProgressiveOnly controls whether only progressive disclosure tools are registered.
 	// When true (default), agents see 11 tools: browser/session lifecycle,
 	// observe/act/reason/audit/mangle, spec delivery/conformance, and tests.
@@ -271,7 +272,7 @@ func DefaultConfig() Config {
 			},
 		},
 		MCP: MCPConfig{
-			SSEPort: 0,
+			HTTPPort: 0,
 		},
 		Mangle: MangleConfig{
 			Enable:            true,
@@ -892,10 +893,10 @@ func (b BrowserConfig) GetDownloadDir() string {
 	return filepath.Join(defaultDataRoot(), "downloads")
 }
 
-// GetSSEHost returns the interface the SSE server listens on (default
+// GetHTTPHost returns the interface the HTTP server listens on (default
 // 127.0.0.1, loopback only).
-func (m MCPConfig) GetSSEHost() string {
-	if host := strings.TrimSpace(m.SSEHost); host != "" {
+func (m MCPConfig) GetHTTPHost() string {
+	if host := strings.TrimSpace(m.HTTPHost); host != "" {
 		return host
 	}
 	return "127.0.0.1"

@@ -590,7 +590,7 @@ browser:
   auto_start: true
 
 mcp:
-  sse_port: 0
+  http_port: 0
 `
 		if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
 			t.Fatalf("failed to write config: %v", err)

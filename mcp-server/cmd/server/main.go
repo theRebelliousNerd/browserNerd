@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -63,8 +65,8 @@ func fatalf(format string, args ...any) {
 
 func main() {
 	configPath := flag.String("config", "", "Path to the BrowserNERD MCP config file (overrides workspace config)")
-	ssePort := flag.Int("sse-port", 0, "Optional SSE port override (falls back to config)")
-	sseHost := flag.String("sse-host", "", "Interface the SSE server listens on (falls back to config mcp.sse_host, default 127.0.0.1)")
+	httpPort := flag.Int("http-port", 0, "Serve MCP over Streamable HTTP at /mcp on this port instead of stdio (falls back to config mcp.http_port)")
+	httpHost := flag.String("http-host", "", "Interface the HTTP server listens on (falls back to config mcp.http_host, default 127.0.0.1)")
 	noWorkspace := flag.Bool("no-workspace", false, "Disable .browsernerd/ workspace discovery")
 	workspaceDir := flag.String("workspace-dir", "", "Explicit workspace root (skip walk-up discovery)")
 	trustWorkspace := flag.Bool("trust-workspace-config", false, "Allow workspace config to launch/attach browsers or access paths outside the workspace")
@@ -125,7 +127,7 @@ func main() {
 	// protocol frames; stderr is the channel MCP clients surface to operators, so
 	// it stays available as the fallback. Never discard logs -- a server that dies
 	// without saying why is indistinguishable from one that crashed.
-	if cfg.MCP.SSEPort == 0 && cfg.Server.LogFile != "" {
+	if cfg.MCP.HTTPPort == 0 && cfg.Server.LogFile != "" {
 		logDir := filepath.Dir(cfg.Server.LogFile)
 		var dirErr error
 		if logDir != "" && logDir != "." {
@@ -144,11 +146,11 @@ func main() {
 			}
 		}
 	}
-	if *ssePort != 0 {
-		cfg.MCP.SSEPort = *ssePort
+	if *httpPort != 0 {
+		cfg.MCP.HTTPPort = *httpPort
 	}
-	if *sseHost != "" {
-		cfg.MCP.SSEHost = *sseHost
+	if *httpHost != "" {
+		cfg.MCP.HTTPHost = *httpHost
 	}
 
 	mangleEngine, err := mangle.NewEngine(cfg.Mangle)
@@ -194,9 +196,9 @@ func main() {
 	}()
 
 	var startErr error
-	if cfg.MCP.SSEPort > 0 {
-		log.Printf("starting BrowserNERD MCP SSE server on %s:%d", cfg.MCP.GetSSEHost(), cfg.MCP.SSEPort)
-		startErr = server.StartSSE(ctx, cfg.MCP.GetSSEHost(), cfg.MCP.SSEPort)
+	if cfg.MCP.HTTPPort > 0 {
+		log.Printf("starting BrowserNERD MCP Streamable HTTP server on http://%s/mcp", net.JoinHostPort(cfg.MCP.GetHTTPHost(), strconv.Itoa(cfg.MCP.HTTPPort)))
+		startErr = server.StartHTTP(ctx, cfg.MCP.GetHTTPHost(), cfg.MCP.HTTPPort)
 	} else {
 		log.Printf("starting BrowserNERD MCP stdio server")
 		startErr = server.Start(ctx)

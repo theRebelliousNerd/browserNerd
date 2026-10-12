@@ -816,7 +816,7 @@ CLI flags  >  explicit --config  >  .browsernerd/config.yaml  >  DefaultConfig()
 - **DefaultConfig()** - Hardcoded Go defaults (unchanged)
 - **`.browsernerd/config.yaml`** - Project-level overrides (Docker containers, schemas, etc.)
 - **`--config path`** - Machine/user-level settings (Chrome path, headless, viewport). Keep project settings out of it: a `docker` block here overrides the workspace's, and `-doctor` names any such override as a problem
-- **CLI flags** (`--sse-port`, `--sse-host`) - Invocation-level overrides
+- **CLI flags** (`--http-port`, `--http-host`) - Invocation-level overrides
 
 ### CLI Flags
 
@@ -825,8 +825,8 @@ CLI flags  >  explicit --config  >  .browsernerd/config.yaml  >  DefaultConfig()
 | `--no-workspace` | `false` | Disable `.browsernerd/` auto-discovery |
 | `--workspace-dir` | `""` | Explicit workspace root (skip walk-up search) |
 | `--init-workspace` | `false` | Create `.browsernerd/` template and exit |
-| `--sse-port` | `0` | Serve MCP over SSE on this port instead of stdio |
-| `--sse-host` | `127.0.0.1` | Interface the SSE server listens on (config `mcp.sse_host`) |
+| `--http-port` | `0` | Serve MCP over Streamable HTTP at `/mcp` on this port instead of stdio (config `mcp.http_port`) |
+| `--http-host` | `127.0.0.1` | Interface the HTTP server listens on (config `mcp.http_host`) |
 
 ### Multi-Project Patterns
 
@@ -1043,8 +1043,8 @@ go run ./cmd/rebuild
 # Verbose logging
 ./bin/browsernerd --config config.yaml --verbose
 
-# SSE mode (HTTP clients)
-./bin/browsernerd --config config.yaml --sse-port 8080
+# Streamable HTTP mode: MCP at http://127.0.0.1:8080/mcp
+./bin/browsernerd --config config.yaml --http-port 8080
 ```
 
 ---
