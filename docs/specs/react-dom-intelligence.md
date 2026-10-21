@@ -32,6 +32,11 @@ an `onclick` attribute, a React `onClick` prop, or the element's own
 
 ## Dead controls
 
+A React root is the element carrying a `__reactContainer$` marker, or the page
+itself when the marker sits on `document` or `<html>` (React 19 under the
+Next.js App Router hydrates the whole document); a document-rooted page is
+checked from `<body>` down.
+
 On a page with a React root, every candidate is checked for React ownership:
 an element React rendered carries a fiber or React props (`owned`). An element
 without either is `foreign` when React rendered an element between it and the

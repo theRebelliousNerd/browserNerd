@@ -137,7 +137,11 @@ const elementRefScript = `
 			const reactRoots = [];
 			const root = document.body || document.documentElement;
 			if (root) {
-				if (__bnReactInfo(root).container) reactRoots.push(root);
+				// React 19 / Next.js App Router hydrates the whole document, so the container
+				// marker sits on document itself (or <html>), not on any element inside <body>.
+				// Such a page's root for hydration purposes is <body>.
+				if (__bnReactInfo(root).container || __bnReactInfo(document).container ||
+					__bnReactInfo(document.documentElement).container) reactRoots.push(root);
 				const all = root.querySelectorAll('*');
 				let styleBudget = __bnStyleBudget;
 				let inside = null;
