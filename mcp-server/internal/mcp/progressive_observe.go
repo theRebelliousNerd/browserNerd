@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,33 +29,29 @@ const observePlanningGroups = 60
 
 func (t *BrowserObserveTool) Name() string { return "browser-observe" }
 func (t *BrowserObserveTool) Description() string {
-	return `See a page, small by default; drill down with mode.
-- composite (default): title, headings, status/alert text, health digest, controls grouped
-  (400 identical buttons = 1 row with count + refs), ranked browser-act calls.
-- text: read the page (headings, landmarks, live regions, text blocks); text_query filters,
-  max_chars caps. Prefer it to a screenshot for reading.
-- interactive: controls only; refs feed browser-act.
-- screenshot: saves an image, returns path + size. annotate numbers controls in view; ref
-  captures one element.
-- storage: signed out / 401? cookies and web-storage keys with flags and expiry, and when
-  each JWT (even one nested in a JSON state blob) expires. Never values.
-- layout: spatial defects at this size (overlaps, text bleeding out of or cut by its box, sideways
-  scroll, content unreachable in drawers/menus or under a phone toolbar, columns that never stack,
-  small tap targets, covered content), DOM geometry checked against pixels, annotated screenshot.
-  viewports:["phone","tablet"] audits each size (restored after); url reloads per size.
-  Waits out skeletons and pending requests; readiness:"still_loading" if they never end.
-- sessions: live tabs. doctor: BrowserNERD's own health (stale binary, wedged calls, env).
-  state|nav|hidden|grids|react|dom_snapshot: narrow slices.
-view: summary < compact (default) < full.`
+	return `Inspect pages or sessions; doctor checks server health.
+composite groups controls and suggests actions. Prefer text for reading, interactive for refs,
+screenshot for pixels, storage for auth metadata (never values), layout for visual defects.
+react/dom_snapshot inspect bounded subtrees after browser-reason authorization.
+view: summary < compact < full.`
 }
 
 func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+	return snapshotInputSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"session_id": map[string]interface{}{
 				"type":        "string",
 				"description": "Session (omit for sessions/doctor)",
+			},
+			"gate_reason": map[string]interface{}{
+				"type":        "string",
+				"description": "Deep: browser-reason grant; explicit_user_intent needs a handle",
+				"enum":        []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
+			},
+			"approved_by_handle": map[string]interface{}{
+				"type":        "string",
+				"description": "Deep: recent same-session browser-reason handle",
 			},
 			"intent": map[string]interface{}{
 				"type":        "string",
@@ -90,7 +87,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"visible_only": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Default true",
+				"description": "react/dom_snapshot default false; other modes true",
 			},
 			"annotate": map[string]interface{}{
 				"type":        "boolean",
@@ -148,7 +145,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"emit_facts": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Default true",
+				"description": "react/dom_snapshot default false; other modes true; retention is not guaranteed",
 			},
 			"include_action_plan": map[string]interface{}{
 				"type":        "boolean",
@@ -184,7 +181,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 				"description": "Terms ranking spec excerpts",
 			},
 		},
-	}
+	})
 }
 
 // withIntent records the intent preset on a response only when the caller used one;
@@ -193,6 +190,58 @@ func withIntent(response map[string]interface{}, hasIntent bool, intent string, 
 	if hasIntent {
 		response["intent"] = intent
 		response["intent_applied"] = applied
+	}
+	return response
+}
+
+// Deep extraction receipts are already bounded. Retain failure evidence even in
+// summary view, and only describe counts the focused tool actually measured.
+func deepObservationResponse(mode, view string, data map[string]interface{}, err error) map[string]interface{} {
+	response := map[string]interface{}{"success": false, "status": "error", "mode": mode, "view": view}
+	if err != nil {
+		response["error"] = err.Error()
+		if errors.Is(err, context.DeadlineExceeded) {
+			response["status"] = "timeout"
+		}
+		response["summary"] = fmt.Sprintf("%s inspection %s: %s", mode, response["status"], err)
+		return response
+	}
+	status := getStringFromMap(data, "status")
+	if data["success"] != true || data["gated"] == true || status == "error" || status == "timeout" {
+		for key, value := range data {
+			response[key] = value
+		}
+		response["success"], response["status"] = false, "error"
+		if data["gated"] == true {
+			response["status"] = "gated"
+		} else if status == "timeout" || status == "error" {
+			response["status"] = status
+		}
+		reason := getStringFromMap(data, "error")
+		if reason == "" {
+			reason = "inspection did not report success"
+			response["error"] = reason
+		}
+		response["summary"] = fmt.Sprintf("%s inspection %s: %s", mode, response["status"], reason)
+		response["data"] = data
+		return response
+	}
+	response["success"], response["status"] = true, "ok"
+	response["truncated"] = data["truncated"] == true
+	response["data"] = data
+	if _, structured := data["capture_complete"]; structured {
+		if data["complete"] != true {
+			response["status"] = "partial"
+		}
+		response["summary"] = fmt.Sprintf("%s inspection: %v captured, %v returned; %s", mode, data["captured"], data["returned"], response["status"])
+		return response
+	}
+	response["summary"] = "DOM snapshot captured"
+	if mode == "react" {
+		response["summary"] = "React extraction completed"
+		if count, measured := data["facts"]; measured {
+			response["summary"] = fmt.Sprintf("React extraction: %v fact(s)", count)
+		}
 	}
 	return response
 }
@@ -492,83 +541,35 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 		}
 		return response, nil
 
-	case "react":
+	case "react", "dom_snapshot":
 		if sessionID == "" {
-			return map[string]interface{}{"success": false, "error": "session_id is required for react mode"}, nil
+			return deepObservationResponse(mode, view, nil, fmt.Errorf("session_id is required for %s mode", mode)), nil
 		}
-		delegate := &ReifyReactTool{sessions: t.sessions, engine: t.engine}
-		res, err := delegate.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-		})
-		if err != nil {
-			return nil, err
+		delegateArgs := map[string]interface{}{
+			"session_id":         sessionID,
+			"gate_reason":        getStringArg(args, "gate_reason"),
+			"approved_by_handle": getStringArg(args, "approved_by_handle"),
 		}
-		resMap := asMap(res)
-		handles := []string{"observe:" + sessionID + ":react"}
-		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
-		response := withIntent(map[string]interface{}{
-			"success":          true,
-			"status":           "ok",
-			"mode":             mode,
-			"view":             view,
-			"evidence_handles": handles,
-			"truncated":        false,
-		}, hasIntent, intent, intentApplied)
-		switch view {
-		case "summary":
-			componentCount := asInt(resMap["component_count"])
-			response["summary"] = fmt.Sprintf("React tree: %d component(s)", componentCount)
-			response["data"] = map[string]interface{}{
-				"component_count": componentCount,
-				"success":         resMap["success"],
+		for _, key := range []string{"root_selector", "root_ref", "max_nodes", "max_depth", "max_items", "max_snapshot_bytes", "visible_only", "emit_facts", "view"} {
+			if value, exists := args[key]; exists {
+				delegateArgs[key] = value
 			}
-		case "compact":
-			componentCount := asInt(resMap["component_count"])
-			response["summary"] = fmt.Sprintf("React tree: %d component(s)", componentCount)
-			response["data"] = resMap
-		default:
-			response["data"] = resMap
 		}
-		return response, nil
 
-	case "dom_snapshot":
-		if sessionID == "" {
-			return map[string]interface{}{"success": false, "error": "session_id is required for dom_snapshot mode"}, nil
+		var res interface{}
+		var err error
+		if mode == "react" {
+			res, err = (&ReifyReactTool{sessions: t.sessions, engine: t.engine}).Execute(ctx, delegateArgs)
+		} else {
+			res, err = (&SnapshotDOMTool{sessions: t.sessions, engine: t.engine}).Execute(ctx, delegateArgs)
 		}
-		delegate := &SnapshotDOMTool{sessions: t.sessions, engine: t.engine}
-		res, err := delegate.Execute(ctx, map[string]interface{}{
-			"session_id": sessionID,
-		})
-		if err != nil {
-			return nil, err
+		response := deepObservationResponse(mode, view, asMap(res), err)
+		if response["success"] == true {
+			handles := []string{"observe:" + sessionID + ":" + mode}
+			emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
+			response["evidence_handles"] = handles
 		}
-		resMap := asMap(res)
-		handles := []string{"observe:" + sessionID + ":dom_snapshot"}
-		emitDisclosureFacts(ctx, t.engine, sessionID, handles, "observe")
-		response := withIntent(map[string]interface{}{
-			"success":          true,
-			"status":           "ok",
-			"mode":             mode,
-			"view":             view,
-			"evidence_handles": handles,
-			"truncated":        false,
-		}, hasIntent, intent, intentApplied)
-		switch view {
-		case "summary":
-			nodeCount := asInt(resMap["node_count"])
-			response["summary"] = fmt.Sprintf("DOM snapshot: %d node(s)", nodeCount)
-			response["data"] = map[string]interface{}{
-				"node_count": nodeCount,
-				"success":    resMap["success"],
-			}
-		case "compact":
-			nodeCount := asInt(resMap["node_count"])
-			response["summary"] = fmt.Sprintf("DOM snapshot: %d node(s)", nodeCount)
-			response["data"] = resMap
-		default:
-			response["data"] = resMap
-		}
-		return response, nil
+		return withIntent(response, hasIntent, intent, intentApplied), nil
 	}
 
 	// Require session_id for original modes

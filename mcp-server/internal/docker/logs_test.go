@@ -1,26 +1,26 @@
 package docker
 
 import (
+	"browsernerd-mcp-server/internal/logs"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestParseLogs(t *testing.T) {
-	client := NewClient([]string{"test-container"}, 30*time.Second, "")
 
 	tests := []struct {
 		name          string
 		input         string
 		expectedCount int
-		checkFirst    func(LogEntry) bool
+		checkFirst    func(logs.Entry) bool
 	}{
 		{
 			name: "Docker timestamp with Loguru format",
 			input: `2025-11-26T04:15:44.461522993Z 2025-11-26 04:15:44.461 | INFO     | api.main:<module>:586 - [STARTUP] Request signature verification disabled
 2025-11-26T04:15:44.592412799Z 2025-11-26 04:15:44.591 | ERROR    | api.main:<module>:132 - Something went wrong`,
 			expectedCount: 2,
-			checkFirst: func(e LogEntry) bool {
+			checkFirst: func(e logs.Entry) bool {
 				return e.Level == "INFO" && strings.Contains(e.Message, "STARTUP")
 			},
 		},
@@ -28,7 +28,7 @@ func TestParseLogs(t *testing.T) {
 			name:          "Simple tagged format",
 			input:         `2025-11-26T04:15:44.461522993Z [STARTUP] GraphRAG router added`,
 			expectedCount: 1,
-			checkFirst: func(e LogEntry) bool {
+			checkFirst: func(e logs.Entry) bool {
 				return e.Tag == "STARTUP" && e.Message == "GraphRAG router added"
 			},
 		},
@@ -36,7 +36,7 @@ func TestParseLogs(t *testing.T) {
 			name:          "Python level format",
 			input:         `2025-11-26T04:15:44.461522993Z ERROR: Database connection failed`,
 			expectedCount: 1,
-			checkFirst: func(e LogEntry) bool {
+			checkFirst: func(e logs.Entry) bool {
 				return e.Level == "ERROR" && e.Message == "Database connection failed"
 			},
 		},
@@ -46,8 +46,8 @@ func TestParseLogs(t *testing.T) {
 2025-11-26T04:15:44.461522993Z   File "/app/main.py", line 42, in handler
 2025-11-26T04:15:44.461522993Z     result = process(data)
 2025-11-26T04:15:44.461522993Z KeyError: 'tenant_id'`,
-			expectedCount: 3, // Traceback start, continuation lines, and KeyError
-			checkFirst: func(e LogEntry) bool {
+			expectedCount: 1, // One complete traceback retains its timestamp and exception.
+			checkFirst: func(e logs.Entry) bool {
 				// First entry is the traceback with continuation
 				return e.Level == "ERROR" && e.Tag == "TRACEBACK"
 			},
@@ -56,7 +56,7 @@ func TestParseLogs(t *testing.T) {
 			name:          "Next.js error format",
 			input:         `2025-11-26T04:15:44.461522993Z - error TypeError: Cannot read property 'map' of undefined`,
 			expectedCount: 1,
-			checkFirst: func(e LogEntry) bool {
+			checkFirst: func(e logs.Entry) bool {
 				return e.Level == "ERROR" && e.Tag == "NEXTJS"
 			},
 		},
@@ -64,7 +64,7 @@ func TestParseLogs(t *testing.T) {
 			name:          "Next.js warn format",
 			input:         `2025-11-26T04:15:44.461522993Z - warn Fast Refresh had to perform a full reload`,
 			expectedCount: 1,
-			checkFirst: func(e LogEntry) bool {
+			checkFirst: func(e logs.Entry) bool {
 				return e.Level == "WARNING" && e.Tag == "NEXTJS"
 			},
 		},
@@ -72,7 +72,7 @@ func TestParseLogs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			entries := client.parseLogs("test-container", tt.input)
+			entries := logs.Parse("test-container", tt.input)
 
 			if len(entries) != tt.expectedCount {
 				t.Errorf("expected %d entries, got %d", tt.expectedCount, len(entries))
@@ -95,7 +95,7 @@ func TestParseLogs(t *testing.T) {
 func TestFilterErrors(t *testing.T) {
 	client := NewClient([]string{"test"}, 30*time.Second, "")
 
-	logs := []LogEntry{
+	entries := []logs.Entry{
 		{Level: "INFO", Message: "Starting up"},
 		{Level: "ERROR", Message: "Something broke"},
 		{Level: "WARNING", Message: "Watch out"},
@@ -103,7 +103,7 @@ func TestFilterErrors(t *testing.T) {
 		{Level: "CRITICAL", Message: "Fatal error"},
 	}
 
-	filtered := client.FilterErrors(logs)
+	filtered := client.FilterErrors(entries)
 
 	if len(filtered) != 3 {
 		t.Errorf("expected 3 error/warning entries, got %d", len(filtered))
@@ -123,14 +123,14 @@ func TestFilterErrors(t *testing.T) {
 func TestAnalyzeHealth(t *testing.T) {
 	client := NewClient([]string{"backend", "frontend"}, 30*time.Second, "")
 
-	logs := []LogEntry{
-		{Container: "backend", Level: "ERROR", Message: "Error 1"},
-		{Container: "backend", Level: "ERROR", Message: "Error 2"},
-		{Container: "backend", Level: "WARNING", Message: "Warning 1"},
-		{Container: "frontend", Level: "INFO", Message: "All good"},
+	entries := []logs.Entry{
+		{Source: "backend", Level: "ERROR", Message: "Error 1"},
+		{Source: "backend", Level: "ERROR", Message: "Error 2"},
+		{Source: "backend", Level: "WARNING", Message: "Warning 1"},
+		{Source: "frontend", Level: "INFO", Message: "All good"},
 	}
 
-	health := client.AnalyzeHealth(logs)
+	health := client.AnalyzeHealth(entries)
 
 	if health["backend"].Status != "degraded" {
 		t.Errorf("backend should be degraded with 2 errors, got %s", health["backend"].Status)
@@ -149,16 +149,16 @@ func TestAnalyzeHealthUnhealthy(t *testing.T) {
 	client := NewClient([]string{"backend"}, 30*time.Second, "")
 
 	// Create 6 errors to trigger unhealthy status (threshold is >5)
-	logs := []LogEntry{
-		{Container: "backend", Level: "ERROR", Message: "Error 1"},
-		{Container: "backend", Level: "ERROR", Message: "Error 2"},
-		{Container: "backend", Level: "ERROR", Message: "Error 3"},
-		{Container: "backend", Level: "ERROR", Message: "Error 4"},
-		{Container: "backend", Level: "ERROR", Message: "Error 5"},
-		{Container: "backend", Level: "ERROR", Message: "Error 6"},
+	entries := []logs.Entry{
+		{Source: "backend", Level: "ERROR", Message: "Error 1"},
+		{Source: "backend", Level: "ERROR", Message: "Error 2"},
+		{Source: "backend", Level: "ERROR", Message: "Error 3"},
+		{Source: "backend", Level: "ERROR", Message: "Error 4"},
+		{Source: "backend", Level: "ERROR", Message: "Error 5"},
+		{Source: "backend", Level: "ERROR", Message: "Error 6"},
 	}
 
-	health := client.AnalyzeHealth(logs)
+	health := client.AnalyzeHealth(entries)
 
 	if health["backend"].Status != "unhealthy" {
 		t.Errorf("backend should be unhealthy with 6 errors, got %s", health["backend"].Status)
@@ -173,11 +173,11 @@ func TestAnalyzeHealthCritical(t *testing.T) {
 	client := NewClient([]string{"backend"}, 30*time.Second, "")
 
 	// CRITICAL level should count as error
-	logs := []LogEntry{
-		{Container: "backend", Level: "CRITICAL", Message: "Critical error"},
+	entries := []logs.Entry{
+		{Source: "backend", Level: "CRITICAL", Message: "Critical error"},
 	}
 
-	health := client.AnalyzeHealth(logs)
+	health := client.AnalyzeHealth(entries)
 
 	if health["backend"].ErrorCount != 1 {
 		t.Errorf("CRITICAL should count as error, got count %d", health["backend"].ErrorCount)
@@ -188,22 +188,30 @@ func TestAnalyzeHealthManyWarnings(t *testing.T) {
 	client := NewClient([]string{"backend"}, 30*time.Second, "")
 
 	// 11 warnings should trigger degraded status
-	logs := []LogEntry{}
+	entries := []logs.Entry{}
 	for i := 0; i < 11; i++ {
-		logs = append(logs, LogEntry{Container: "backend", Level: "WARNING", Message: "Warning"})
+		entries = append(entries, logs.Entry{Source: "backend", Level: "WARNING", Message: "Warning"})
 	}
 
-	health := client.AnalyzeHealth(logs)
+	health := client.AnalyzeHealth(entries)
 
 	if health["backend"].Status != "degraded" {
 		t.Errorf("backend should be degraded with 11 warnings, got %s", health["backend"].Status)
 	}
 }
 
+func TestAnalyzeHealthMissingEvidenceIsUnassessed(t *testing.T) {
+	client := NewClient([]string{"worker", "unreachable"}, time.Minute, "")
+	health := client.AnalyzeHealth([]logs.Entry{{Source: "worker", Level: "INFO", Message: "observed"}})
+	if health["unreachable"].Status != "unassessed" || health["worker"].Status != "healthy" {
+		t.Fatalf("absence cannot establish container health: %+v", health)
+	}
+}
+
 func TestFilterByLevel(t *testing.T) {
 	client := NewClient([]string{"test"}, 30*time.Second, "")
 
-	logs := []LogEntry{
+	entries := []logs.Entry{
 		{Level: "INFO", Message: "Info message"},
 		{Level: "ERROR", Message: "Error message 1"},
 		{Level: "ERROR", Message: "Error message 2"},
@@ -212,19 +220,19 @@ func TestFilterByLevel(t *testing.T) {
 	}
 
 	// Test filtering by ERROR
-	errorLogs := client.FilterByLevel(logs, "ERROR")
+	errorLogs := client.FilterByLevel(entries, "ERROR")
 	if len(errorLogs) != 2 {
 		t.Errorf("expected 2 ERROR entries, got %d", len(errorLogs))
 	}
 
 	// Test filtering by INFO
-	infoLogs := client.FilterByLevel(logs, "INFO")
+	infoLogs := client.FilterByLevel(entries, "INFO")
 	if len(infoLogs) != 1 {
 		t.Errorf("expected 1 INFO entry, got %d", len(infoLogs))
 	}
 
 	// Test filtering by non-existent level
-	criticalLogs := client.FilterByLevel(logs, "CRITICAL")
+	criticalLogs := client.FilterByLevel(entries, "CRITICAL")
 	if len(criticalLogs) != 0 {
 		t.Errorf("expected 0 CRITICAL entries, got %d", len(criticalLogs))
 	}
@@ -233,34 +241,33 @@ func TestFilterByLevel(t *testing.T) {
 func TestFilterByContainer(t *testing.T) {
 	client := NewClient([]string{"backend", "frontend"}, 30*time.Second, "")
 
-	logs := []LogEntry{
-		{Container: "backend", Level: "INFO", Message: "Backend message 1"},
-		{Container: "backend", Level: "ERROR", Message: "Backend error"},
-		{Container: "frontend", Level: "INFO", Message: "Frontend message"},
-		{Container: "worker", Level: "WARNING", Message: "Worker warning"},
+	entries := []logs.Entry{
+		{Source: "backend", Level: "INFO", Message: "Backend message 1"},
+		{Source: "backend", Level: "ERROR", Message: "Backend error"},
+		{Source: "frontend", Level: "INFO", Message: "Frontend message"},
+		{Source: "worker", Level: "WARNING", Message: "Worker warning"},
 	}
 
 	// Test filtering by backend
-	backendLogs := client.FilterByContainer(logs, "backend")
+	backendLogs := client.FilterByContainer(entries, "backend")
 	if len(backendLogs) != 2 {
 		t.Errorf("expected 2 backend entries, got %d", len(backendLogs))
 	}
 
 	// Test filtering by frontend
-	frontendLogs := client.FilterByContainer(logs, "frontend")
+	frontendLogs := client.FilterByContainer(entries, "frontend")
 	if len(frontendLogs) != 1 {
 		t.Errorf("expected 1 frontend entry, got %d", len(frontendLogs))
 	}
 
 	// Test filtering by non-existent container
-	dbLogs := client.FilterByContainer(logs, "database")
+	dbLogs := client.FilterByContainer(entries, "database")
 	if len(dbLogs) != 0 {
 		t.Errorf("expected 0 database entries, got %d", len(dbLogs))
 	}
 }
 
 func TestInferLevelFromMessage(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	tests := []struct {
 		name          string
@@ -306,7 +313,7 @@ func TestInferLevelFromMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse a log line to trigger inferLevelFromMessage
-			entries := client.parseLogs("test", tt.input)
+			entries := logs.Parse("test", tt.input)
 			if len(entries) != 1 {
 				t.Fatalf("expected 1 entry, got %d", len(entries))
 			}
@@ -318,7 +325,6 @@ func TestInferLevelFromMessage(t *testing.T) {
 }
 
 func TestParseLogsTracebackContinuation(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	// Test traceback with File continuation - each line needs Docker timestamp
 	input := `2025-11-26T04:15:44.461522993Z Traceback (most recent call last):
@@ -328,7 +334,7 @@ func TestParseLogsTracebackContinuation(t *testing.T) {
 2025-11-26T04:15:44.461522993Z     return data["key"]
 2025-11-26T04:15:44.461522993Z KeyError: 'key'`
 
-	entries := client.parseLogs("test", input)
+	entries := logs.Parse("test", input)
 
 	// Should capture a traceback entry
 	var foundTraceback bool
@@ -343,7 +349,6 @@ func TestParseLogsTracebackContinuation(t *testing.T) {
 }
 
 func TestParseLogsTracebackNoException(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	// Test traceback that ends without a standard exception line
 	input := `Traceback (most recent call last):
@@ -351,7 +356,7 @@ func TestParseLogsTracebackNoException(t *testing.T) {
     result = process(data)
 Some other line that doesn't match`
 
-	entries := client.parseLogs("test", input)
+	entries := logs.Parse("test", input)
 
 	// Should still capture the traceback even without standard exception
 	var foundTraceback bool
@@ -366,13 +371,12 @@ Some other line that doesn't match`
 }
 
 func TestParseLogsTracebackAtEnd(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	// Test traceback at end of output (remaining traceback handling)
 	input := `Traceback (most recent call last):
   File "/app/main.py", line 42, in handler`
 
-	entries := client.parseLogs("test", input)
+	entries := logs.Parse("test", input)
 
 	// Should emit the remaining traceback
 	if len(entries) == 0 {
@@ -381,25 +385,22 @@ func TestParseLogsTracebackAtEnd(t *testing.T) {
 }
 
 func TestParseLogsEmptyInput(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
-	entries := client.parseLogs("test", "")
+	entries := logs.Parse("test", "")
 	if len(entries) != 0 {
 		t.Errorf("expected 0 entries for empty input, got %d", len(entries))
 	}
 }
 
 func TestParseLogsWhitespaceOnly(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
-	entries := client.parseLogs("test", "   \n\t\n   ")
+	entries := logs.Parse("test", "   \n\t\n   ")
 	if len(entries) != 0 {
 		t.Errorf("expected 0 entries for whitespace-only input, got %d", len(entries))
 	}
 }
 
 func TestParseLogsNextjsEvent(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	tests := []struct {
 		input         string
@@ -412,7 +413,7 @@ func TestParseLogsNextjsEvent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			entries := client.parseLogs("test", tt.input)
+			entries := logs.Parse("test", tt.input)
 			if len(entries) != 1 {
 				t.Fatalf("expected 1 entry, got %d", len(entries))
 			}
@@ -427,7 +428,6 @@ func TestParseLogsNextjsEvent(t *testing.T) {
 }
 
 func TestParseLogsBracketedTags(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	tests := []struct {
 		input         string
@@ -446,7 +446,7 @@ func TestParseLogsBracketedTags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			entries := client.parseLogs("test", tt.input)
+			entries := logs.Parse("test", tt.input)
 			if len(entries) != 1 {
 				t.Fatalf("expected 1 entry, got %d", len(entries))
 			}
@@ -482,12 +482,11 @@ func TestNewClient(t *testing.T) {
 }
 
 func TestParseLogsAlternateTimestampFormat(t *testing.T) {
-	client := NewClient([]string{"test"}, 30*time.Second, "")
 
 	// Test alternate timestamp format without nanoseconds
 	input := "2025-11-26T04:15:44Z [STARTUP] Server started"
 
-	entries := client.parseLogs("test", input)
+	entries := logs.Parse("test", input)
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}

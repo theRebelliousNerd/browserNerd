@@ -11,7 +11,7 @@ import (
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/buildinfo"
 	"browsernerd-mcp-server/internal/config"
-	"browsernerd-mcp-server/internal/docker"
+	"browsernerd-mcp-server/internal/logs"
 	"browsernerd-mcp-server/internal/mangle"
 )
 
@@ -26,29 +26,49 @@ type DoctorDeps struct {
 	Config        config.Config
 	Sessions      *browser.SessionManager
 	Engine        *mangle.Engine
-	Docker        *docker.Client
+	Logs          logs.Source
 	Calls         *callTracker
 	ReapedOrphans int
 }
 
-// DoctorReport is BrowserNERD's self-diagnosis: which binary is running, the
-// configuration it resolved, and whether Chrome, the fact engine, Docker log
-// correlation and in-flight calls are healthy. It needs no session, so it
-// answers while every tab is wedged. problems lists what needs fixing, first.
-func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
-	problems := make([]string, 0)
-	report := map[string]interface{}{}
-
-	info := buildinfo.Read()
+func doctorBinaryIdentity(info buildinfo.Info) map[string]interface{} {
 	binary := map[string]interface{}{
-		"version": info.Version,
-		"built":   info.BuildTime.Format(time.RFC3339),
+		"version": info.Version, "built": nil, "pid": info.PID,
+		"identity_status": info.IdentityStatus, "identity_source": info.IdentitySource,
+	}
+	if !info.BuildTime.IsZero() {
+		binary["built"] = info.BuildTime.Format(time.RFC3339)
+	}
+	if info.SHA256 != "" {
+		binary["sha256"] = info.SHA256
+	}
+	if info.FileID != "" {
+		binary["file_id"] = info.FileID
+	}
+	if info.IdentityError != "" {
+		binary["identity_error"] = info.IdentityError
 	}
 	if info.Revision != "" {
 		binary["revision"] = info.Revision
 		if info.Modified {
 			binary["revision"] = info.Revision + "+dirty"
 		}
+	}
+	return binary
+}
+
+// DoctorReport is BrowserNERD's self-diagnosis: which binary is running, the
+// configuration it resolved, and whether Chrome, the fact engine, server log
+// sources and in-flight calls are healthy. It needs no session, so it
+// answers while every tab is wedged. problems lists what needs fixing, first.
+func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
+	problems := make([]string, 0)
+	report := map[string]interface{}{}
+
+	info := buildinfo.Read()
+	binary := doctorBinaryIdentity(info)
+	if info.IdentityStatus != "verified" {
+		problems = append(problems, "running binary identity unavailable: "+info.IdentityError)
 	}
 	if stale, at := buildinfo.StaleSource(buildinfo.SourceRootForBinary()); stale != "" {
 		binary["stale"] = fmt.Sprintf("%s changed %s after this binary was built", filepath.Base(stale), at.Sub(info.BuildTime).Round(time.Second))
@@ -114,14 +134,20 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 	}
 	report["credentials"] = map[string]interface{}{"set": set, "unset": unset}
 
+	displayBackend := config.DisplayBackend()
 	configInfo := map[string]interface{}{
 		"chrome":           doctorChrome(cfg.Browser),
 		"headless":         cfg.Browser.IsHeadless(),
+		"isolated_display": cfg.Browser.IsolatedDisplay,
+		"display_backend":  displayBackend,
 		"progressive_only": cfg.MCP.IsProgressiveOnly(),
 		"tool_timeout":     cfg.MCP.GetToolTimeout().String(),
 		"dialog_policy":    cfg.Browser.GetDialogPolicy(),
 		"fact_buffer":      cfg.Mangle.FactBufferLimit,
 		"docker":           cfg.Docker.Enabled,
+	}
+	if cfg.Browser.IsolatedDisplay && !displayBackend.Available {
+		problems = append(problems, "requested isolated headed display backend is unavailable; install Xvfb and Openbox on Linux; no desktop fallback is allowed")
 	}
 	if len(cfg.Overrides) > 0 {
 		configInfo["overrides"] = cfg.Overrides
@@ -146,11 +172,24 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 		if sReaped := d.Sessions.ReapedOrphans(); sReaped > reaped {
 			reaped = sReaped
 		}
+		connection := d.Sessions.ConnectionHealth(ctx)
 		browserInfo := map[string]interface{}{
-			"connected":      d.Sessions.IsConnected(),
-			"active":         active,
-			"detached":       detached,
-			"reaped_orphans": reaped,
+			"connected":         connection.Connected,
+			"connection_state":  connection.State,
+			"connection_reason": connection.Reason,
+			"isolated_display":  d.Config.Browser.IsolatedDisplay,
+			"active":            active,
+			"detached":          detached,
+			"reaped_orphans":    reaped,
+		}
+		if connection.BrowserID != "" {
+			browserInfo["default_browser_id"] = connection.BrowserID
+		}
+		if connection.Error != "" {
+			browserInfo["connection_error"] = connection.Error
+		}
+		if !connection.Connected && connection.State != "not_started" {
+			problems = append(problems, fmt.Sprintf("browser CDP transport %s (%s): %s", connection.State, connection.Reason, connection.Error))
 		}
 		if len(activeRows) > 0 {
 			browserInfo["sessions"] = activeRows
@@ -194,22 +233,36 @@ func DoctorReport(ctx context.Context, d DoctorDeps) map[string]interface{} {
 		report["engine"] = engineInfo
 	}
 
-	if cfg.Docker.Enabled {
-		dockerInfo := map[string]interface{}{"containers": cfg.Docker.Containers}
-		if d.Docker != nil {
-			probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			_, err := d.Docker.QueryLogs(probeCtx, time.Now())
-			cancel()
-			if err != nil {
-				dockerInfo["reachable"] = false
-				dockerInfo["error"] = clipCallText(err.Error(), 160)
-				problems = append(problems, "Docker logs unreachable: backend correlation is off until Docker is running")
-			} else {
-				dockerInfo["reachable"] = true
-			}
-		}
-		report["docker"] = dockerInfo
+	logSources := make([]map[string]interface{}, 0)
+	for _, file := range cfg.Logs.Files {
+		logSources = append(logSources, map[string]interface{}{"type": "file", "name": file.Name})
 	}
+	if cfg.Docker.Enabled {
+		for _, name := range cfg.Docker.Containers {
+			logSources = append(logSources, map[string]interface{}{"type": "docker", "name": name})
+		}
+	}
+	logInfo := map[string]interface{}{"configured": len(logSources) > 0, "sources": logSources}
+	if d.Logs != nil {
+		probeCtx, cancel := context.WithTimeout(ctx, backendQueryTimeout)
+		window := d.Logs.LogWindow()
+		if window <= 0 {
+			window = defaultBackendWindow
+		}
+		now := time.Now()
+		entries, err := d.Logs.LogsBetween(probeCtx, now.Add(-window), now)
+		cancel()
+		logInfo["available_entries"] = len(entries)
+		logInfo["complete"] = err == nil
+		if err != nil {
+			logInfo["error"] = backendLogError(err)
+			problems = append(problems, "server log evidence incomplete: "+backendLogError(err))
+		}
+	} else if len(logSources) > 0 {
+		logInfo["complete"] = false
+		problems = append(problems, "configured server log sources are not connected")
+	}
+	report["logs"] = logInfo
 
 	if d.Calls != nil {
 		calls := d.Calls.report()
@@ -237,7 +290,7 @@ func (s *Server) doctorReport(ctx context.Context) map[string]interface{} {
 		Config:   s.cfg,
 		Sessions: s.sessions,
 		Engine:   s.engine,
-		Docker:   s.dockerClient,
+		Logs:     s.logSource,
 		Calls:    s.calls,
 	})
 }

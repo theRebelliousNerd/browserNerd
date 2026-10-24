@@ -1,5 +1,7 @@
 // Command smoke verifies the BrowserNERD stdio MCP surface with the official
 // Go client. Product tests themselves are authored and run through browser-test.
+// The native-logs mode uses an isolated headless browser and local application
+// to verify native file correlation, doctor discovery, and flight export.
 package main
 
 import (
@@ -30,7 +32,7 @@ type options struct {
 
 func main() {
 	var opts options
-	flag.StringVar(&opts.mode, "mode", "smoke", "verification mode: list, smoke, or probe (drive testdata/probe and report each call's token cost)")
+	flag.StringVar(&opts.mode, "mode", "smoke", "verification mode: list, smoke, probe (token-cost tour), or native-logs (isolated native log correlation)")
 	flag.StringVar(&opts.serverPath, "server", defaultServerPath(), "BrowserNERD server binary")
 	flag.StringVar(&opts.configPath, "config", "config.yaml", "BrowserNERD configuration")
 	flag.StringVar(&opts.url, "url", "https://example.com/", "URL for smoke mode")
@@ -45,7 +47,23 @@ func main() {
 	}
 }
 
-func run(opts options) error {
+func run(opts options) (runErr error) {
+	var native *nativeLogFixture
+	if opts.mode == "native-logs" {
+		defer func() {
+			if runErr != nil {
+				_ = writeJSON(map[string]interface{}{"success": false, "mode": opts.mode, "error": runErr.Error()})
+			}
+		}()
+		var err error
+		native, err = prepareNativeLogFixture()
+		if err != nil {
+			return err
+		}
+		defer native.close()
+		opts.configPath = native.configPath
+		opts.workspace = ""
+	}
 	serverPath, err := filepath.Abs(opts.serverPath)
 	if err != nil {
 		return fmt.Errorf("resolve server path: %w", err)
@@ -61,6 +79,9 @@ func run(opts options) error {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
 	serverArgs := []string{"--config", configPath}
+	if native != nil {
+		serverArgs = append(serverArgs, "--no-workspace")
+	}
 	if opts.workspace != "" {
 		serverArgs = []string{"--workspace-dir", opts.workspace}
 	}
@@ -94,8 +115,10 @@ func run(opts options) error {
 		return smoke(ctx, client, opts.url)
 	case "probe":
 		return probe(ctx, client, opts.verbose)
+	case "native-logs":
+		return smokeNativeLogs(ctx, client, native)
 	default:
-		return fmt.Errorf("mode must be list, smoke or probe")
+		return fmt.Errorf("mode must be list, smoke, probe or native-logs")
 	}
 }
 

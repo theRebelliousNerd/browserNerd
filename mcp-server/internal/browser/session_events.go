@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/mangle"
-	"browsernerd-mcp-server/internal/security"
 
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
@@ -46,125 +45,15 @@ func stringifyConsoleArgs(args []*proto.RuntimeRemoteObject) string {
 	return strings.Join(parts, " ")
 }
 
-// captureDOMFacts snapshots a limited DOM view into facts to keep context light.
+// captureDOMFacts records bounded automatic page evidence; explicit inspection returns its own rows.
 func (m *SessionManager) captureDOMFacts(ctx context.Context, sessionID string, page *rod.Page) error {
-	if m.engine == nil {
-		return nil
-	}
-
-	const maxNodes = 200
-	script := fmt.Sprintf(`
-	() => {
-		const nodes = Array.from(document.querySelectorAll('*')).slice(0, %d);
-		return nodes.map((el, idx) => {
-			const attrs = {};
-			for (const { name, value } of Array.from(el.attributes || [])) {
-				attrs[name] = value;
-			}
-			const rect = el.getBoundingClientRect();
-			const style = window.getComputedStyle(el);
-			const isVisible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && rect.width > 0 && rect.height > 0;
-			
-			return {
-				id: el.id || ('node_' + idx),
-				tag: el.tagName,
-				text: (el.innerText || '').slice(0, 256),
-				parent: el.parentElement && (el.parentElement.id || el.parentElement.tagName || 'root'),
-				attrs,
-				layout: {
-					x: rect.x,
-					y: rect.y,
-					width: rect.width,
-					height: rect.height,
-					visible: isVisible
-				}
-			};
-		});
-	}
-	`, maxNodes)
-
-	res, err := page.Context(ctx).Evaluate(&rod.EvalOptions{
-		JS:           script,
-		ByValue:      true,
-		AwaitPromise: true,
-	})
-	if err != nil || res == nil {
-		return err
-	}
-
-	raw, err := res.Value.MarshalJSON()
-	if err != nil {
-		return err
-	}
-
-	var nodes []struct {
-		ID     string            `json:"id"`
-		Tag    string            `json:"tag"`
-		Text   string            `json:"text"`
-		Parent string            `json:"parent"`
-		Attrs  map[string]string `json:"attrs"`
-		Layout struct {
-			X       float64 `json:"x"`
-			Y       float64 `json:"y"`
-			Width   float64 `json:"width"`
-			Height  float64 `json:"height"`
-			Visible bool    `json:"visible"`
-		} `json:"layout"`
-	}
-	if err := json.Unmarshal(raw, &nodes); err != nil {
-		return err
-	}
-
-	now := time.Now()
-	facts := make([]mangle.Fact, 0, len(nodes)*3)
-	for _, n := range nodes {
-		facts = append(facts, mangle.Fact{
-			Predicate: "dom_node",
-			Args:      []interface{}{sessionID, n.ID, n.Tag, m.redactor.SanitizeString(n.Text), n.Parent},
-			Timestamp: now,
-		})
-		if n.Text != "" {
-			facts = append(facts, mangle.Fact{
-				Predicate: "dom_text",
-				Args:      []interface{}{sessionID, n.ID, m.redactor.SanitizeString(n.Text)},
-				Timestamp: now,
-			})
-		}
-		sensitiveInput := sensitiveDOMInput(n.Attrs)
-		for k, v := range n.Attrs {
-			if sensitiveInput && strings.EqualFold(k, "value") {
-				v = security.Redacted
-			} else {
-				v = m.redactor.RedactHeader(k, v)
-			}
-			facts = append(facts, mangle.Fact{
-				Predicate: "dom_attr",
-				Args:      []interface{}{sessionID, n.ID, k, v},
-				Timestamp: now,
-			})
-		}
-		// Add layout fact
-		facts = append(facts, mangle.Fact{
-			Predicate: "dom_layout",
-			Args:      []interface{}{sessionID, n.ID, n.Layout.X, n.Layout.Y, n.Layout.Width, n.Layout.Height, fmt.Sprintf("%v", n.Layout.Visible)},
-			Timestamp: now,
-		})
-	}
-	facts = append(facts, mangle.Fact{
-		Predicate: "dom_updated",
-		Args:      []interface{}{sessionID, now.UnixMilli()},
-		Timestamp: now,
-	})
-	return m.engine.AddFacts(ctx, facts)
+	_, err := m.captureStructuredPage(ctx, sessionID, page, nil, SnapshotOptions{EmitFacts: true}, false)
+	return err
 }
 
-// SnapshotDOM triggers a one-off DOM capture for the given session.
-func (m *SessionManager) SnapshotDOM(ctx context.Context, sessionID string) error {
-	page, ok := m.Page(sessionID)
-	if !ok {
-		return fmt.Errorf("unknown session: %s", sessionID)
-	}
-	return m.captureDOMFacts(ctx, sessionID, page)
+// SnapshotDOM returns bounded direct DOM evidence independently from fact retention.
+func (m *SessionManager) SnapshotDOM(ctx context.Context, sessionID string, root *rod.Element, options SnapshotOptions) (*StructuredSnapshot, error) {
+	return m.captureStructured(ctx, sessionID, root, options, false)
 }
 
 func snapshotStorage(page *rod.Page, store string) string {

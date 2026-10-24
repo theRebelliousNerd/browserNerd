@@ -19,7 +19,6 @@ import (
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/buildinfo"
 	"browsernerd-mcp-server/internal/config"
-	"browsernerd-mcp-server/internal/docker"
 	"browsernerd-mcp-server/internal/mangle"
 	mcpserver "browsernerd-mcp-server/internal/mcp"
 	"browsernerd-mcp-server/internal/security"
@@ -72,7 +71,7 @@ func main() {
 	trustWorkspace := flag.Bool("trust-workspace-config", false, "Allow workspace config to launch/attach browsers or access paths outside the workspace")
 	initWorkspace := flag.Bool("init-workspace", false, "Create .browsernerd/ template in current directory and exit")
 	showVersion := flag.Bool("version", false, "Print the binary's version, revision and build time as JSON and exit")
-	runDoctor := flag.Bool("doctor", false, "Resolve the configuration, check paths, schema, environment and Docker, print a JSON report and exit (nonzero when problems are found)")
+	runDoctor := flag.Bool("doctor", false, "Resolve the configuration, check paths, schema, environment and server log sources, print a JSON report and exit (nonzero when problems are found)")
 	flag.Parse()
 
 	if *showVersion {
@@ -215,19 +214,14 @@ func main() {
 // own env block, so run it with the same variables to mirror the server.
 func doctor(ctx context.Context, cfg config.Config, wsDir string) int {
 	deps := mcpserver.DoctorDeps{Config: cfg}
-	sm := browser.NewSessionManager(cfg.Browser, nil)
-	if reaped, err := sm.ReapOrphans(ctx); err == nil {
-		deps.ReapedOrphans = reaped
-	}
 	schemaErr := ""
 	if engine, err := mangle.NewEngine(cfg.Mangle); err != nil {
 		schemaErr = err.Error()
 	} else {
 		deps.Engine = engine
 	}
-	if cfg.Docker.Enabled {
-		deps.Docker = docker.NewClient(cfg.Docker.Containers, cfg.Docker.GetLogWindow(), cfg.Docker.Host)
-	}
+	deps.Logs, _ = mcpserver.NewLogSources(cfg)
+
 	report := mcpserver.DoctorReport(ctx, deps)
 	if wsDir != "" {
 		report["workspace"] = wsDir
@@ -239,7 +233,7 @@ func doctor(ctx context.Context, cfg config.Config, wsDir string) int {
 			report["problems"] = append(problems, "Mangle schema does not load: "+schemaErr)
 		}
 	}
-	printJSON(report)
+	printJSON(security.NewRedactor(cfg.Security.ExtraSensitiveKeys).Sanitize(report))
 	if report["status"] != "ok" {
 		return 1
 	}

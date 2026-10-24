@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Scrollable option geometry</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; }
+  form { margin: 160px 0 0 300px; }
+  #trigger { width: 260px; height: 40px; }
+  #popup { position: fixed; top: 210px; left: 300px; width: 260px; height: 264px; border: 1px solid; background: white; display: flex; flex-direction: column; }
+  #popup[hidden] { display: none; }
+  #up { height: 24px; flex-shrink: 0; text-align: center; }
+  #viewport { overflow: auto; flex: 1; }
+  [role=option] { box-sizing: border-box; height: 32px; padding: 6px 20px; }
+  [role=option]:hover { background: #ddeeff; }
+</style>
+<form>
+  <button id="trigger" type="button" role="combobox" aria-label="Pick a choice" aria-controls="popup" aria-expanded="false">Choice 08</button>
+  <select id="native" name="choice" hidden></select>
+  <output id="selected">Choice 08</output>
+</form>
+<div id="popup" role="listbox" hidden>
+  <div id="up" aria-hidden="true">Scroll up</div>
+  <div id="viewport"></div>
+</div>
+<script>
+  const trigger = document.getElementById('trigger');
+  const popup = document.getElementById('popup');
+  const viewport = document.getElementById('viewport');
+  const up = document.getElementById('up');
+  const native = document.getElementById('native');
+  window.geometryEvents = [];
+  window.optionPointerDowns = 0;
+  for (let i = 0; i < 30; i++) {
+    const label = `Choice ${String(i).padStart(2, '0')}`;
+    const option = document.createElement('div');
+    option.id = `choice-${String(i).padStart(2, '0')}`;
+    option.setAttribute('role', 'option');
+    option.setAttribute('data-value', label);
+    option.textContent = label;
+    option.addEventListener('pointerup', event => {
+      window.geometryEvents.push({type: 'selected', id: option.id, trusted: event.isTrusted});
+      trigger.textContent = native.value = document.getElementById('selected').textContent = label;
+      trigger.setAttribute('aria-expanded', 'false');
+      popup.hidden = true;
+    });
+    viewport.appendChild(option);
+    native.add(new Option(label, label));
+  }
+  native.value = 'Choice 08';
+  trigger.addEventListener('click', () => {
+    popup.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    up.style.display = window.stationaryControl ? 'none' : 'block';
+    viewport.scrollTop = 256;
+  });
+  viewport.addEventListener('scroll', () => {
+    if (viewport.scrollTop === 0 && !window.stationaryControl) {
+      up.style.display = 'none';
+      window.geometryEvents.push({type: 'affordance_removed', y: document.getElementById('choice-00').getBoundingClientRect().y});
+    }
+  });
+  viewport.addEventListener('pointermove', () => {
+    if (window.detachOnHover) {
+      document.getElementById('choice-00')?.remove();
+      window.geometryEvents.push({type: 'target_detached'});
+    }
+    if (window.unstableOnHover) {
+      popup.style.top = popup.style.top === '178px' ? '210px' : '178px';
+      window.geometryEvents.push({type: 'target_moved_again'});
+    }
+    if (window.moveOnHover && !window.hoverMoved) {
+      window.hoverMoved = true;
+      popup.style.top = '178px';
+      window.geometryEvents.push({type: 'hover_repositioned'});
+    }
+  });
+  viewport.addEventListener('pointerdown', () => { window.optionPointerDowns++; });
+</script>
+</html>

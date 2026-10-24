@@ -17,6 +17,7 @@ import (
 	"browsernerd-mcp-server/internal/buildinfo"
 	"browsernerd-mcp-server/internal/config"
 	"browsernerd-mcp-server/internal/docker"
+	"browsernerd-mcp-server/internal/logs"
 	"browsernerd-mcp-server/internal/mangle"
 	"browsernerd-mcp-server/internal/recorder"
 	"browsernerd-mcp-server/internal/security"
@@ -31,6 +32,7 @@ type Server struct {
 	sessions     *browser.SessionManager
 	engine       *mangle.Engine
 	dockerClient *docker.Client
+	logSource    logs.Source
 	recorder     *recorder.Recorder
 	redactor     *security.Redactor
 	pathPolicy   *security.PathPolicy
@@ -73,16 +75,7 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 		return nil, fmt.Errorf("initialize write path policy: %w", err)
 	}
 
-	// Initialize Docker client if enabled
-	var dockerClient *docker.Client
-	if cfg.Docker.Enabled {
-		dockerClient = docker.NewClient(
-			cfg.Docker.Containers,
-			cfg.Docker.GetLogWindow(),
-			cfg.Docker.Host,
-		)
-		log.Printf("Docker log integration enabled for containers: %v", cfg.Docker.Containers)
-	}
+	logSource, dockerClient := NewLogSources(cfg)
 
 	var flightRecorder *recorder.Recorder
 	if cfg.Recorder.Enabled {
@@ -106,6 +99,7 @@ func NewServer(cfg config.Config, sessions *browser.SessionManager, engine *mang
 		sessions:     sessions,
 		engine:       engine,
 		dockerClient: dockerClient,
+		logSource:    logSource,
 		recorder:     flightRecorder,
 		redactor:     redactor,
 		pathPolicy:   pathPolicy,
@@ -218,7 +212,7 @@ func (s *Server) registerAllTools() {
 		disableUnsafeJavaScript: disableUnsafeJavaScript,
 		pathPolicy:              s.pathPolicy,
 	})
-	s.registerTool(&BrowserReasonTool{engine: s.engine, sessions: s.sessions, dockerClient: s.dockerClient})
+	s.registerTool(&BrowserReasonTool{engine: s.engine, sessions: s.sessions, backendLogs: s.logSource})
 	s.registerTool(&BrowserAuditTool{sessions: s.sessions, engine: s.engine})
 	s.registerTool(&GetSpecsTool{engine: s.engine, specsCfg: s.cfg.Specs})
 	s.registerTool(&CheckSpecsTool{engine: s.engine, specsCfg: s.cfg.Specs})
@@ -231,12 +225,12 @@ func (s *Server) registerAllTools() {
 	})
 	s.registerTool(&BrowserMangleTool{
 		engine:           s.engine,
-		dockerClient:     s.dockerClient,
+		logSource:        s.logSource,
 		recorder:         s.recorder,
 		redactor:         s.redactor,
 		pathPolicy:       s.pathPolicy,
 		defaultTraceDir:  s.cfg.Recorder.TraceDir,
-		defaultLogWindow: s.cfg.Docker.GetLogWindow(),
+		defaultLogWindow: serverLogWindow(s.logSource),
 	})
 
 	// When progressive_only is false, also register all individual tools
@@ -271,7 +265,7 @@ func (s *Server) registerIndividualTools() {
 	s.registerTool(&AwaitConditionsTool{engine: s.engine})
 
 	// Diagnostic tools
-	s.registerTool(&GetConsoleErrorsTool{engine: s.engine, dockerClient: s.dockerClient})
+	s.registerTool(&GetConsoleErrorsTool{engine: s.engine, logSource: s.logSource, dockerClient: s.dockerClient, redactor: s.redactor})
 	s.registerTool(&GetToastNotificationsTool{engine: s.engine})
 
 	// Navigation tools - Token-efficient interaction
@@ -380,7 +374,7 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 				})
 			}
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{mcp.NewTextContent(fmt.Sprintf("tool %s failed: %v", tool.Name(), err))},
+				Content: []mcp.Content{mcp.NewTextContent(s.redactor.SanitizeString(fmt.Sprintf("tool %s failed: %v", tool.Name(), err)))},
 				IsError: true,
 			}, nil
 		}
@@ -440,4 +434,11 @@ func marshalToolPayload(toolName string, result interface{}) []byte {
 	}
 
 	return []byte(fmt.Sprintf(`{"success":false,"error":"tool %s failed to encode payload"}`, toolName))
+}
+
+func serverLogWindow(source logs.Source) time.Duration {
+	if source == nil {
+		return defaultBackendWindow
+	}
+	return source.LogWindow()
 }

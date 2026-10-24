@@ -213,7 +213,12 @@ func (t *FocusSessionTool) Execute(_ context.Context, args map[string]interface{
 	if err := t.sessions.FocusSession(sessionID); err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"success": true, "session_id": sessionID, "focused": true}, nil
+	result := map[string]interface{}{"success": true, "session_id": sessionID, "focused": true}
+	if session, ok := t.sessions.GetSession(sessionID); ok && session.IsolatedDisplay {
+		result["isolated_display"] = true
+		result["note"] = "Focused inside the private headed display; the user's desktop was not activated."
+	}
+	return result, nil
 }
 
 type ListBrowsersTool struct {
@@ -293,37 +298,17 @@ type ReifyReactTool struct {
 
 func (t *ReifyReactTool) Name() string { return "reify-react" }
 func (t *ReifyReactTool) Description() string {
-	return `Extract React component tree structure into Mangle facts for analysis.
-
-PROGRESSIVE DISCLOSURE GATE:
-This deep extraction tool is intentionally gated.
-Use one of:
-- gate_reason="explicit_user_intent" with approved_by_handle
-- gate_reason="low_confidence" after browser-reason
-- gate_reason="contradiction_detected" after browser-reason
-- gate_reason="no_matching_tool" after browser-reason
-- approved_by_handle from browser-reason evidence handles
-
-WHAT IT DOES:
-- Traverses React's internal Fiber tree
-- Emits facts about component hierarchy, props, and state
-- Enables logic-based reasoning about React app structure
-
-WHEN TO USE:
-- Debugging React component state
-- Understanding component relationships
-- Writing Mangle rules that depend on React structure
-- Verifying component props match expectations
-
-EMITTED FACTS:
-- react_component(SessionId, ComponentName, ParentRef)
-- react_prop(SessionId, ComponentRef, PropName, PropValue)
-- react_state(SessionId, ComponentRef, StateKey, StateValue)
-
-NOTE: Only works on React 16+ apps with accessible Fiber tree.`
+	return `Inspect a bounded React Fiber subtree directly, independently of Mangle retention.
+Root: one root_selector or an observed root_ref; omit for a bounded document prefix.
+Returns scalar props/state and function-presence type markers, never function source.
+Missing handlers are not hydration proof. Row/depth/byte limits remain explicit in every view.
+Deep inspection requires a recent same-session browser-reason handle, or an authorized
+low_confidence, contradiction_detected or no_matching_tool gate_reason.
+explicit_user_intent requires approved_by_handle. Optional emit_facts does not promise retention.`
 }
+
 func (t *ReifyReactTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+	return snapshotInputSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"session_id": map[string]interface{}{
@@ -341,7 +326,7 @@ func (t *ReifyReactTool) InputSchema() map[string]interface{} {
 			},
 		},
 		"required": []string{"session_id"},
-	}
+	})
 }
 func (t *ReifyReactTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
@@ -363,15 +348,7 @@ func (t *ReifyReactTool) Execute(ctx context.Context, args map[string]interface{
 		}, nil
 	}
 
-	facts, err := t.sessions.ReifyReact(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{
-		"success":    true,
-		"session_id": sessionID,
-		"facts":      len(facts),
-	}, nil
+	return executeStructuredInspection(ctx, t.sessions, sessionID, args, true)
 }
 
 type SnapshotDOMTool struct {
@@ -381,37 +358,17 @@ type SnapshotDOMTool struct {
 
 func (t *SnapshotDOMTool) Name() string { return "snapshot-dom" }
 func (t *SnapshotDOMTool) Description() string {
-	return `Capture current DOM structure as Mangle facts for logic-based analysis.
-
-PROGRESSIVE DISCLOSURE GATE:
-This deep extraction tool is intentionally gated.
-Use one of:
-- gate_reason="explicit_user_intent" with approved_by_handle
-- gate_reason="low_confidence" after browser-reason
-- gate_reason="contradiction_detected" after browser-reason
-- gate_reason="no_matching_tool" after browser-reason
-- approved_by_handle from browser-reason evidence handles
-
-WHEN TO USE:
-- Before writing Mangle rules that query DOM structure
-- Debugging layout/structure issues
-- Verifying DOM state after interactions
-- Building assertions about page structure
-
-EMITTED FACTS:
-- dom_node(SessionId, NodeRef, TagName, ParentRef)
-- dom_attr(SessionId, NodeRef, AttrName, AttrValue)
-- dom_text(SessionId, NodeRef, TextContent)
-
-PREFER get-interactive-elements for:
-- Finding clickable elements
-- Form automation
-- Navigation link discovery
-
-Use snapshot-dom when you need deep DOM structure analysis.`
+	return `Inspect a bounded DOM subtree directly, independently of Mangle retention.
+Root: one root_selector or an observed root_ref; omit for a bounded document prefix.
+Returns safe attributes, direct text, visibility, geometry and redacted control values.
+Row/depth/byte limits remain explicit in every view. Prefer interactive mode for actions.
+Deep inspection requires a recent same-session browser-reason handle, or an authorized
+low_confidence, contradiction_detected or no_matching_tool gate_reason.
+explicit_user_intent requires approved_by_handle. Optional emit_facts does not promise retention.`
 }
+
 func (t *SnapshotDOMTool) InputSchema() map[string]interface{} {
-	return map[string]interface{}{
+	return snapshotInputSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"session_id": map[string]interface{}{
@@ -429,7 +386,7 @@ func (t *SnapshotDOMTool) InputSchema() map[string]interface{} {
 			},
 		},
 		"required": []string{"session_id"},
-	}
+	})
 }
 func (t *SnapshotDOMTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
@@ -450,14 +407,7 @@ func (t *SnapshotDOMTool) Execute(ctx context.Context, args map[string]interface
 			"approved_by_handle": approvedHandle,
 		}, nil
 	}
-	if err := t.sessions.SnapshotDOM(ctx, sessionID); err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{
-		"success":    true,
-		"session_id": sessionID,
-		"status":     "captured",
-	}, nil
+	return executeStructuredInspection(ctx, t.sessions, sessionID, args, false)
 }
 
 // LaunchBrowserTool starts Chrome using the configured launch command.

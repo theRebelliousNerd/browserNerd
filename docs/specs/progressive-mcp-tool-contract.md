@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Progressive MCP Tool Contract
 created: 2026-07-23
-last_updated: 2026-09-30
+last_updated: 2026-10-23
 doc_type: interface-spec
 subsystem: browsernerd
 read_when: Changing tool registration, schemas, response views, or evidence handles
@@ -56,11 +56,70 @@ at `full`. When one follow-up is clearly next, the response names it as a
 ready call `{tool, args}` with a `reason` where one helps: `next` on
 browser-reason, `next_step` and `recommendations` on browser-observe.
 
+Every valid browser-reason response carries `scope` and `scope_since_ms`,
+including summary view. The label and each verdict state the effective
+navigation, action or session-history window; the timestamp records the
+actual lower bound, with `0` meaning unbounded retained history. These fields
+describe the evidence selection without changing topic defaults.
+
 A failure always carries a reason. Input that cannot mean what the caller
 intended - an unknown `browser-act` operation type or field, an unknown
 fixture or assertion key, an unknown `browser-reason` topic - is refused with
 an error naming what is accepted, and the closest match when there is one,
 instead of being ignored.
+
+The `react` and `dom_snapshot` observation modes advertise `gate_reason` and
+`approved_by_handle` and pass them to the focused extraction tools. Deep
+inspection requires recent, same-session browser-reason evidence: a matching
+authorized reason or disclosure handle; `explicit_user_intent` requires a
+handle. Missing, expired, or foreign-session evidence remains denied.
+Every view preserves a denied, failed, or timed-out extraction as
+`success: false`, with its reason and gate guidance. No inspection count or
+successful observation handle is manufactured on failure.
+
+Both modes and their focused tools accept one `root_selector` or `root_ref`
+(omit for a bounded document prefix), `max_nodes` (1..500, default 200),
+`max_depth` (1..50, default 12), `max_items` (1..200, default 20), and
+`max_snapshot_bytes` (1024..32768, default 8000). `visible_only` defaults to
+false for these modes. `emit_facts` optionally records captured rows; it
+defaults to false for explicit inspection. Root selectors must match exactly
+one element; refs use the existing session ref registry and resolver. Missing,
+ambiguous, stale, or conflicting roots are refused. No user JavaScript is
+accepted. Options are passed as JSON arguments to fixed internal scripts.
+
+The response returns structured `nodes` directly, independently of Mangle
+retention. Every view carries `scope`, traversal/budget metadata, `scanned`,
+`captured`, `returned`, `capture_complete`, `response_complete`, `complete`,
+`truncated` and named `incomplete_reasons`. Summary omits rows and names that
+response omission; compact and full obey the same explicit row/byte bounds.
+An incomplete successful capture has `status: partial` on the progressive
+receipt; `success: true` means the bounded inspection ran, not that it was complete.
+Traversal and field limits are explicit, including an inaccessible React tree.
+A default document prefix never claims to represent unvisited main content.
+Optional fact storage reports attempted/submitted evidence and retention as
+unknown; submission is not proof that a fact survived engine eviction.
+
+Browser/session lifecycle routing fields are exposed in the progressive
+provider schema rather than requiring a focused-tool surface. Compact action
+receipts preserve created browser/session IDs and isolation metadata. A
+create-first fixture may omit its initial session when its normalized
+sequence establishes one before any page operation; a test receipt and its
+assertions/diagnosis identify the actual final replay session. The assertion
+binding contract is in [token-efficient testing](token-efficient-testing.md).
+
+`browser-mangle` accepts `session_id` only for `read` and `export_flight`.
+Scoped `read` matches the first fact argument to that exact session before
+applying its recent-row limit; facts with no arguments or a different first
+argument are excluded. Unknown session IDs return no matching facts rather
+than falling back to global data. Its receipt identifies the requested session.
+Omitting the session keeps the explicitly global retained-engine read. A
+provided empty, whitespace-only or non-string session_id is InvalidParams;
+it cannot accidentally become a global read.
+A nonempty session_id on query, evaluate, temporal, waits, schema or writes
+is refused with InvalidParams before evaluation or mutation. Raw queries
+remain explicit Mangle queries; the fixture's reserved-S binding is not
+implicitly applied to raw browser-mangle queries. Browser context isolation
+does not partition the server's shared fact engine.
 
 Spec excerpts are attached to observe and act results only when the caller
 passes `include_specs: true`, because they would otherwise cost tokens on
@@ -69,8 +128,11 @@ every call.
 ## Token budgets
 
 Schema and description text is paid on every turn, so tool descriptions stay
-short and a field description names only what a caller would get wrong. The
-live probe tests drive `testdata/probe/index.html` in headless Chrome and pin
+short and a field description names only what a caller would get wrong.
+The `browser-observe` provider definition stays within 1,100 estimated tokens
+(description and JSON schema bytes divided by four), enforced by
+`TestObserveToolDefinitionBudget` without reducing its advertised capabilities.
+The live probe tests drive `testdata/probe/index.html` in headless Chrome and pin
 each default response's cost (`internal/mcp/observe_probe_live_test.go`,
 `reason_probe_live_test.go`, `act_live_test.go`):
 

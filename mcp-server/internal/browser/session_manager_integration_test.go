@@ -155,11 +155,11 @@ func TestIntegrationSessionManager(t *testing.T) {
 	})
 
 	t.Run("SnapshotDOM", func(t *testing.T) {
-		err := manager.SnapshotDOM(ctx, sessionID)
+		_, err := manager.SnapshotDOM(ctx, sessionID, nil, SnapshotOptions{})
 		if err != nil {
 			t.Fatalf("SnapshotDOM failed: %v", err)
 		}
-		// SnapshotDOM triggers an async DOM capture, doesn't return snapshot directly
+		// SnapshotDOM returns bounded direct evidence independently from the engine.
 	})
 
 	t.Run("ForkSession", func(t *testing.T) {
@@ -282,15 +282,13 @@ func TestIntegrationReifyReact(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	t.Run("ReifyReact extracts fiber tree", func(t *testing.T) {
-		facts, err := manager.ReifyReact(ctx, session.ID)
+		facts, err := manager.ReifyReact(ctx, session.ID, nil, SnapshotOptions{})
 		if err != nil {
-			// Manager has nil engine, ReifyReact will return error
-			t.Skipf("ReifyReact requires engine: %v", err)
+			t.Fatal(err)
 		}
 
-		// Check for React fiber facts
-		if len(facts) == 0 {
-			t.Log("Warning: No React components found - React may not have loaded")
+		if len(facts.Nodes) == 0 && (facts.CaptureComplete || facts.Capability != "unavailable") {
+			t.Fatalf("missing React evidence must be explicit: %+v", facts)
 		}
 	})
 }

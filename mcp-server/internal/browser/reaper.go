@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,28 +17,8 @@ type ProcessInfo struct {
 	CommandLine string `json:"CommandLine"`
 }
 
-// ProfileOwnerFile, written into the temporary profile of every Chrome this
-// server launches, holds the server's process id.
+// ProfileOwnerFile holds the qualified owner of a managed temporary profile.
 const ProfileOwnerFile = "browsernerd-owner"
-
-// markProfileOwner records this server as the owner of a launched profile.
-func markProfileOwner(dir string) error {
-	return os.WriteFile(filepath.Join(dir, ProfileOwnerFile), []byte(strconv.Itoa(os.Getpid())), 0o600)
-}
-
-// profileOwner returns the process id of the server that launched the Chrome
-// using dir, or 0 when the profile carries no BrowserNERD owner mark.
-func profileOwner(dir string) int {
-	raw, err := os.ReadFile(filepath.Join(dir, ProfileOwnerFile))
-	if err != nil {
-		return 0
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || pid <= 0 {
-		return 0
-	}
-	return pid
-}
 
 // ProcessQuerier abstracts process inspection and termination for cross-platform support and testing.
 type ProcessQuerier interface {

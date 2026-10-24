@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
-	"browsernerd-mcp-server/internal/docker"
+	"browsernerd-mcp-server/internal/logs"
 	"browsernerd-mcp-server/internal/mangle"
 )
 
@@ -17,11 +17,10 @@ import (
 // one-line verdict, the causal chain behind it, and one pointer to the next
 // call worth making.
 type BrowserReasonTool struct {
-	engine       *mangle.Engine
-	sessions     *browser.SessionManager // the tab whose response bodies network+body reads
-	dockerClient *docker.Client
-	backendLogs  backendLogSource
-	backend      backendCorrelator
+	engine      *mangle.Engine
+	sessions    *browser.SessionManager // the tab whose response bodies network+body reads
+	backendLogs logs.Source
+	backend     backendCorrelator
 }
 
 var reasonTopics = []string{"why_failed", "health", "network", "blocking_issue", "next_best_action", "what_changed_since"}
@@ -29,13 +28,13 @@ var reasonTopics = []string{"why_failed", "health", "network", "blocking_issue",
 func (t *BrowserReasonTool) Name() string { return "browser-reason" }
 func (t *BrowserReasonTool) Description() string {
 	return `Diagnose the page from what the browser recorded. Pick the topic by the question:
-  why_failed: what broke, or what did my click break -> verdict, the failed request (status, body), the console error/toast/alert it caused, backend log lines, other issues
+  why_failed: what broke, or what did my click break -> verdict, the failed request (status, body), the console error/toast/live-region error it caused, backend log lines, other issues
   health: is anything wrong -> scorecard (failed 5xx/4xx/network, console errors, storms, ws failures, dialogs, page load failures) and the top issue
   network: is something looping, which calls fail -> the page on screen's requests grouped by method+URL (data calls first, healthy chunks/fonts folded into assets), counts, statuses, storms, latest status of a failing group; earlier counts what came before the navigation (since_navigation=false includes it); expand=<url> lists that URL's calls; add body=true to see what the latest ones returned (JSON shape: items: array[0] means it answered empty)
   blocking_issue: why is the page empty or stuck -> load failure, dismissed dialog, overlay, login wall, failed data call
   next_best_action: what can I do here -> deduped action candidates
   what_changed_since: issues inside time_window_ms, newest first
-Scope: since_action=true (since your last click/input), since_navigation=true (current route), time_window_ms (default 300000). view: summary|compact(default)|full. next names the one call worth making next.`
+Scope: since_action=true (since your last click/input), since_navigation=true (current route), time_window_ms (default 300000). Results name the effective latest bound; window-only diagnoses include session history. view: summary|compact(default)|full. next names the one call worth making next.`
 }
 
 func (t *BrowserReasonTool) InputSchema() map[string]interface{} {
@@ -184,7 +183,7 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 		sinceMs:   effectiveSinceMs,
 		strict:    sinceNavigation || sinceAction || hasExplicitTimeWindow || topic == "what_changed_since",
 	}
-	label := reasonScopeLabel(sinceAction && actionSinceMs > 0, sinceNavigation && navigationSinceMs > 0, timeWindowMs)
+	label := reasonScopeLabel(effectiveSinceMs, actionSinceMs, navigationSinceMs, timeWindowMs)
 
 	ev := collectBrowserEvidence(ctx, t.engine, scope)
 	d := diagnose(ev)
@@ -193,7 +192,6 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	switch topic {
 	case "network":
 		response = renderNetwork(d, view, getStringArg(args, "expand"), maxItems, pageStartMs)
-		response["scope"] = label
 		if sinceNavigation && navigationSinceMs > windowSinceMs {
 			wide := collectBrowserEvidence(ctx, t.engine, reasonScope{sessionID: sessionID, sinceMs: windowSinceMs, strict: hasExplicitTimeWindow})
 			if earlier := trafficBefore(wide.calls, navigationSinceMs); earlier != nil {
@@ -216,6 +214,8 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	}
 	response["success"] = true
 	response["topic"] = topic
+	response["scope"] = label
+	response["scope_since_ms"] = effectiveSinceMs
 	if hasIntent {
 		response["intent"] = intent
 	}
@@ -287,41 +287,6 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	return response, nil
 }
 
-// currentPageStartMs is where the page on screen began: the latest navigation,
-// moved back to the start of the document request that loaded it (the request
-// starts before the navigation commits). A same-document route change has no
-// document request and starts at its navigation. 0 when nothing navigated.
-func currentPageStartMs(engine *mangle.Engine, sessionID string) int64 {
-	if engine == nil {
-		return 0
-	}
-	navMs, navURL := int64(0), ""
-	for _, f := range engine.FactsByPredicate("navigation_event") {
-		if factInSession(f, sessionID) {
-			if ts := factTime(f, 2); ts >= navMs {
-				navMs, navURL = ts, factString(f, 1)
-			}
-		}
-	}
-	if navMs == 0 {
-		return 0
-	}
-	start := navMs
-	for _, f := range engine.FactsByPredicate("net_request") {
-		if !factInSession(f, sessionID) || factString(f, 3) != navURL {
-			continue
-		}
-		if ts := factTime(f, 5); ts > 0 && ts <= navMs && navMs-ts <= documentRequestLeadMs && ts < start {
-			start = ts
-		}
-	}
-	return start
-}
-
-// documentRequestLeadMs bounds how long before its navigation commits a
-// document request may have started and still be the one that loaded it.
-const documentRequestLeadMs = 30000
-
 // trafficBefore summarizes the calls a navigation-scoped read left out: how
 // many started before startMs and how many of those failed.
 func trafficBefore(calls []*netCall, startMs int64) map[string]interface{} {
@@ -345,19 +310,6 @@ func trafficBefore(calls []*netCall, startMs int64) map[string]interface{} {
 	}
 }
 
-func reasonScopeLabel(sinceAction, sinceNavigation bool, timeWindowMs int) string {
-	switch {
-	case sinceAction:
-		return "since your last action"
-	case sinceNavigation:
-		return "since the last navigation"
-	case timeWindowMs > 0:
-		return fmt.Sprintf("in the last %ds", timeWindowMs/1000)
-	default:
-		return "in this session"
-	}
-}
-
 // summaryLine is the one-line count header: the status and every non-zero count.
 func (d *diagnosis) summaryLine() string {
 	parts := []string{"status=" + d.status}
@@ -367,6 +319,7 @@ func (d *diagnosis) summaryLine() string {
 	}{
 		{"page_load_failed", d.score.pageLoadFailed}, {"failed_5xx", d.score.failed5xx}, {"failed_4xx", d.score.failed4xx},
 		{"failed_network", d.score.failedNetwork}, {"console_errors", d.score.consoleErrors}, {"toast_errors", d.score.toastErrors},
+		{"live_region_errors", d.score.liveRegionErrors},
 		{"dialogs", d.score.dialogs}, {"storms", d.score.storms}, {"ws_failures", d.score.wsFailures}, {"slow", d.score.slow},
 		{"blocking", d.score.blocking},
 	} {
@@ -535,7 +488,7 @@ func renderBlocking(d *diagnosis, view, label string, maxItems int) map[string]i
 		}
 		return out
 	}
-	out["verdict"] = blockers[0].line
+	out["verdict"] = scopedIssueVerdict(label, blockers[0].line)
 	if blockers[0].next != nil {
 		out["next"] = blockers[0].next
 	}
@@ -628,7 +581,7 @@ func renderChanges(d *diagnosis, label string, maxItems int) map[string]interfac
 // reasonEvidenceSections are the expandable evidence sections, in the order
 // handles and full data list them.
 var reasonEvidenceSections = []string{
-	"page_load_failures", "failed_requests", "console", "toasts", "dialogs", "websockets",
+	"page_load_failures", "failed_requests", "console", "toasts", "live_regions", "dialogs", "websockets",
 	"storms", "slow_apis", "root_causes", "blocking_issues", "contradictions", "network",
 }
 
@@ -651,6 +604,10 @@ func (d *diagnosis) section(name string, maxItems int) interface{} {
 	case "toasts":
 		for _, g := range d.toasts {
 			rows = append(rows, g.row())
+		}
+	case "live_regions":
+		for _, r := range d.ev.liveRegions {
+			rows = append(rows, map[string]interface{}{"role": r.role, "level": r.level, "message": clipText(r.text, 240), "at_ms": r.ts})
 		}
 	case "dialogs":
 		for _, dl := range d.ev.dialogs {

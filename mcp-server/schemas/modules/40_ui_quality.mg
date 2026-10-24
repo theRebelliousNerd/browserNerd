@@ -55,6 +55,9 @@ page_has_error(SessionId, Msg) :-
 page_has_error(SessionId, Msg) :-
     toast_notification(SessionId, Msg, "error", _, _).
 
+page_has_error(SessionId, Msg) :-
+    live_region_notification(SessionId, Msg, _, "error", _).
+
 # --- Derived: Page shows empty state ---
 Decl page_empty(SessionId, Message).
 page_empty(SessionId, Msg) :-

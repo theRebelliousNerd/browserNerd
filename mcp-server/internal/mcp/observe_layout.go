@@ -300,9 +300,6 @@ func (t *BrowserObserveTool) runLayoutAudit(ctx context.Context, sessionID strin
 	block.audit = audit
 
 	// Pixels: the viewport, or the whole page.
-	if err := activateWithin(page, screenshotCaptureTimeout); err != nil {
-		return nil, fmt.Errorf("could not bring the tab to the front: %v", err)
-	}
 	capture := page.Context(ctx).Timeout(screenshotCaptureTimeout)
 	raw, err := capture.Screenshot(fullPage, &proto.PageCaptureScreenshot{Format: proto.PageCaptureScreenshotFormatPng})
 	if err != nil {

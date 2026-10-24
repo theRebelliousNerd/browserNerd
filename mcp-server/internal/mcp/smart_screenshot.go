@@ -19,7 +19,6 @@ import (
 	"browsernerd-mcp-server/internal/mangle"
 	"browsernerd-mcp-server/internal/security"
 
-	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
 )
 
@@ -165,11 +164,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 		return map[string]interface{}{"success": false, "error": "screenshot write path policy is not configured"}, nil
 	}
 
-	// A background tab produces no frames, so its capture waits forever: bring the tab
-	// to the front first, and bound every step of the capture.
-	if err := activateWithin(page, screenshotCaptureTimeout); err != nil {
-		return map[string]interface{}{"success": false, "error": fmt.Sprintf("could not bring the tab to the front: %v", err)}, nil
-	}
+	// Focus emulation keeps background rendering active without raising the window.
 	capture := page.Context(ctx).Timeout(screenshotCaptureTimeout)
 
 	screenshotFormat := proto.PageCaptureScreenshotFormatPng
@@ -261,22 +256,6 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]interface{
 	}
 
 	return result, nil
-}
-
-// activateWithin brings the page's tab to the front, giving up after d. Activation is a
-// browser-level call that ignores the page's own deadline, so the bound is kept here.
-func activateWithin(page *rod.Page, d time.Duration) error {
-	done := make(chan error, 1)
-	go func() {
-		_, err := page.Activate()
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		return err
-	case <-time.After(d):
-		return fmt.Errorf("timed out after %s", d)
-	}
 }
 
 // boxScript lists the visible interactive elements with their boxes in image pixels.

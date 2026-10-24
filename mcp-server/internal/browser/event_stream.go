@@ -244,6 +244,10 @@ func (m *SessionManager) onRequestWillBeSent(ctx context.Context, sessionID stri
 		Predicate: "net_request",
 		Args:      []interface{}{sessionID, string(ev.RequestID), ev.Request.Method, safeURL, initiatorRef, now.UnixMilli()},
 		Timestamp: now,
+	}, {
+		Predicate: "net_request_context",
+		Args:      []interface{}{sessionID, string(ev.RequestID), string(ev.Type), string(ev.FrameID), string(ev.LoaderID)},
+		Timestamp: now,
 	}}
 	if initiatorType != "" || initiatorRef != "" {
 		facts = append(facts, mangle.Fact{
@@ -401,6 +405,7 @@ func (m *SessionManager) drainPageEvents(ctx context.Context, sessionID string, 
 		Value   string  `json:"value"`
 		Text    string  `json:"text"`
 		Level   string  `json:"level"`
+		Role    string  `json:"role"`
 		Source  string  `json:"source"`
 		Classes string  `json:"classes"`
 		TS      float64 `json:"ts"`
@@ -431,6 +436,12 @@ func (m *SessionManager) drainPageEvents(ctx context.Context, sessionID string, 
 			facts = append(facts, mangle.Fact{
 				Predicate: "state_change",
 				Args:      []interface{}{sessionID, ev.Name, ev.Value, ts.UnixMilli()},
+				Timestamp: ts,
+			})
+		case "live_region":
+			facts = append(facts, mangle.Fact{
+				Predicate: "live_region_notification",
+				Args:      []interface{}{sessionID, m.redactor.SanitizeString(ev.Text), ev.Role, ev.Level, ts.UnixMilli()},
 				Timestamp: ts,
 			})
 		case "toast":

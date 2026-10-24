@@ -15,7 +15,7 @@ Status: shipped with framework limits.
 BrowserNERD extracts compact DOM structure and, when available, traverses
 React Fiber to restore the component vocabulary lost in rendered HTML.
 Component name, parentage, bounded props/state, and fiber-to-DOM mappings
-become Mangle facts. The design follows the semantic-reification direction in
+are returned directly and may also be submitted as Mangle facts. The design follows the semantic-reification direction in
 the architecture validation rather than treating HTML as the primary agent
 interface.
 
@@ -60,12 +60,53 @@ recommendations nor `browser-reason` `next_best_action` offer a click that does
 nothing. A page with neither a React root nor server-rendered React markup
 reports no hydration state at all, so a static page never shows dead controls.
 
-DOM and React payloads are bounded and sampled as lower-value high-volume
-facts. Console errors, request/response pairs, route changes, and explicit
-actions retain higher priority. Password and other sensitive input values are
-redacted in page JavaScript, in Go ingestion, in Mangle facts, and again at
-the MCP response boundary.
+DOM and React inspection returns a bounded structured subtree directly to the
+caller. `root_selector` selects exactly one element; `root_ref` resolves an
+existing semantic ref. The two are mutually exclusive. Without a root the
+scope is a document preorder prefix. Capture visits at most four times
+`max_nodes` elements/fibers; React root discovery has its own equal scan bound
+reported as `discovery_scanned`. Capture admits at most `max_nodes` rows and stops at
+`max_depth`. Visibility filtering precedes row admission, with visited hidden
+rows still consuming the scan budget. Child/sibling traversal never escapes
+the selected subtree. Depth, scan, row, scalar-field and byte limits are
+reported as named incompleteness rather than an empty or healthy verdict.
+
+Row and parent IDs belong to one explicit `capture_id`; anonymous elements
+cannot collide across scoped snapshots. `dom_id` records an element's own HTML
+id separately. A filtered or response-truncated parent may be outside the
+returned rows, with the corresponding filtering or incompleteness explicit.
+DOM rows include bounded safe attributes, direct text, visible state and
+non-sensitive scalar control value. React rows include component/host type,
+parent identity, bounded own scalar props/state and function-presence markers
+of shape `{type: "function"}`. A function marker reveals neither source,
+closure contents nor invocation results. Non-scalar values and accessors are
+not traversed or invoked. Missing function markers are not hydration evidence.
+React root discovery is bounded; absent/inaccessible Fiber reports explicit
+capability incompleteness while DOM automation remains usable.
+
+Snapshot scope, captured/returned counts, traversal completeness and response
+completeness remain visible in every view. Summary intentionally returns no
+rows; compact/full are capped by the requested row and byte budgets. These
+counts describe the returned capture, not the shared Mangle store. Optional
+fact emission is disabled by default for explicit inspection and does not
+claim retained facts. Automatic DOM fact sampling uses the same bounded,
+redacted capture machinery. Console errors, requests, routes and explicit
+actions retain higher priority in the engine. Sensitive input metadata and
+credential keys are redacted before rows or facts are created; configured
+credential environment values are removed before output and storage. Fixed
+internal scripts receive JSON arguments; unsafe JavaScript settings and the
+disclosure gate do not change.
 
 React extraction is best-effort because production builds and future React
 internals can hide or change Fiber structures. Failure to reify React must
 leave DOM automation usable and return explicit capability status.
+
+Deep extraction through `browser-observe` modes `react` and `dom_snapshot`
+uses the same disclosure gate as the focused tools. Call `browser-reason`
+first, then supply a recent `approved_by_handle` for that session or a
+`gate_reason` currently authorized by its reasoning evidence. The accepted
+reasons are `explicit_user_intent` (requires a handle), `low_confidence`,
+`contradiction_detected`, and `no_matching_tool`. Handles and reason grants
+expire and cannot authorize another session. All response views retain gate,
+error and timeout evidence; absent extraction evidence is never rendered as
+an empty tree or a zero-node snapshot.

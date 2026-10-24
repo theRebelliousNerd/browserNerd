@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"browsernerd-mcp-server/internal/logs"
 	"context"
 	"errors"
 	"os/exec"
@@ -11,16 +12,16 @@ import (
 
 func TestMatchRequestLinesPrefersPathThenNearbyErrors(t *testing.T) {
 	at := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	logs := []LogEntry{
-		{Container: "backend", Timestamp: at.Add(-20 * time.Second), Level: "INFO", Message: `"GET /api/fail HTTP/1.1" 500`},
-		{Container: "backend", Timestamp: at.Add(40 * time.Millisecond), Level: "INFO", Message: `172.18.0.1 - "GET /api/fail HTTP/1.1" 500 Internal Server Error`},
-		{Container: "backend", Timestamp: at.Add(30 * time.Millisecond), Level: "ERROR", Tag: "TRACEBACK", Message: "Traceback ...\nOperationalError: database unavailable"},
-		{Container: "backend", Timestamp: at.Add(10 * time.Second), Level: "ERROR", Message: "unrelated error far away"},
-		{Container: "backend", Timestamp: at.Add(50 * time.Millisecond), Level: "INFO", Message: `"GET /api/poll HTTP/1.1" 200`},
-		{Container: "frontend", Timestamp: at.Add(2 * time.Minute), Level: "INFO", Message: `GET /api/fail outside the window`},
+	entries := []logs.Entry{
+		{Source: "backend", Timestamp: at.Add(-20 * time.Second), Level: "INFO", Message: `"GET /api/fail HTTP/1.1" 500`},
+		{Source: "backend", Timestamp: at.Add(40 * time.Millisecond), Level: "INFO", Message: `172.18.0.1 - "GET /api/fail HTTP/1.1" 500 Internal Server Error`},
+		{Source: "backend", Timestamp: at.Add(30 * time.Millisecond), Level: "ERROR", Tag: "TRACEBACK", Message: "Traceback ...\nOperationalError: database unavailable"},
+		{Source: "backend", Timestamp: at.Add(10 * time.Second), Level: "ERROR", Message: "unrelated error far away"},
+		{Source: "backend", Timestamp: at.Add(50 * time.Millisecond), Level: "INFO", Message: `"GET /api/poll HTTP/1.1" 200`},
+		{Source: "frontend", Timestamp: at.Add(2 * time.Minute), Level: "INFO", Message: `GET /api/fail outside the window`},
 	}
 
-	got := MatchRequestLines(logs, "/api/fail?x=1", at, 30*time.Second, 2*time.Second, 5)
+	got := logs.MatchRequestLines(entries, "/api/fail?x=1", at, 30*time.Second, 2*time.Second, 5)
 	if len(got) != 3 {
 		t.Fatalf("expected 3 matches (2 path, 1 nearby error), got %d: %+v", len(got), got)
 	}
@@ -34,18 +35,18 @@ func TestMatchRequestLinesPrefersPathThenNearbyErrors(t *testing.T) {
 		t.Fatalf("third match must be the traceback beside the request, got %+v", got[2])
 	}
 
-	if capped := MatchRequestLines(logs, "/api/fail", at, 30*time.Second, 2*time.Second, 1); len(capped) != 1 {
+	if capped := logs.MatchRequestLines(entries, "/api/fail", at, 30*time.Second, 2*time.Second, 1); len(capped) != 1 {
 		t.Fatalf("max must bound the result, got %d", len(capped))
 	}
-	if none := MatchRequestLines(logs, "/", at, 30*time.Second, 0, 5); len(none) != 0 {
+	if none := logs.MatchRequestLines(entries, "/", at, 30*time.Second, 0, 5); len(none) != 0 {
 		t.Fatalf("a root path matches nothing by path and errorWindow 0 matches nothing by time, got %+v", none)
 	}
 }
 
 func TestMatchRequestLinesStripsAProxyPrefix(t *testing.T) {
 	at := time.Now()
-	logs := []LogEntry{{Container: "backend", Timestamp: at, Level: "INFO", Message: `"POST /v1/contacts/save HTTP/1.1" 422`}}
-	got := MatchRequestLines(logs, "/api/v1/contacts/save", at, time.Second, 0, 5)
+	entries := []logs.Entry{{Source: "backend", Timestamp: at, Level: "INFO", Message: `"POST /v1/contacts/save HTTP/1.1" 422`}}
+	got := logs.MatchRequestLines(entries, "/api/v1/contacts/save", at, time.Second, 0, 5)
 	if len(got) != 1 {
 		t.Fatalf("the backend sees the path without the proxy's first segment, expected a match, got %+v", got)
 	}
@@ -58,11 +59,11 @@ func TestLogsBetweenFailsFastWhenDockerIsUnreachable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 900*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	logs, err := c.LogsBetween(ctx, time.Now().Add(-time.Minute), time.Now())
+	entries, err := c.LogsBetween(ctx, time.Now().Add(-time.Minute), time.Now())
 	elapsed := time.Since(start)
 	t.Logf("unreachable docker answered in %s: %v", elapsed, err)
 	if err == nil {
-		t.Fatalf("an unreachable daemon must be an error, got %d lines", len(logs))
+		t.Fatalf("an unreachable daemon must be an error, got %d lines", len(entries))
 	}
 	if elapsed > time.Second {
 		t.Fatalf("an unreachable daemon took %s, want < 1s", elapsed)

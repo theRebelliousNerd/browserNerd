@@ -38,6 +38,12 @@ type dialogBook struct {
 	mu      sync.Mutex
 	armed   map[string]dialogArm
 	history map[string][]DialogRecord
+	pending map[string]map[*pendingDialogReport]struct{}
+}
+
+type pendingDialogReport struct {
+	openedAt time.Time
+	done     chan struct{}
 }
 
 const maxDialogHistory = 50
@@ -48,6 +54,9 @@ func (b *dialogBook) init() {
 	}
 	if b.history == nil {
 		b.history = make(map[string][]DialogRecord)
+	}
+	if b.pending == nil {
+		b.pending = make(map[string]map[*pendingDialogReport]struct{})
 	}
 }
 
@@ -82,6 +91,56 @@ func (m *SessionManager) DialogsSince(sessionID string, since time.Time) []Dialo
 	return out
 }
 
+// AwaitDialogReports waits only for dialogs already being answered for this
+// operation. The event handler registers before Chrome can resume the input;
+// publication of the history record releases the waiter.
+func (m *SessionManager) AwaitDialogReports(ctx context.Context, sessionID string, since time.Time) error {
+	for {
+		m.dialogs.mu.Lock()
+		var pending <-chan struct{}
+		for report := range m.dialogs.pending[sessionID] {
+			if !report.openedAt.Before(since) {
+				pending = report.done
+				break
+			}
+		}
+		m.dialogs.mu.Unlock()
+		if pending == nil {
+			return nil
+		}
+		select {
+		case <-pending:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (m *SessionManager) beginDialogReport(sessionID string, openedAt time.Time) *pendingDialogReport {
+	m.dialogs.mu.Lock()
+	defer m.dialogs.mu.Unlock()
+	m.dialogs.init()
+	if m.dialogs.pending[sessionID] == nil {
+		m.dialogs.pending[sessionID] = make(map[*pendingDialogReport]struct{})
+	}
+	report := &pendingDialogReport{openedAt: openedAt, done: make(chan struct{})}
+	m.dialogs.pending[sessionID][report] = struct{}{}
+	return report
+}
+
+func (m *SessionManager) completeDialogReport(sessionID string, report *pendingDialogReport) {
+	m.dialogs.mu.Lock()
+	defer m.dialogs.mu.Unlock()
+	if _, pending := m.dialogs.pending[sessionID][report]; !pending {
+		return
+	}
+	delete(m.dialogs.pending[sessionID], report)
+	if len(m.dialogs.pending[sessionID]) == 0 {
+		delete(m.dialogs.pending, sessionID)
+	}
+	close(report.done)
+}
+
 // takeDialogAnswer consumes the armed answer for sessionID, or falls back to
 // the configured policy. It is called from the dialog event handler.
 func (m *SessionManager) takeDialogAnswer(sessionID string) (accept bool, promptText string, handledBy string) {
@@ -100,6 +159,8 @@ func (m *SessionManager) takeDialogAnswer(sessionID string) (accept bool, prompt
 // own event subscription, so no other capture work can delay the answer.
 func (m *SessionManager) handleDialog(ctx context.Context, sessionID string, page *rod.Page, ev *proto.PageJavascriptDialogOpening) {
 	now := time.Now()
+	report := m.beginDialogReport(sessionID, now)
+	defer m.completeDialogReport(sessionID, report)
 	accept, promptText, handledBy := m.takeDialogAnswer(sessionID)
 	if err := (proto.PageHandleJavaScriptDialog{Accept: accept, PromptText: promptText}).Call(page); err != nil {
 		log.Printf("[session:%s] answering %s dialog failed: %v", sessionID, ev.Type, err)
@@ -115,6 +176,7 @@ func (m *SessionManager) handleDialog(ctx context.Context, sessionID string, pag
 		OpenedAt:      now,
 	}
 	m.recordDialog(rec)
+	m.completeDialogReport(sessionID, report)
 	if m.engine == nil {
 		return
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"browsernerd-mcp-server/internal/docker"
+	"browsernerd-mcp-server/internal/logs"
 	"browsernerd-mcp-server/internal/mangle"
 )
 
@@ -121,7 +122,7 @@ func TestReasonWhyFailedNamesTheCausalChain(t *testing.T) {
 	}
 
 	issues := strings.Join(toStringSlice(res["issues"]), "\n")
-	for _, want := range []string{"GET /api/missing -> 404", "storm GET /api/poll?x= x20 every 400ms", "ws ws://127.0.0.1:1/hmr failed: net::ERR_CONNECTION_REFUSED", "slow GET /api/slow 2503ms"} {
+	for _, want := range []string{"GET /api/missing -> 404", "storm GET /api/poll?x=[OMITTED] x20 every 400ms", "ws ws://127.0.0.1:1/hmr failed: net::ERR_CONNECTION_REFUSED", "slow GET /api/slow 2503ms"} {
 		if !strings.Contains(issues, want) {
 			t.Fatalf("issues must contain %q, got:\n%s", want, issues)
 		}
@@ -204,7 +205,7 @@ func TestReasonNetworkTopicGroupsFlagsStormsAndExpands(t *testing.T) {
 	if len(top) != 3 || !strings.HasPrefix(top[0], "500 GET /api/fail") {
 		t.Fatalf("the failing group leads the top lines, got %v", top)
 	}
-	if !strings.Contains(strings.Join(top, "\n"), "storm GET /api/poll?x= x20 every 400ms") {
+	if !strings.Contains(strings.Join(top, "\n"), "storm GET /api/poll?x=[OMITTED] x20 every 400ms") {
 		t.Fatalf("the poll must be flagged as a storm, got %v", top)
 	}
 
@@ -430,12 +431,12 @@ func TestReasonNextBestActionFoldsRepeatedControls(t *testing.T) {
 
 // fakeLogs is an injected backend log source.
 type fakeLogs struct {
-	logs  []docker.LogEntry
+	logs  []logs.Entry
 	err   error
 	calls int32
 }
 
-func (f *fakeLogs) LogsBetween(context.Context, time.Time, time.Time) ([]docker.LogEntry, error) {
+func (f *fakeLogs) LogsBetween(context.Context, time.Time, time.Time) ([]logs.Entry, error) {
 	atomic.AddInt32(&f.calls, 1)
 	return f.logs, f.err
 }
@@ -446,10 +447,10 @@ func TestReasonAttachesBackendLogLinesForTheFailedRequest(t *testing.T) {
 	p := probeFailureScenario("s-backend")
 	loadFacts(t, engine, p)
 	failAt := p.at(6005)
-	src := &fakeLogs{logs: []docker.LogEntry{
-		{Container: "cross-thread-backend", Timestamp: failAt.Add(-3 * time.Millisecond), Level: "ERROR", Tag: "TRACEBACK", Message: "Traceback (most recent call last):\n  File \"app.py\"\nOperationalError: database unavailable password=hunter2"},
-		{Container: "cross-thread-backend", Timestamp: failAt, Level: "INFO", Message: `172.18.0.1 - "GET /api/fail HTTP/1.1" 500 Internal Server Error`},
-		{Container: "cross-thread-backend", Timestamp: failAt.Add(10 * time.Second), Level: "INFO", Message: `"GET /api/poll HTTP/1.1" 200`},
+	src := &fakeLogs{logs: []logs.Entry{
+		{Source: "cross-thread-backend", Timestamp: failAt.Add(-3 * time.Millisecond), Level: "ERROR", Tag: "TRACEBACK", Message: "Traceback (most recent call last):\n  File \"app.py\"\nOperationalError: database unavailable password=hunter2"},
+		{Source: "cross-thread-backend", Timestamp: failAt, Level: "INFO", Message: `172.18.0.1 - "GET /api/fail HTTP/1.1" 500 Internal Server Error`},
+		{Source: "cross-thread-backend", Timestamp: failAt.Add(10 * time.Second), Level: "INFO", Message: `"GET /api/poll HTTP/1.1" 200`},
 	}}
 	tool := &BrowserReasonTool{engine: engine, backendLogs: src}
 
@@ -479,8 +480,8 @@ func TestReasonBackendUnavailableIsOneQuietNote(t *testing.T) {
 			t.Fatalf("an unreachable Docker is one short note, got %v", note)
 		}
 	}
-	if n := atomic.LoadInt32(&src.calls); n != 1 {
-		t.Fatalf("an unreachable Docker is asked once per cooldown, got %d calls", n)
+	if n := atomic.LoadInt32(&src.calls); n != 3 {
+		t.Fatalf("shared sources are rechecked so recovery remains visible, got %d calls", n)
 	}
 }
 
@@ -489,7 +490,7 @@ func TestReasonBackendUnavailableIsOneQuietNote(t *testing.T) {
 func TestReasonDeadDockerCostsUnderASecond(t *testing.T) {
 	engine := testMangleEngineForProgressive(t)
 	loadFacts(t, engine, probeFailureScenario("s-dead"))
-	tool := &BrowserReasonTool{engine: engine, dockerClient: docker.NewClient([]string{"cross-thread-backend", "cross-thread-frontend"}, 30*time.Second, "tcp://127.0.0.1:1")}
+	tool := &BrowserReasonTool{engine: engine, backendLogs: docker.NewClient([]string{"cross-thread-backend", "cross-thread-frontend"}, 30*time.Second, "tcp://127.0.0.1:1")}
 
 	start := time.Now()
 	res := runReason(t, tool, map[string]interface{}{"session_id": "s-dead", "topic": "why_failed"})
@@ -506,8 +507,8 @@ func TestReasonDeadDockerCostsUnderASecond(t *testing.T) {
 
 func TestNormalizeRequestURL(t *testing.T) {
 	cases := map[string]string{
-		probeOrigin + "/api/poll?x=1":                               "/api/poll?x=",
-		probeOrigin + "/api/items/42?b=2&a=1":                       "/api/items/{id}?a=&b=",
+		probeOrigin + "/api/poll?x=1":                               "/api/poll?x=[OMITTED]",
+		probeOrigin + "/api/items/42?b=2&a=1":                       "/api/items/{id}?a=[OMITTED]&b=[OMITTED]",
 		probeOrigin + "/api/n/2f1c9a3e-9f0b-4b7e-8a51-1d2c3e4f5a6b": "/api/n/{id}",
 		"https://api.example.com/v1/orgs/9f8e7d6c5b4a3f2e1d0c":      "api.example.com/v1/orgs/{id}",
 		"ws://127.0.0.1:1/hmr":                                      "ws://127.0.0.1:1/hmr",

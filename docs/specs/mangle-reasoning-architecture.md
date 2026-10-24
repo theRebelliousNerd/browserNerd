@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Mangle Reasoning Architecture
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-10-23
 doc_type: architecture-spec
 subsystem: browsernerd
 read_when: Changing facts, rules, queries, subscriptions, causal reasoning, or memory bounds
@@ -41,7 +41,7 @@ class, oldest first within a class:
 - high, kept until nothing else is left: every fact of a failed request,
   console errors and warnings, WebSocket errors and closes, error-level Docker
   lines, navigations, `current_url`, page load failures, dialogs, downloads,
-  browser log entries, toasts, and user actions.
+  browser log entries, toasts, live-region announcements, and user actions.
 
 A request's facts (`net_request`, `net_response`, headers, correlation keys,
 initiator, payload fields and the failure facts) share one class and are kept

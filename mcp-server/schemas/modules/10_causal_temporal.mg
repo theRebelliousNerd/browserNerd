@@ -266,6 +266,9 @@ toast_after_api_failure(SessionId, ToastText, ReqId, Url, Status, TimeDelta) :-
 user_visible_error(SessionId, "toast", Msg, Ts) :-
     error_toast(SessionId, Msg, _, Ts).
 
+user_visible_error(SessionId, "live_region", Msg, Ts) :-
+    live_region_notification(SessionId, Msg, _, "error", Ts).
+
 user_visible_error(SessionId, "console", Msg, Ts) :-
     console_event(SessionId, "error", Msg, Ts).
 

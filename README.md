@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD
 created: 2026-01-31
-last_updated: 2026-09-30
+last_updated: 2026-10-22
 doc_type: readme
 subsystem: infra
 read_when: Orienting in this directory
@@ -191,7 +191,7 @@ Hacker News front page:
 ### Full-Stack Error Correlation
 - **Console error tracking** - With causal API correlation
 - **Toast/notification detection** - Instant error overlay capture
-- **Docker log integration** - Correlate browser errors with backend containers
+- **Native and Docker logs** - Correlate browser errors with configured log files or backend containers
 - **Root cause analysis** - Automatic error chain detection
 
 ### Contract Auditing
@@ -767,9 +767,31 @@ browser-act(operations: [{type: "wait", predicate: "ready", timeout_ms: 10000}])
 
 ---
 
-## Docker Log Integration
+## Server Log Integration
 
-Enable full-stack error correlation by connecting to backend containers:
+Correlate browser failures with native application logs, Docker logs, or both.
+Configure sources for any application in its workspace or a machine profile:
+
+```yaml
+logs:
+  files:
+    - name: api
+      path: logs/api.log
+    - name: web
+      path: logs/web.log
+  log_window: 30s
+  max_read_bytes: 1048576
+  max_entries: 2000
+```
+
+JSON timestamp/time fields and timestamped text logs are supported. Multiline
+exceptions stay with their timestamped entry; undated records are reported as
+uncorrelatable. Relative workspace paths resolve against that workspace;
+relative paths in an explicit profile resolve against the profile directory.
+Untrusted workspace sources remain inside the workspace, symlinks included.
+Reads are bounded and regular-file-only, and all returned evidence is redacted.
+
+For containerized applications, configure Docker independently:
 
 ```yaml
 docker:
@@ -781,12 +803,27 @@ docker:
 ```
 
 **What it does:**
-- Queries backend container logs when errors occur
+- Queries configured native and container logs when errors occur
 - Correlates browser API failures with backend exceptions
 - Provides full chain: Browser console -> Failed API -> Backend error
 - Asks the logs about a page that never loaded or a WebSocket that failed,
   where every browser signal reads clean and the reason is only server-side
-- Reports Docker as unavailable in one line instead of failing the diagnosis
+- Reports unavailable or partially available sources and truncated evidence explicitly
+
+The same sources feed diagnoses, error diagnostics and optional server-log flight
+exports. Doctor lists configured source names and types. No application-specific
+routes, paths, frameworks or service names are built into the readers. See the
+[native log correlation contract](docs/specs/native-log-correlation.md).
+
+To verify the installed server against a generic local app through a real
+browser, run from `mcp-server`:
+
+```bash
+go run ./cmd/smoke -mode native-logs -server bin/browsernerd -timeout 90s
+```
+
+This checks a failed request, its native exception, Doctor's source listing and
+flight-export evidence with Docker disabled.
 
 **Example output from `browser-reason` `topic: why_failed` (abridged):**
 ```json
@@ -1032,6 +1069,7 @@ browserNerd/
 |   |   +-- mcp/                # MCP server, 48 tool implementations
 |   |   +-- mangle/             # Fact engine, rule evaluation
 |   |   +-- config/             # YAML configuration
+|   |   +-- logs/               # Shared evidence, native file readers, request correlation
 |   |   +-- docker/             # Container log integration
 |   |   +-- correlation/        # Keyed cross-domain fact correlation
 |   +-- schemas/                # Built-in Mangle schema, embedded in the binary

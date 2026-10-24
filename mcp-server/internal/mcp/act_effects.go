@@ -27,22 +27,24 @@ const (
 )
 
 // liveRegionScript reads the visible alert, status and toast regions.
-const liveRegionScript = `() => {
-  const sel = '[role=alert],[role=alertdialog],[role=status],[aria-live=assertive],[aria-live=polite],[data-sonner-toast],.Toastify__toast,[class*="toast" i],[class*="snackbar" i]';
+const liveRegionScript = `() => {` + browser.NotificationClassifierJS + `
+  const sel = bnLiveSelector + ',' + bnToastSelector + ',[class*="toast" i],[class*="snackbar" i]';
   // A router's navigation announcement (the page title, read aloud) is not a toast.
   const announcer = 'next-route-announcer, #__next-route-announcer__, #gatsby-announcer, [data-route-announcer]';
   const title = (document.title || '').trim();
   const found = [];
   const out = [];
-  for (const el of document.querySelectorAll(sel)) {
+  for (const node of document.querySelectorAll(sel)) {
+    const toast = bnToastRoot(node);
+    const el = toast || node;
+    if (!toast && !node.matches(bnLiveSelector)) continue;
+    if (!toast && bnContainsToast(el)) continue;
     if (found.some((f) => f.contains(el))) continue;
-    const r = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    if (r.width <= 0 || r.height <= 0 || cs.visibility === 'hidden' || cs.display === 'none') continue;
+    if (!bnVisible(el)) continue;
     const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160);
     if (!text || el.closest(announcer) || (title !== '' && text === title)) continue;
     found.push(el);
-    const role = el.getAttribute('role') || (el.getAttribute('aria-live') ? 'status' : 'toast');
+    const role = toast ? 'toast' : bnRegionRole(el);
     out.push(role + ': ' + text);
     if (out.length >= 12) break;
   }
@@ -286,6 +288,7 @@ func collectActEffects(
 			}
 		}
 	}
+	var liveRegions []toastSighting
 	if regions, ok := readLiveRegions(ctx, sessions, active); ok {
 		for _, region := range regions {
 			if base.regions[region] && active == base.session {
@@ -295,11 +298,18 @@ func collectActEffects(
 			if i := strings.Index(region, ": "); i >= 0 {
 				role, text = region[:i], region[i+2:]
 			}
-			sightings = append(sightings, toastSighting{label: role, text: text})
+			if role == "toast" {
+				sightings = append(sightings, toastSighting{label: role, text: text})
+			} else {
+				liveRegions = append(liveRegions, toastSighting{label: role, text: text})
+			}
 		}
 	}
 	if items := digestToasts(sightings); len(items) > 0 {
 		effects["toasts"] = items
+	}
+	if items := digestToasts(liveRegions); len(items) > 0 {
+		effects["live_regions"] = items
 	}
 
 	if engine == nil {
@@ -591,6 +601,7 @@ func effectsSummary(effects map[string]interface{}) string {
 	listed("errors", "console error")
 	listed("dialogs", "dialog")
 	listed("toasts", "toast")
+	listed("live_regions", "live region")
 	listed("pending", "pending")
 	listed("downloads", "download")
 	listed("ws_failures", "websocket")

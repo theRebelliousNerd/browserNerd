@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Delivery and Verification
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-10-23
 doc_type: delivery-spec
 subsystem: browsernerd
 read_when: Preparing releases, dependency updates, CI, or completion claims
@@ -30,9 +30,30 @@ aside to `bin/browsernerd.<timestamp>.old`, builds into its place, deletes older
 moved-aside binaries no longer running, and puts the previous binary back if
 the build fails. The next server spawn (a `/mcp` reconnect) runs the new build.
 
+On Unix, an installation serving concurrent clients can avoid a missing-path
+window by building a sibling candidate with the same version stamp first:
+`go build -ldflags '-X browsernerd-mcp-server/internal/buildinfo.Version=1.4.0' -o bin/browsernerd.candidate ./cmd/server`.
+Verify the candidate with `-version` and record its hash before atomically
+renaming it over `bin/browsernerd` on the same filesystem. Preserve a hard link
+to the installed binary when a rollback copy is needed. Existing processes
+retain their executable inode and keep running; symlinks to the canonical
+path and fresh server spawns resolve the replacement. Record both installed
+identity and running-process identity rather than claiming existing clients
+have loaded the new build. Installation does not require stopping a server or
+closing browser sessions.
+
 Every binary can name itself: `browsernerd -version` prints version, VCS
 revision (with `+dirty` for an uncommitted tree), build time and Go version,
-and the MCP server identifies as `<version>+<revision>`. At start the server
+and the MCP server identifies as `<version>+<revision>`. Runtime identity is
+measured from the held executable image, never by statting the installation
+pathname after an atomic replacement. The process caches its held-image
+SHA256, file identity and image modification time once. Linux reads
+`/proc/self/exe`; a platform without a reliable held-image reader reports
+identity unavailable with a named reason, no hash/file identity and unknown
+build time. Version, revision and Go version still come from the runtime's
+embedded build information. The executable pathname is descriptive and is
+not evidence that the process loaded the file currently installed there.
+At start the server
 compares its own build time with the newest non-test `.go`/`.mg` file of the
 module it was built from (`bin/` sits under the module root); when source is
 newer, `launch-browser` carries a `warning` and the doctor lists it as a
@@ -52,6 +73,26 @@ failed last Mangle evaluation, evicted failure evidence, unreachable Docker, a
 call still running past its timeout - and `status: ok | degraded`; the CLI
 exits nonzero when degraded. The CLI checks its own environment, so run it with the MCP server's
 env block to mirror the server.
+
+`browser.connected` is a fresh bounded CDP result for the default instance.
+Doctor includes `connection_state`, `connection_reason` and a probe error
+when present. A confirmed closed transport or unverified probe degrades
+Doctor with a named problem; a retained instance pointer cannot report a
+healthy browser. `not_started` is normal before a browser is launched.
+Doctor is observational and performs no cleanup, reconnect or target action.
+Launch recovery follows the exact-instance ownership/process/context guards
+in [browser lifecycle and concurrency](browser-lifecycle-and-concurrency.md).
+
+Doctor preserves `binary.version`, `revision` and `built`, and adds `pid`,
+`identity_status`, `identity_source`, `sha256` and `file_id`. PID is local to
+the server's process namespace. `built` is the held image's file modification
+time, not a timestamp taken from a replacement file. When identity cannot be
+measured, `built` is null, `identity_status` is unavailable and
+`identity_error` names the reason; Doctor is degraded rather than claiming
+that a newly installed binary is executing. A subprocess regression replaces
+its own running executable pathname and verifies both a first identity read
+after replacement and a cached read across replacement. No reconnect or
+target-browser lifecycle is required for that proof.
 
 ## Codex connection
 

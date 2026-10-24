@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"browsernerd-mcp-server/internal/docker"
+	"browsernerd-mcp-server/internal/logs"
 	"browsernerd-mcp-server/internal/mangle"
 )
 
@@ -26,9 +26,9 @@ func TestReasonAsksTheBackendAboutAPageThatNeverLoaded(t *testing.T) {
 	if err := engine.AddFacts(context.Background(), facts); err != nil {
 		t.Fatal(err)
 	}
-	src := &fakeLogs{logs: []docker.LogEntry{
-		{Container: "cloudflared", Timestamp: failed.Add(-5 * time.Millisecond), Level: "ERROR", Message: `malformed HTTP response "Unauthorized" originService=http://cross-thread-frontend:9003 path=/dashboard`},
-		{Container: "cross-thread-backend", Timestamp: failed.Add(20 * time.Second), Level: "INFO", Message: `"GET /api/poll HTTP/1.1" 200`},
+	src := &fakeLogs{logs: []logs.Entry{
+		{Source: "cloudflared", Timestamp: failed.Add(-5 * time.Millisecond), Level: "ERROR", Message: `malformed HTTP response "Unauthorized" originService=http://cross-thread-frontend:9003 path=/dashboard`},
+		{Source: "cross-thread-backend", Timestamp: failed.Add(20 * time.Second), Level: "INFO", Message: `"GET /api/poll HTTP/1.1" 200`},
 	}}
 	tool := &BrowserReasonTool{engine: engine, backendLogs: src}
 

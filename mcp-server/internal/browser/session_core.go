@@ -2,8 +2,6 @@ package browser
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -22,15 +20,16 @@ import (
 
 // Session describes the public metadata for a tracked browser context.
 type Session struct {
-	ID         string    `json:"id"`
-	BrowserID  string    `json:"browser_id,omitempty"`
-	TargetID   string    `json:"target_id,omitempty"`
-	URL        string    `json:"url,omitempty"`
-	Title      string    `json:"title,omitempty"`
-	Status     string    `json:"status,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastActive time.Time `json:"last_active"`
-	Isolated   bool      `json:"isolated"`
+	ID              string    `json:"id"`
+	BrowserID       string    `json:"browser_id,omitempty"`
+	TargetID        string    `json:"target_id,omitempty"`
+	URL             string    `json:"url,omitempty"`
+	Title           string    `json:"title,omitempty"`
+	Status          string    `json:"status,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	LastActive      time.Time `json:"last_active"`
+	Isolated        bool      `json:"isolated"`
+	IsolatedDisplay bool      `json:"isolated_display,omitempty"`
 	// Viewport is the device the tab emulates after a viewport operation; nil
 	// means the configured default.
 	Viewport *Viewport `json:"viewport,omitempty"`
@@ -38,14 +37,15 @@ type Session struct {
 
 // BrowserInstance describes a connected Chrome process or external endpoint.
 type BrowserInstance struct {
-	ID         string    `json:"id"`
-	ControlURL string    `json:"control_url,omitempty"`
-	Status     string    `json:"status"`
-	Managed    bool      `json:"managed"`
-	Default    bool      `json:"default"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastActive time.Time `json:"last_active"`
-	TabCount   int       `json:"tab_count"`
+	ID              string    `json:"id"`
+	ControlURL      string    `json:"control_url,omitempty"`
+	Status          string    `json:"status"`
+	Managed         bool      `json:"managed"`
+	IsolatedDisplay bool      `json:"isolated_display,omitempty"`
+	Default         bool      `json:"default"`
+	CreatedAt       time.Time `json:"created_at"`
+	LastActive      time.Time `json:"last_active"`
+	TabCount        int       `json:"tab_count"`
 }
 
 type browserRecord struct {
@@ -55,6 +55,7 @@ type browserRecord struct {
 	pid         int
 	userDataDir string
 	tempDir     bool
+	display     *managedDisplay
 }
 
 type sessionRecord struct {
@@ -201,6 +202,7 @@ type SessionManager struct {
 	cfg              config.BrowserConfig
 	engine           EngineSink
 	mu               sync.RWMutex
+	startMu          sync.Mutex
 	browser          *rod.Browser
 	sessions         map[string]*sessionRecord
 	controlURL       string // WebSocket URL for DevTools
@@ -242,42 +244,18 @@ func NewSessionManagerWithSecurity(cfg config.BrowserConfig, sink EngineSink, re
 
 // Start connects to an existing Chrome or launches a new one using Rod's launcher.
 func (m *SessionManager) Start(ctx context.Context) error {
-	// If we already have a browser, verify it's still alive
-	if m.browser != nil {
-		// Try a simple operation to test connection health
-		_, err := m.browser.Version()
-		if err == nil {
-			return nil // Browser is healthy, reuse it
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	for {
+		health := m.ConnectionHealth(ctx)
+		if health.Connected {
+			return nil
 		}
-		// Browser is dead, clean up and reconnect
-		log.Printf("Stale browser connection detected, reconnecting...")
-		_ = m.browser.Close()
-		m.browser = nil
-		m.controlURL = ""
-
-		m.mu.Lock()
-		if m.querier == nil {
-			m.querier = DefaultProcessQuerier()
+		if health.State == "not_started" {
+			break
 		}
-		q := m.querier
-		staleRecords := make([]*browserRecord, 0, len(m.browsers))
-		for _, rec := range m.browsers {
-			if rec != nil {
-				staleRecords = append(staleRecords, rec)
-			}
-		}
-		m.clearSessionsLocked(false)
-		m.browsers = make(map[string]*browserRecord)
-		m.defaultBrowserID = ""
-		m.mu.Unlock()
-
-		for _, rec := range staleRecords {
-			if rec.pid > 0 {
-				_ = q.KillProcessTree(rec.pid)
-			}
-			if rec.tempDir && rec.userDataDir != "" {
-				_ = removeUserDataDir(rec.userDataDir)
-			}
+		if err := m.retireClosedDefault(health); err != nil {
+			return err
 		}
 	}
 
@@ -299,21 +277,22 @@ func (m *SessionManager) Start(ctx context.Context) error {
 		return fmt.Errorf("connect to chrome: %w", err)
 	}
 
+	m.mu.Lock()
 	m.browser = browser
 	m.controlURL = controlURL
-	m.mu.Lock()
 	browserID := uuid.NewString()
 	now := time.Now()
 	m.defaultBrowserID = browserID
 	record := &browserRecord{
 		meta: BrowserInstance{
-			ID:         browserID,
-			ControlURL: m.redactor.SanitizeString(controlURL),
-			Status:     "connected",
-			Managed:    m.cfg.DebuggerURL == "",
-			Default:    true,
-			CreatedAt:  now,
-			LastActive: now,
+			ID:              browserID,
+			ControlURL:      m.redactor.SanitizeString(controlURL),
+			Status:          "connected",
+			Managed:         m.cfg.DebuggerURL == "",
+			IsolatedDisplay: launched.display != nil,
+			Default:         true,
+			CreatedAt:       now,
+			LastActive:      now,
 		},
 		browser:    browser,
 		controlURL: controlURL,
@@ -321,6 +300,7 @@ func (m *SessionManager) Start(ctx context.Context) error {
 	record.pid = launched.pid
 	record.userDataDir = launched.userDataDir
 	record.tempDir = launched.tempDir
+	record.display = launched.display
 	m.browsers[browserID] = record
 	m.mu.Unlock()
 	if m.cfg.DebuggerURL == "" {
@@ -340,6 +320,9 @@ func (m *SessionManager) Start(ctx context.Context) error {
 // browser's /devtools/browser/<id> socket, the only URL Chrome accepts a CDP
 // connection on.
 func (m *SessionManager) startBrowser() (*launchedChrome, error) {
+	if err := m.cfg.ValidateDisplayIsolation(); err != nil {
+		return nil, err
+	}
 	if m.cfg.DebuggerURL == "" {
 		return m.launchChrome()
 	}
@@ -360,11 +343,9 @@ func (m *SessionManager) ControlURL() string {
 	return m.controlURL
 }
 
-// IsConnected returns whether the browser is currently connected.
+// IsConnected verifies the default CDP transport within a bounded probe.
 func (m *SessionManager) IsConnected() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.browser != nil
+	return m.ConnectionHealth(context.Background()).Connected
 }
 
 // Shutdown closes tracked pages, closes managed browsers, terminates the
@@ -518,148 +499,9 @@ func (m *SessionManager) GetSession(sessionID string) (Session, bool) {
 	return rec.meta, true
 }
 
-// ReifyReact walks the React Fiber tree and emits facts for components, props, and state.
-func (m *SessionManager) ReifyReact(ctx context.Context, sessionID string) ([]mangle.Fact, error) {
-	if m.engine == nil {
-		return nil, errors.New("mangle engine not configured")
-	}
-	page, ok := m.Page(sessionID)
-	if !ok {
-		return nil, fmt.Errorf("unknown session: %s", sessionID)
-	}
-
-	res, err := page.Context(ctx).Evaluate(&rod.EvalOptions{
-		JS: `
-		() => {
-			const root = document.querySelector('[data-reactroot]') || document.getElementById('root') || document.body;
-			if (!root) return [];
-			const fiberKey = Object.keys(root).find(k => k.startsWith('__reactFiber'));
-			if (!fiberKey) return [];
-
-			const sanitize = (v) => {
-				if (v === null) return null;
-				const t = typeof v;
-				if (t === 'string' || t === 'number' || t === 'boolean') return v;
-				return undefined;
-			};
-
-			const rootFiber = root[fiberKey];
-			const stack = [{ fiber: rootFiber, parent: null }];
-			const seen = new Set();
-			const results = [];
-			let counter = 0;
-
-			while (stack.length) {
-				const { fiber, parent } = stack.pop();
-				if (!fiber || seen.has(fiber)) continue;
-				seen.add(fiber);
-
-				const id = fiber._debugID || ('fiber_' + (counter++));
-				const name = (fiber.type && (fiber.type.displayName || fiber.type.name)) ||
-							 (fiber.elementType && fiber.elementType.name) ||
-							 'Anonymous';
-
-				const props = {};
-				if (fiber.memoizedProps && typeof fiber.memoizedProps === 'object') {
-					for (const [k, v] of Object.entries(fiber.memoizedProps)) {
-						const s = sanitize(v);
-						if (s !== undefined) props[k] = s;
-					}
-				}
-
-				const state = [];
-				if (fiber.memoizedState !== undefined) {
-					const ms = fiber.memoizedState;
-					if (Array.isArray(ms)) {
-						ms.forEach((v, i) => {
-							const s = sanitize(v);
-							if (s !== undefined) state.push([i, s]);
-						});
-					} else if (ms && typeof ms === 'object' && 'baseState' in ms) {
-						const s = sanitize(ms.baseState);
-						if (s !== undefined) state.push([0, s]);
-					}
-				}
-
-				const domNodeId = fiber.stateNode && fiber.stateNode.id ? fiber.stateNode.id : null;
-				results.push({ id, name, parent, props, state, domNodeId });
-
-				if (fiber.child) stack.push({ fiber: fiber.child, parent: id });
-				if (fiber.sibling) stack.push({ fiber: fiber.sibling, parent });
-			}
-			return results;
-		}
-		`,
-		ByValue:      true,
-		AwaitPromise: true,
-	})
-	if err != nil || res == nil {
-		return nil, fmt.Errorf("react reification failed: %w", err)
-	}
-
-	raw, err := res.Value.MarshalJSON()
-	if err != nil {
-		return nil, fmt.Errorf("marshal reified tree: %w", err)
-	}
-
-	var nodes []struct {
-		ID        string                 `json:"id"`
-		Name      string                 `json:"name"`
-		Parent    *string                `json:"parent"`
-		Props     map[string]interface{} `json:"props"`
-		State     [][]interface{}        `json:"state"`
-		DomNodeID *string                `json:"domNodeId"`
-	}
-	if err := json.Unmarshal(raw, &nodes); err != nil {
-		return nil, fmt.Errorf("decode reified tree: %w", err)
-	}
-
-	facts := make([]mangle.Fact, 0, len(nodes)*4)
-	now := time.Now()
-
-	for _, n := range nodes {
-		parent := ""
-		if n.Parent != nil {
-			parent = *n.Parent
-		}
-		facts = append(facts, mangle.Fact{
-			Predicate: "react_component",
-			Args:      []interface{}{sessionID, n.ID, n.Name, parent},
-			Timestamp: now,
-		})
-
-		for k, v := range n.Props {
-			facts = append(facts, mangle.Fact{
-				Predicate: "react_prop",
-				Args:      []interface{}{sessionID, n.ID, k, fmt.Sprintf("%v", v)},
-				Timestamp: now,
-			})
-		}
-
-		for _, entry := range n.State {
-			if len(entry) != 2 {
-				continue
-			}
-			facts = append(facts, mangle.Fact{
-				Predicate: "react_state",
-				Args:      []interface{}{sessionID, n.ID, entry[0], fmt.Sprintf("%v", entry[1])},
-				Timestamp: now,
-			})
-		}
-
-		if n.DomNodeID != nil && *n.DomNodeID != "" {
-			facts = append(facts, mangle.Fact{
-				Predicate: "dom_mapping",
-				Args:      []interface{}{sessionID, n.ID, *n.DomNodeID},
-				Timestamp: now,
-			})
-		}
-	}
-
-	if err := m.engine.AddFacts(ctx, facts); err != nil {
-		return nil, err
-	}
-	return facts, nil
+// ReifyReact returns a bounded structured Fiber subtree, with optional fact submission.
+func (m *SessionManager) ReifyReact(ctx context.Context, sessionID string, root *rod.Element, options SnapshotOptions) (*StructuredSnapshot, error) {
+	return m.captureStructured(ctx, sessionID, root, options, true)
 }
 
 func (m *SessionManager) recordNavigationEvent(sessionID, toURL string, at time.Time) {

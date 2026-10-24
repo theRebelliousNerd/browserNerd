@@ -11,6 +11,9 @@ browser:
   # attach to a browser started with --remote-debugging-port.
   debugger_url: ""
   launch: []
+  # Linux headed automation on a private display (requires Xvfb and Openbox).
+  # Explicitly set headless: false when enabling; never falls back to your desktop.
+  isolated_display: false
   default_navigation_timeout: 15s
   default_attach_timeout: 10s
   session_store: sessions.json
@@ -59,6 +62,14 @@ specs:
   max_file_bytes: 2097152
   max_results: 12
   max_excerpt_bytes: 1200
+
+logs:
+  # Native application sources are opt-in; keep file paths in the app's profile.
+  # files: [{name: api, path: /path/to/app/logs/api.log}]
+  files: []
+  log_window: 30s
+  max_read_bytes: 1048576
+  max_entries: 2000
 
 recorder:
   # Enables MCP call/result flight logs and export_flight output support.

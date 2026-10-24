@@ -1,16 +1,20 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"browsernerd-mcp-server/internal/browser"
 	"browsernerd-mcp-server/internal/mangle"
 	"browsernerd-mcp-server/internal/security"
+	"codeberg.org/TauCeti/mangle-go/ast"
+	"codeberg.org/TauCeti/mangle-go/parse"
 
 	"gopkg.in/yaml.v3"
 )
@@ -89,6 +93,9 @@ A TEST HAS:
   before the run never counts. "current" counts every buffered row.
   Omit assertions to replay the operations only: the result says
   replayed, never passed.
+Initial session_id is optional when operations establish one before page
+actions. The result, reserved query variable S and diagnosis use the final
+replay session. Other query variables remain explicit engine-wide bindings.
 
 EXAMPLE (inline):
 run-test(test: {
@@ -158,8 +165,8 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	if sessionID == "" {
 		sessionID = spec.SessionID
 	}
-	if len(operations) > 0 && sessionID == "" {
-		return map[string]interface{}{"success": false, "error": "session_id is required when a test has operations"}, nil
+	if err := validateFixtureSessionFlow(operations, sessionID); err != nil {
+		return map[string]interface{}{"success": false, "error": err.Error() + "; nothing ran"}, nil
 	}
 
 	resolvedOperations, secrets, err := resolveTestOperations(operations)
@@ -167,10 +174,25 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 		return map[string]interface{}{"success": false, "error": err.Error() + "; nothing ran"}, nil
 	}
 
-	baselines := make([][]mangle.QueryResult, len(spec.Assertions))
+	// Only initial/explicit-focus IDs can name a pre-existing final session.
+	// Created/forked/attached session IDs do not have a pre-run baseline.
+	baselines := map[string][][]mangle.QueryResult{}
 	if len(operations) > 0 {
-		for idx, assertion := range spec.Assertions {
-			baselines[idx], _ = queryAssertionRows(ctx, t.engine, assertion.Query)
+		candidates := map[string]bool{"": true, sessionID: true}
+		for _, op := range operations {
+			if getStringFromMap(op, "type") == "session_focus" {
+				candidates[getStringFromMap(op, "session_id")] = true
+			}
+		}
+		for candidate := range candidates {
+			rows := make([][]mangle.QueryResult, len(spec.Assertions))
+			for idx, assertion := range spec.Assertions {
+				query, _, err := fixtureSessionQuery(assertion.Query, candidate)
+				if err == nil {
+					rows[idx], _ = queryAssertionRows(ctx, t.engine, query)
+				}
+			}
+			baselines[candidate] = rows
 		}
 	}
 	// The run starts once its baselines are read, and acts only after the
@@ -216,10 +238,21 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 		} else {
 			result["replay"] = replay
 			if m, ok := replay.(map[string]interface{}); ok {
+				if actual := getStringArg(m, "session_id"); actual != "" {
+					sessionID = actual
+					result["session_id"] = actual
+				}
 				if success, ok := m["success"].(bool); ok && !success {
 					replayOK = false
 				}
 			}
+		}
+	}
+	if t.sessions != nil && sessionID != "" {
+		if meta, ok := t.sessions.GetSession(sessionID); ok {
+			result["browser_id"] = meta.BrowserID
+			result["isolated"] = meta.Isolated
+			result["isolated_display"] = meta.IsolatedDisplay
 		}
 	}
 
@@ -227,7 +260,24 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	assertionResults := make([]map[string]interface{}, 0, len(spec.Assertions))
 	allPassed := true
 	for i, a := range spec.Assertions {
-		ar, passed := t.evaluateAssertion(ctx, i, a, baselines[i], len(operations) > 0, runStart)
+		query, bound, queryErr := fixtureSessionQuery(a.Query, sessionID)
+		var baseline []mangle.QueryResult
+		if rows, ok := baselines[sessionID]; ok {
+			baseline = rows[i]
+		} else if !bound && len(operations) > 0 {
+			baseline = baselines[""][i]
+		}
+		a.Query = query
+		var ar map[string]interface{}
+		var passed bool
+		if queryErr != nil {
+			ar = map[string]interface{}{"name": a.Name, "passed": false, "error": queryErr.Error()}
+		} else {
+			ar, passed = t.evaluateAssertion(ctx, i, a, baseline, len(operations) > 0, runStart)
+		}
+		if bound {
+			ar["session_id"] = sessionID
+		}
 		if !passed {
 			allPassed = false
 		}
@@ -248,7 +298,7 @@ func (t *RunTestTool) Execute(ctx context.Context, args map[string]interface{}) 
 	}
 
 	// On failure, surface derived causal facts for token-efficient drill-down.
-	if !passed && getBoolArg(args, "diagnose_on_failure", true) {
+	if !passed && getBoolArg(args, "diagnose_on_failure", true) && (len(operations) == 0 || sessionID != "") {
 		// A test that acted is diagnosed from what its run caused, not from
 		// failures already on the page before it started.
 		sinceMs := int64(0)
@@ -657,6 +707,108 @@ func validateTestOperations(operations []map[string]interface{}) ([]map[string]i
 	}
 	normalized, issues, _ := validateActOperations(toInterfaceSlice(operations), true)
 	return normalized, issues
+}
+
+// validateFixtureSessionFlow runs on the complete normalized fixture before
+// any lifecycle effect. It never selects a server-wide default session.
+func validateFixtureSessionFlow(operations []map[string]interface{}, initial string) error {
+	available, known := initial != "", initial
+	for idx, op := range operations {
+		kind := getStringFromMap(op, "type")
+		needSession := func() error {
+			return fmt.Errorf("op %d %s needs session_id or an earlier session_create/attach/fork/focus", idx, kind)
+		}
+		if getStringFromMap(op, "dialog") != "" && !available {
+			return needSession()
+		}
+		switch kind {
+		case "sleep", "browser_launch", "wait", "await_fact", "await_conditions":
+		case "browser_close":
+			available, known = false, ""
+		case "session_create", "session_attach":
+			available, known = true, ""
+		case "session_fork":
+			if !available && getStringFromMap(op, "source_session_id") == "" {
+				return needSession()
+			}
+			available, known = true, ""
+		case "session_focus":
+			target := getStringFromMap(op, "session_id")
+			if target == "" && !available {
+				return needSession()
+			}
+			if target != "" {
+				known = target
+			}
+			available = true
+		case "session_close":
+			target := getStringFromMap(op, "session_id")
+			if target == "" && !available {
+				return needSession()
+			}
+			if target == "" || known == "" || target == known {
+				available, known = false, ""
+			}
+		default:
+			if !available {
+				return needSession()
+			}
+		}
+	}
+	return nil
+}
+
+// fixtureSessionQuery binds reserved variable S through parsed terms, so
+// constants and quoted strings cannot be changed by textual substitution.
+func fixtureSessionQuery(query, sessionID string) (string, bool, error) {
+	if sessionID == "" {
+		return query, false, nil
+	}
+	statement, err := assertionStatement(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), "?")))
+	if err != nil {
+		return query, false, err
+	}
+	unit, err := parse.Unit(bytes.NewBufferString(statement))
+	conjunction := false
+	if err != nil {
+		unit, err = parse.Unit(bytes.NewBufferString("browsernerd_fixture_query() :- " + statement))
+		conjunction = true
+	}
+	if err != nil {
+		return query, false, fmt.Errorf("parse assertion: %w", err)
+	}
+	if len(unit.Clauses) != 1 {
+		return query, false, fmt.Errorf("assertion must contain exactly one Mangle query")
+	}
+	clause := unit.Clauses[0]
+	vars := map[ast.Variable]bool{}
+	ast.AddVars(clause.Head, vars)
+	for _, term := range clause.Premises {
+		ast.AddVars(term, vars)
+	}
+	if !vars[ast.Variable{Symbol: "S"}] {
+		return query, false, nil
+	}
+	if conjunction {
+		names := make([]string, 0, len(vars))
+		for variable := range vars {
+			if variable.Symbol != "_" {
+				names = append(names, variable.Symbol)
+			}
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			clause.Head.Args = append(clause.Head.Args, ast.Variable{Symbol: name})
+		}
+		clause.Head.Predicate.Arity = len(clause.Head.Args)
+	} else if clause.Premises == nil {
+		// Each anonymous atom argument must be the same fresh variable in
+		// the projected head and premise, including when the result is empty.
+		clause.Head = ast.ReplaceWildcards(vars, clause.Head).(ast.Atom)
+		clause.Premises = []ast.Term{clause.Head}
+	}
+	clause.Premises = append(clause.Premises, ast.Eq{Left: ast.Variable{Symbol: "S"}, Right: ast.String(sessionID)})
+	return clause.String(), true, nil
 }
 
 func toInterfaceSlice(actions []map[string]interface{}) []interface{} {

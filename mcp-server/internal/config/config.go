@@ -39,6 +39,7 @@ type Config struct {
 	Mangle   MangleConfig   `yaml:"mangle"`
 	Specs    SpecsConfig    `yaml:"specs"`
 	Docker   DockerConfig   `yaml:"docker"`
+	Logs     LogsConfig     `yaml:"logs"`
 	Recorder RecorderConfig `yaml:"recorder"`
 	Security SecurityConfig `yaml:"security"`
 
@@ -65,6 +66,8 @@ type BrowserConfig struct {
 	AutoStart bool `yaml:"auto_start"`
 	// Headless controls whether Chrome runs in headless mode (default: true).
 	Headless *bool `yaml:"headless"`
+	// IsolatedDisplay requests a managed private headed display, never the user's desktop.
+	IsolatedDisplay bool `yaml:"isolated_display"`
 	// Default navigation timeout (e.g., "15s").
 	DefaultNavigationTimeout string `yaml:"default_navigation_timeout"`
 	// Default timeout when attaching to an existing target (e.g., "10s").
@@ -299,6 +302,7 @@ func DefaultConfig() Config {
 			LogWindow:  "30s",
 			Host:       "",
 		},
+		Logs: defaultLogsConfig(),
 		Recorder: RecorderConfig{
 			Enabled:         true,
 			TraceDir:        filepath.Join(dataRoot, "traces"),
@@ -331,6 +335,11 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		return cfg, err
 	}
+	configDir, err := filepath.Abs(filepath.Dir(path))
+	if err != nil {
+		return cfg, fmt.Errorf("resolving config directory: %w", err)
+	}
+	cfg.Logs = resolveLogPaths(cfg.Logs, configDir)
 
 	return cfg, cfg.Validate()
 }
@@ -410,6 +419,9 @@ func LoadWithWorkspace(explicitConfig string, opts WorkspaceOptions) (Config, st
 				return cfg, "", fmt.Errorf("parsing workspace config %s: %w", wsConfigPath, err)
 			}
 			cfg = resolveWorkspacePaths(cfg, wsDir)
+			if err := confineWorkspaceLogs(&cfg.Logs, wsDir, opts.Trust); err != nil {
+				return cfg, "", fmt.Errorf("workspace config %s is not trusted: %w", wsConfigPath, err)
+			}
 		}
 	}
 
@@ -495,6 +507,14 @@ func InitWorkspace(root string) error {
 #     - my-app-backend
 #     - my-app-frontend
 #   log_window: "30s"
+
+# logs:
+#   files:
+#     - name: gateway
+#       path: logs/gateway.log
+#   log_window: "30s"
+#   max_read_bytes: 1048576
+#   max_entries: 2000
 
 # The built-in Mangle schema is compiled into the server. Project modules
 # (.mg files in .browsernerd/schemas/) load on top of it automatically; point
@@ -586,6 +606,7 @@ func resolveRelativePaths(cfg Config, baseDir string) Config {
 	cfg.Browser.RepoTrace.RootDir = resolve(cfg.Browser.RepoTrace.RootDir)
 	cfg.Mangle.SchemaPath = resolve(cfg.Mangle.SchemaPath)
 	cfg.Recorder.TraceDir = resolve(cfg.Recorder.TraceDir)
+	cfg.Logs = resolveLogPaths(cfg.Logs, baseDir)
 	for sourceIdx := range cfg.Specs.Sources {
 		for rootIdx, root := range cfg.Specs.Sources[sourceIdx].Roots {
 			cfg.Specs.Sources[sourceIdx].Roots[rootIdx] = resolve(root)
@@ -604,6 +625,9 @@ func resolveRelativePaths(cfg Config, baseDir string) Config {
 func (c *Config) Validate() error {
 	if c.Server.Name == "" {
 		return errors.New("server.name is required")
+	}
+	if err := c.Browser.ValidateDisplayIsolation(); err != nil {
+		return err
 	}
 	if c.Browser.RepoTrace.Enabled {
 		if c.Browser.RepoTrace.MaxFiles <= 0 {
@@ -650,6 +674,18 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	if err := c.Logs.Validate(); err != nil {
+		return err
+	}
+	if c.Docker.Enabled {
+		for _, file := range c.Logs.Files {
+			for _, container := range c.Docker.Containers {
+				if file.Name == strings.TrimSpace(container) {
+					return fmt.Errorf("logs.files name %q duplicates an enabled docker container source", file.Name)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -672,11 +708,12 @@ type workspaceAuthorityDocument struct {
 		LogFile *string `yaml:"log_file"`
 	} `yaml:"server"`
 	Browser struct {
-		DebuggerURL  *string   `yaml:"debugger_url"`
-		Launch       *[]string `yaml:"launch"`
-		AutoStart    *bool     `yaml:"auto_start"`
-		SessionStore *string   `yaml:"session_store"`
-		RepoTrace    struct {
+		DebuggerURL     *string   `yaml:"debugger_url"`
+		Launch          *[]string `yaml:"launch"`
+		AutoStart       *bool     `yaml:"auto_start"`
+		IsolatedDisplay *bool     `yaml:"isolated_display"`
+		SessionStore    *string   `yaml:"session_store"`
+		RepoTrace       struct {
 			RootDir *string `yaml:"root_dir"`
 		} `yaml:"repo_trace"`
 	} `yaml:"browser"`
@@ -711,6 +748,9 @@ func validateWorkspaceAuthority(raw []byte, wsDir string, trusted bool) error {
 	}
 	if doc.Browser.AutoStart != nil && *doc.Browser.AutoStart {
 		return errors.New("browser.auto_start=true requires --trust-workspace-config")
+	}
+	if doc.Browser.IsolatedDisplay != nil {
+		return errors.New("browser.isolated_display requires --trust-workspace-config")
 	}
 	if doc.Browser.DebuggerURL != nil && strings.TrimSpace(*doc.Browser.DebuggerURL) != "" {
 		return errors.New("browser.debugger_url requires --trust-workspace-config")

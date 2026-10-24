@@ -43,6 +43,8 @@ Decl dom_layout(SessionId, NodeId, X, Y, Width, Height, Visible).
 # Core transaction record
 # Session-scoped to prevent cross-session contamination.
 Decl net_request(SessionId, Id, Method, Url, InitiatorId, StartTime).
+# CDP request identity; loaders distinguish documents sharing a URL.
+Decl net_request_context(SessionId, Id, ResourceType, FrameId, LoaderId).
 # Response metadata with timing, whole milliseconds: Latency is the server's
 # wait (request sent to first byte); Duration is request issued to response
 # headers received, queueing and connection setup included.
@@ -72,6 +74,8 @@ Decl click_event(SessionId, NodeId, Timestamp).
 Decl input_event(SessionId, NodeId, Value, Timestamp).
 Decl state_change(SessionId, Name, Value, Timestamp).
 Decl navigation_event(SessionId, Url, Timestamp).
+# Main-frame navigation kind (document | same_document) and document loader.
+Decl navigation_context(SessionId, Url, Kind, LoaderId, Timestamp).
 
 # Browser-generated warnings and errors (deprecation, intervention, security,
 # CSP, violation); Level is warning | error.
@@ -99,3 +103,7 @@ Decl toast_notification(SessionId, Text, Level, Source, Timestamp).
 # Convenience predicates for level-specific queries
 Decl error_toast(SessionId, Text, Source, Timestamp).
 Decl warning_toast(SessionId, Text, Source, Timestamp).
+
+# Generic ARIA announcements, including inline validation and status badges.
+# Role does not establish severity; toast markers are classified separately.
+Decl live_region_notification(SessionId, Text, Role, Level, Timestamp).

@@ -40,6 +40,9 @@ diagnosis on failure. An action test's assertions default to scope fresh: what
 the run caused, plus state that still holds (the tab's current URL), never an
 event from before the run. A fixture with operations and no assertions is a
 replay: status replayed, never passed.
+Initial session_id may be omitted when session_create/attach (or explicit-source
+fork/target focus) precedes page operations. Receipts and assertions use the
+final replay session; query variable S binds that session, never another tab.
 
 Credential fields use value_env, resolved only while running and never written
 back into the fixture; an unset or empty variable stops the run before the
@@ -62,7 +65,7 @@ func (t *BrowserTestTool) InputSchema() map[string]interface{} {
 				"type": "string",
 				"enum": []string{"create", "inspect", "run"},
 			},
-			"session_id": map[string]interface{}{"type": "string"},
+			"session_id": map[string]interface{}{"type": "string", "description": "Initial session; omit for a session-establishing fixture"},
 			"name":       map[string]interface{}{"type": "string"},
 			"test": map[string]interface{}{
 				"type":        "object",

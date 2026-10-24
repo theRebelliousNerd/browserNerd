@@ -2,9 +2,9 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -202,7 +202,15 @@ func TestReapOrphans_ReapsOnlyTreesWhoseOwnerDied(t *testing.T) {
 			t.Fatal(err)
 		}
 		if owner > 0 {
-			if err := os.WriteFile(filepath.Join(dir, ProfileOwnerFile), []byte(strconv.Itoa(owner)), 0o600); err != nil {
+			scope, err := processScope()
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(profileOwnership{PID: owner, ProcessScope: scope})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ProfileOwnerFile), raw, 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}

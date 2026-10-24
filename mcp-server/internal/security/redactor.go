@@ -1,6 +1,7 @@
 package security
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -11,9 +12,10 @@ import (
 const Redacted = "[REDACTED]"
 
 var (
-	bearerPattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+`)
-	jwtPattern    = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)
-	secretPattern = regexp.MustCompile(`(?i)(password|passwd|authorization|cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)(\s*[:=]\s*)([^&\s,;"'}]+)`)
+	bearerPattern  = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+`)
+	jwtPattern     = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`)
+	secretPattern  = regexp.MustCompile(`(?i)(password|passwd|authorization|cookie|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)(\s*[:=]\s*)([^&\s,;"'}]+)`)
+	jsonKeyPattern = regexp.MustCompile(`("(?:\\.|[^"\\])*")\s*:\s*`)
 )
 
 // Redactor removes credentials and other sensitive values before persistence.
@@ -53,6 +55,7 @@ func (r *Redactor) SanitizeString(value string) string {
 	if r == nil {
 		return value
 	}
+	value = r.redactJSONFields(value)
 	value = RedactURL(value, r.sensitiveKeys)
 	value = bearerPattern.ReplaceAllStringFunc(value, func(match string) string {
 		parts := strings.Fields(match)
@@ -64,6 +67,84 @@ func (r *Redactor) SanitizeString(value string) string {
 	value = jwtPattern.ReplaceAllString(value, Redacted)
 	value = secretPattern.ReplaceAllString(value, `${1}${2}`+Redacted)
 	return value
+}
+
+// redactJSONFields scans quoted JSON keys in both complete documents and log
+// fragments. It preserves surrounding text and replaces whole sensitive values,
+// including objects and arrays, without recursively decoding string scalars.
+func (r *Redactor) redactJSONFields(value string) string {
+	var out strings.Builder
+	cursor, copied := 0, 0
+	for cursor < len(value) {
+		match := jsonKeyPattern.FindStringSubmatchIndex(value[cursor:])
+		if match == nil {
+			break
+		}
+		var key string
+		keyErr := json.Unmarshal([]byte(value[cursor+match[2]:cursor+match[3]]), &key)
+		start := cursor + match[1]
+		cursor = start
+		if keyErr != nil || !r.IsSensitiveKey(key) || start == len(value) {
+			continue
+		}
+		end := jsonValueEnd(value, start)
+		if end <= start {
+			continue
+		}
+		out.WriteString(value[copied:start])
+		out.WriteString(`"` + Redacted + `"`)
+		copied, cursor = end, end
+	}
+	if copied == 0 {
+		return value
+	}
+	out.WriteString(value[copied:])
+	return out.String()
+}
+
+// jsonValueEnd advances monotonically through one value without recursion.
+// Incomplete quoted or container values consume the remainder so a clipped log
+// cannot expose the credential merely by omitting its final delimiter.
+func jsonValueEnd(value string, start int) int {
+	quoted := false
+	escaped := false
+	depth := 0
+	container := value[start] == '{' || value[start] == '['
+	for i := start; i < len(value); i++ {
+		char := value[i]
+		if quoted {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				quoted = false
+				if !container {
+					return i + 1
+				}
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			quoted = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if !container {
+				return i
+			}
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		case ',', ';', '&', ' ', '\t', '\r', '\n':
+			if !container {
+				return i
+			}
+		}
+	}
+	return len(value)
 }
 
 // RedactHeader returns a safe representation of an HTTP header.

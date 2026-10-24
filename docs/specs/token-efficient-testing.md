@@ -23,15 +23,14 @@ enabled.
 ## The fixture
 
 ```yaml
-name: browserqa login
-session_id: <session>
+name: private login
 operations:
-  - {type: navigate, url: "http://localhost:3001/login"}
+  - {type: session_create, browser_id: "<browser>", isolated: true, url: "https://example.test/login"}
   - type: fill
     fields:
-      - {ref: "testid:auth-email", value: browserqa@crossthread.dev}
-      - {ref: "testid:auth-password", value_env: BROWSERNERD_TEST_PASSWORD}
-    submit_button: "testid:auth-sign-in-btn"
+      - {label: Email, value: qa@example.test}
+      - {label: Password, value_env: TEST_LOGIN_PASSWORD}
+    submit_button: "Sign in"
 assertions:
   - {name: backend accepted and URL changed, query: "login_succeeded(S)", expect: present}
   - {name: no visible errors, query: "user_visible_error(S, _, _, _)", expect: absent}
@@ -48,6 +47,16 @@ meet the validation `browser-act` applies to a batch
 ([declarative automation](declarative-browser-automation.md)), so a
 misspelled field fails the fixture instead of being skipped, and replay runs
 with `browser-act`'s upload path policy and credential redactor.
+
+An initial `session_id` is optional when static validation proves that a
+session-creating operation precedes every operation that needs a page.
+`session_create` and `session_attach` establish the batch's session;
+`session_fork` requires an explicit source or an established session.
+Browser lifecycle and sleep do not establish a page. An unanchored page
+operation anywhere in the normalized sequence rejects the entire fixture
+before any operation runs, including when `stop_on_error` is false.
+If an establishing operation fails, later page operations cannot borrow an
+unrelated tab. Routing stays local to the batch; no global default changes.
 
 A fixture with operations and no assertions (the key left out or `[]`) is a
 replay: a login replay needs its `value_env` steps and nothing checked. It
@@ -74,6 +83,19 @@ Execution reads a per-assertion baseline, marks the run's start once the
 clock has moved past the baseline read, replays through `browser-act`, and
 evaluates complete bounded queries. Action tests default to `scope: fresh`;
 assertion-only tests default to `current`, every buffered row.
+
+The receipt's `session_id`, assertion session binding and failure diagnosis
+use the actual session reached by replay, including after create, attach,
+fork or focus. When a fixture has an effective session, query variable `S`
+is reserved for that session and is bound before evaluation using the Mangle
+syntax tree. Quoted text containing `S` is untouched. Queries without `S`
+keep their explicit meaning; an assertion-only fixture without a session
+queries the retained engine without a session binding. Fresh baselines are
+evaluated with the same final-session binding as the result, so another
+session's retained state or newly arriving events cannot satisfy `S`.
+Each bound assertion reports its effective session_id. A fixture that switches
+session uses the final session for all post-replay assertions; assertions
+about a different session must explicitly name it without the reserved `S`.
 
 A fresh assertion counts the rows that are true for the run:
 

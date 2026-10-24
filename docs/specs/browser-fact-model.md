@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Browser Fact Model
 created: 2026-07-23
-last_updated: 2026-09-30
+last_updated: 2026-10-23
 doc_type: data-spec
 subsystem: browsernerd
 read_when: Ingesting browser events or authoring Mangle rules
@@ -22,12 +22,12 @@ each predicate's module and fact count. Core domains:
   `dom_node`, `dom_attr`, `dom_text`, `dom_layout`, and `dom_updated`.
 - React: `react_component`, `react_prop`, `react_state`, and `dom_mapping`.
 - Network: `net_request`, `net_response`, `net_header`,
-  `net_correlation_key`, `request_initiator`, the failure facts
+  `net_correlation_key`, `request_initiator`, `net_request_context`, the failure facts
   `net_http_error`, `net_loading_failed` and `net_failure_body`, and the
   WebSocket lifecycle `ws_event`.
 - Console and browser: `console_event` and `browser_log`.
 - User and UI events: `toast_notification` (with `error_toast` and
-  `warning_toast`), `click_event`, `input_event`, `state_change`, `js_dialog`,
+  `warning_toast`), `live_region_notification`, `click_event`, `input_event`, `state_change`, `js_dialog`,
   `download`, `dead_control`, and interaction facts.
 - Automation and evidence: form, plan, screenshot, audit, repo-trace,
   disclosure, and JS-gate facts.
@@ -41,8 +41,21 @@ shedding must never independently discard one side of the pair.
 
 ## Capture facts
 
+`toast_notification` requires positive toast/snackbar or toast-library element
+markers. A generic ARIA alert, status, or live region emits
+`live_region_notification(SessionId, Text, Role, Level, Timestamp)` instead.
+Role and severity are separate: a status badge is not a toast, and an alert
+role alone does not prove an error. Explicit error-level inline announcements
+remain `user_visible_error` evidence with source `live_region`, contribute to
+`page_has_error`, and appear in
+the separate `browser-reason` `live_regions` section. Route announcements are
+excluded. Nested toast text belongs to one notification; unrelated inline
+validation retains its own live-region evidence.
+
 | Fact | Meaning |
 |---|---|
+| `net_request_context(SessionId, Id, ResourceType, FrameId, LoaderId)` | CDP resource and document identity for a request; retained with its request lifecycle |
+| `navigation_context(SessionId, Url, Kind, LoaderId, Timestamp)` | Main-frame navigation identity; `Kind` is `document` or `same_document`; only a document navigation may backdate its scope to its loader's Document request |
 | `net_response(SessionId, Id, Status, Latency, Duration)` | Whole milliseconds: `Latency` is the server's wait (request sent to first byte), `Duration` is request issued to response headers received, queueing and connection setup included |
 | `net_http_error(SessionId, Id, Url, Status, ResourceType, Timestamp)` | A response with status >= 400, stamped when it arrived; `ResourceType` is the CDP type (`Document`, `XHR`, `Fetch`, `Script`, `Image`, ...) |
 | `net_loading_failed(SessionId, Id, ErrorText, Canceled, Timestamp)` | A request that got no response - refused connection, DNS, CORS, abort; `Canceled` is `"true"` for an aborted request |

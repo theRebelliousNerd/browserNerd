@@ -32,6 +32,11 @@ func (m *SessionManager) onMainFrameNavigated(ctx context.Context, sessionID str
 	}
 	url := m.redactor.SanitizeString(frame.URL)
 	facts := navigationFacts(sessionID, url, now)
+	facts = append(facts, mangle.Fact{
+		Predicate: "navigation_context",
+		Args:      []interface{}{sessionID, url, "document", string(frame.LoaderID), now.UnixMilli()},
+		Timestamp: now,
+	})
 	if strings.HasPrefix(frame.URL, "chrome-error://") {
 		unreachable := m.redactor.SanitizeString(frame.UnreachableURL)
 		if unreachable == "" {
@@ -57,7 +62,12 @@ func (m *SessionManager) onSameDocumentNavigation(ctx context.Context, sessionID
 		registry.IncrementGeneration()
 	}
 	url := m.redactor.SanitizeString(ev.URL)
-	m.addFacts(ctx, sessionID, "navigation", navigationFacts(sessionID, url, now))
+	facts := append(navigationFacts(sessionID, url, now), mangle.Fact{
+		Predicate: "navigation_context",
+		Args:      []interface{}{sessionID, url, "same_document", "", now.UnixMilli()},
+		Timestamp: now,
+	})
+	m.addFacts(ctx, sessionID, "navigation", facts)
 	m.recordNavigationEvent(sessionID, url, now)
 }
 

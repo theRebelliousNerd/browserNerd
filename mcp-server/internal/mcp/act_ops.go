@@ -685,8 +685,8 @@ func actOperationItemSchema() map[string]interface{} {
 		}
 		return m
 	}
-	// Rare fields (match_args, args, conditions, script, target_id, browser_id,
-	// isolated, ...) are accepted and named in the tool description.
+	// Less common payloads (match_args, args, conditions, script, ...) remain
+	// operation-specific; lifecycle routing must be expressible by providers.
 	return map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -716,6 +716,11 @@ func actOperationItemSchema() map[string]interface{} {
 			"files":               typed("array", ""),
 			"predicate":           str(""),
 			"session_id":          str("session_focus/close target"),
+			"browser_id":          str("create/attach: instance (default browser); browser_close: exact instance (omitted closes ALL)"),
+			"isolated":            typed("boolean", "session_create: fresh incognito context (default false)"),
+			"new_instance":        typed("boolean", "browser_launch: additional process; does not change default"),
+			"target_id":           str("session_attach: existing CDP target"),
+			"source_session_id":   str("session_fork: source whose auth is copied (default batch session)"),
 			"preset":              map[string]interface{}{"type": "string", "enum": viewportPresetEnum()},
 			"width":               typed("integer", "viewport: CSS px"),
 			"height":              typed("integer", ""),

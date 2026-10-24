@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"browsernerd-mcp-server/internal/logs"
 	"context"
 	"errors"
 	"strings"
@@ -12,12 +13,12 @@ import (
 // error, not as a successful query that found no logs.
 func TestQueryLogsFailsWhenEveryContainerFails(t *testing.T) {
 	client := NewClient([]string{"backend", "frontend"}, 30*time.Second, "")
-	client.query = func(_ context.Context, container string, _ time.Time) ([]LogEntry, error) {
+	client.query = func(_ context.Context, container string, _ time.Time) ([]logs.Entry, error) {
 		return nil, errors.New("docker logs " + container + ": error during connect: " + strings.Repeat("x", 2000))
 	}
-	logs, err := client.QueryLogs(context.Background(), time.Now().Add(-time.Minute))
+	entries, err := client.QueryLogs(context.Background(), time.Now().Add(-time.Minute))
 	if err == nil {
-		t.Fatalf("expected an error when every container fails, got %d logs and nil", len(logs))
+		t.Fatalf("expected an error when every container fails, got %d logs and nil", len(entries))
 	}
 	if !strings.Contains(err.Error(), "every container (2)") || !strings.Contains(err.Error(), "backend") || !strings.Contains(err.Error(), "frontend") {
 		t.Fatalf("error must name the failure and each container: %v", err)
@@ -29,24 +30,24 @@ func TestQueryLogsFailsWhenEveryContainerFails(t *testing.T) {
 
 func TestQueryLogsKeepsPartialSuccess(t *testing.T) {
 	client := NewClient([]string{"backend", "frontend"}, 30*time.Second, "")
-	client.query = func(_ context.Context, container string, _ time.Time) ([]LogEntry, error) {
+	client.query = func(_ context.Context, container string, _ time.Time) ([]logs.Entry, error) {
 		if container == "frontend" {
 			return nil, errors.New("docker logs frontend: No such container")
 		}
-		return []LogEntry{{Container: container, Level: "ERROR", Message: "boom"}}, nil
+		return []logs.Entry{{Source: container, Level: "ERROR", Message: "boom"}}, nil
 	}
-	logs, err := client.QueryLogs(context.Background(), time.Now().Add(-time.Minute))
-	if err != nil {
-		t.Fatalf("one answering container is a partial success, got %v", err)
+	entries, err := client.QueryLogs(context.Background(), time.Now().Add(-time.Minute))
+	if err == nil || !strings.Contains(err.Error(), "frontend") {
+		t.Fatalf("partial failure must remain visible alongside healthy evidence: %v", err)
 	}
-	if len(logs) != 1 || logs[0].Container != "backend" {
-		t.Fatalf("expected the backend's log, got %+v", logs)
+	if len(entries) != 1 || entries[0].Source != "backend" {
+		t.Fatalf("expected the backend's log, got %+v", entries)
 	}
 }
 
 func TestQueryLogsWithNoContainersIsEmpty(t *testing.T) {
-	logs, err := NewClient(nil, 30*time.Second, "").QueryLogs(context.Background(), time.Now())
-	if err != nil || len(logs) != 0 {
-		t.Fatalf("no configured containers means nothing to query, got %d logs, %v", len(logs), err)
+	entries, err := NewClient(nil, 30*time.Second, "").QueryLogs(context.Background(), time.Now())
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("no configured containers means nothing to query, got %d logs, %v", len(entries), err)
 	}
 }

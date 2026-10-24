@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Observation and Interaction
 created: 2026-07-23
-last_updated: 2026-09-30
+last_updated: 2026-10-23
 doc_type: feature-spec
 subsystem: browsernerd
 read_when: Changing navigation, element discovery, actions, screenshots, or JS
@@ -82,9 +82,9 @@ One call returns:
   size_bytes, width, height}`. `annotate: true` draws numbered boxes on the
   controls in the viewport, at most `max_items` (default 30, cap 200), and
   lists them grouped with their refs. `ref` captures one element and
-  `full_page: true` the whole scrollable page. The tab is brought to the front
-  first, and activation plus capture are bounded at 20 s: a tab that cannot
-  render fails with an error instead of holding the call.
+  `full_page: true` the whole scrollable page. Capture is bounded at 20 s and
+  never activates the tab or its desktop window. Focus emulation keeps the
+  background renderer working; a tab that cannot render fails with an error.
 - `storage` answers "why am I signed out" from the page's own state: cookies
   (name, size, flags, expiry) and `localStorage`/`sessionStorage` keys (size,
   kind), auth-looking names first, and for every JWT-shaped value - including
@@ -160,9 +160,23 @@ Every operation also accepts `dialog` (`accept` or `dismiss`) and
   custom combobox (Radix and the like) and clicks the option; either way it
   verifies the control now shows the chosen option.
 - `key` takes a chord: modifiers joined to the key with `+`.
+- Locator clicks settle and hit-test the same live target after scrolling and
+  native hover before one pointer press. A moving or detached target fails
+  within the geometry deadline; the command never retries a dispatched click.
+  Custom combobox selection uses that same geometry path and verifies the
+  selected value. Explicit `x`/`y` clicks retain their literal coordinates.
 - A `session_create`, `session_fork` or `session_attach` result carries the
   new `session_id`, and the operations after it in the same batch run against
   that session. `session_focus` moves the batch the same way.
+  Compact lifecycle entries also retain `browser_id`, `isolated` and
+  `isolated_display` for the resulting session. A browser launch entry retains
+  its new browser_id and managed/default/private-display metadata. These are
+  routing and isolation facts, not proof of caller ownership of an old object.
+  The provider operation schema exposes `browser_id`, `isolated`,
+  `new_instance`, `target_id` and `source_session_id` with their operation
+  scope. Runtime validation still refuses a field on the wrong operation.
+  Selecting an instance is explicit on create/attach; launching another
+  instance never changes the default selected by omitted browser_id.
 - A JavaScript dialog is never left open, because an open dialog blocks the
   renderer and every later call on the tab. `dialog: "accept"` or `"dismiss"`
   on an operation answers the dialog that operation opens, with `prompt_text`
@@ -170,7 +184,11 @@ Every operation also accepts `dialog` (`accept` or `dismiss`) and
   next dialog the tab opens. A dialog nobody armed is answered by
   `browser.dialog_policy` (default `dismiss`), and the op result and effects
   name every dialog and how it was answered.
-- A tab in the background is brought to the front before input is sent to it.
+- Ordinary operations never explicitly activate or restore a desktop window.
+  Native Chromium input may focus its window, so uninterrupted headed work
+  selects `browser.isolated_display: true`; native input, screenshots and
+  layout then run entirely on the managed private display. Explicit
+  `session_focus` reports when its scope is that private display.
 
 The response carries `success`, `status` (`ok`, `error`, or `invalid` for a
 batch rejected before running), a `summary` naming the first failure,
@@ -184,6 +202,13 @@ handle `act:<session>:<epoch ms>`. A compact result row carries `index`,
 returns `status: invalid`, the first problem as `error`, every problem in
 `issues` (`{index, type, error}`), and every operation counted as skipped.
 At `view: summary` the effects fold into the summary line.
+
+The effects and diagnosis keep actual toast/snackbar notifications separate
+from generic ARIA announcements. `toasts` requires element or toast-library
+markers; `live_regions` carries static statuses and inline alerts, preserving
+their role and severity without claiming a toast appeared. Error-level live
+regions still participate in failure diagnosis and health as live-region
+errors. Unchanged regions do not reappear as new action effects.
 
 ## Uploads, screenshots and JavaScript
 

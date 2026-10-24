@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Flight Recorder and Evidence
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-10-23
 doc_type: feature-spec
 subsystem: browsernerd
 read_when: Changing event capture, diagnostics, temporal reasoning, or exports
@@ -19,7 +19,7 @@ download and UI events from a tab's first request, normalizes them as
 timestamped facts ([browser fact model](browser-fact-model.md)), and derives
 compact causal conclusions. Common conclusions include failed and slow
 requests, error chains, toast-after-API-failure, repeated user-visible errors,
-cascading failures, and browser-to-container correlations.
+cascading failures, and correlations with configured native or container logs.
 
 Capture is asynchronous and bounded. Low-value, high-volume predicates can be
 sampled, and a full buffer sheds low-signal facts before failure evidence
@@ -50,7 +50,12 @@ key or submit), `since_navigation` (the page on screen: from the latest
 navigation, moved back to the start of the document request that loaded it,
 since that request starts before the navigation commits; default true for
 `network`, false for every other topic), and `time_window_ms` (default 300000;
-0 means all).
+0 means all). Navigation scoping uses the current main document's loader and
+latest matching Document request, including its initial redirect hop and a
+long load whose request began more than 30 seconds before commit. A same-document route change starts at
+that route event; a fetch, iframe or preceding reload cannot move its boundary.
+When request context is unavailable, the latest matching request within
+30 seconds and after the preceding navigation is the bounded evidence.
 
 A diagnosis leads with its answer: `status`, a one-line `verdict` naming the
 root cause, a `summary`, a `confidence`, and `next` - the one call worth
@@ -62,6 +67,16 @@ finding is one line in `issues`, with `more_issues` counting the rest.
 `expansion_suggested` marks a confidence below 0.70 or contradicting
 evidence.
 
+Every valid diagnosis, in every view, carries `scope` and `scope_since_ms`.
+The human-readable scope names the effective latest lower bound among the
+requested action, navigation and time-window bounds. Window-only diagnoses
+explicitly say session history; an unbounded read names all retained session
+history. `scope_since_ms` is that actual epoch-millisecond lower bound, or
+`0` for an unbounded read; no upper bound is implied. Issue verdicts begin
+with the same scope, including blocking diagnoses. Clean verdicts also state
+their scope. Topic defaults, failure counts, recovery and evidence selection
+do not depend on how the scope is rendered.
+
 - A console error is linked to the failed request whose outcome came up to
   2 s before it, and a toast or alert up to 5 s after; an effect that names
   the request's status or path links up to 10 s after it.
@@ -72,13 +87,15 @@ evidence.
   failure counts unless it is a media asset.
 - A dismissed dialog, a page load failure (with the recovery it needs), and a
   WebSocket error or reconnect loop are findings of their own.
-- For the failed request, the backend container log lines that mention its
+- For the failed request, configured backend log lines that mention its
   path in that time window are attached. When no request failed but the
   leading issue is a page that never loaded or a WebSocket that failed, the
   logs are asked about that URL at that moment instead - the case where every
   browser signal reads clean and the reason sits only in a server's log, such
-  as a tunnel answering Unauthorized. When Docker cannot answer, one short
-  `unavailable: <why>` note stands in for the lines.
+  as a tunnel answering Unauthorized. File and Docker sources share the
+  [native log correlation contract](native-log-correlation.md). Missing,
+  uncorrelatable, truncated and partially available evidence carries an explicit
+  limitation; one failed source does not hide evidence from a healthy source.
 
 The `network` topic answers for the page on screen: by default it reads only
 the requests since that page began, so the 502s of a load during a backend
@@ -89,8 +106,12 @@ before the page on screen, as does the summary, and each expanded call carries
 `before_navigation: true`. `scope` names the window read.
 
 It groups requests by method and normalized URL - numeric, UUID and
-opaque-token path segments collapse to `{id}`, query values drop and their
-keys stay, and a same-origin URL loses its origin. A group's failure is
+opaque-token path segments collapse to `{id}`, query values become the
+explicit `[OMITTED]` marker and their keys stay sorted and URL-escaped, and a
+same-origin URL loses its origin. The marker states that grouping omitted
+values, including empty values; it never claims the browser sent blank
+parameters. Exact request URLs remain separate from display grouping.
+A group's failure is
 `recovered` when a later call to the exact same URL succeeded; a failure on
 the same normalized URL with other parameters is not recovered by it. Groups
 order open failures first (worst class first), then storms, then data calls

@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"browsernerd-mcp-server/internal/correlation"
 	"browsernerd-mcp-server/internal/docker"
+	"browsernerd-mcp-server/internal/logs"
 	"browsernerd-mcp-server/internal/mangle"
+	"browsernerd-mcp-server/internal/security"
 )
 
 // =============================================================================
@@ -18,11 +19,13 @@ import (
 type GetConsoleErrorsTool struct {
 	engine       *mangle.Engine
 	dockerClient *docker.Client
+	logSource    logs.Source
+	redactor     *security.Redactor
 }
 
 func (t *GetConsoleErrorsTool) Name() string { return "get-console-errors" }
 func (t *GetConsoleErrorsTool) Description() string {
-	return `Full error report with causal analysis and Docker correlation.
+	return `Full error report with causal analysis and server log correlation.
 
 TOKEN COST: Medium-High (detailed data, use diagnose-page first)
 
@@ -36,7 +39,7 @@ RETURNS:
   warnings, each with count, first_ms, last_ms and API correlation (the request that caused it)
 - Failed requests (status >= 400)
 - Slow APIs (>1 second response)
-- Docker backend correlations (if enabled)
+- Configured server log correlations
 
 WHEN TO USE:
 - After diagnose-page shows status: "error"
@@ -47,7 +50,7 @@ WHEN NOT TO USE:
 - Quick health checks -> use diagnose-page
 - Just checking if page loaded -> use get-page-state
 
-Returns: {error_count (events), group_count, errors[] (groups), failed_requests[], slow_apis[], docker_errors[]}`
+Returns: {error_count (events), group_count, errors[] (groups), failed_requests[], slow_apis[], server_logs[]}`
 }
 func (t *GetConsoleErrorsTool) InputSchema() map[string]interface{} {
 	return map[string]interface{}{
@@ -338,177 +341,60 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 		})
 	}
 
-	// ==========================================================================
-	// Docker Log Integration (Full-Stack Error Correlation)
-	// ==========================================================================
-	// Only query Docker logs if there are actual errors or failed requests to correlate
-	var dockerErrors []map[string]interface{}
-	var backendCorrelations []map[string]interface{}
-	var containerHealth map[string]interface{}
-	var dockerQueryError string
-
-	hasErrorsToCorrelate := eventCount > 0 || len(failedRequests) > 0 || len(slowApis) > 0
-
-	if t.dockerClient != nil && hasErrorsToCorrelate {
-		// Determine time window - look back from earliest observed timestamp.
-		earliestMs := int64(0)
-		for _, e := range errors {
-			ts, _ := e["first_ms"].(int64)
-			if ts <= 0 {
-				continue
-			}
-			if earliestMs == 0 || ts < earliestMs {
-				earliestMs = ts
-			}
-		}
-		for _, fr := range failedRequests {
-			ts, _ := fr["timestamp"].(int64)
-			if ts <= 0 {
-				continue
-			}
-			if earliestMs == 0 || ts < earliestMs {
-				earliestMs = ts
-			}
-		}
-		earliest := time.Now().Add(-30 * time.Second)
-		if earliestMs > 0 {
-			earliest = time.UnixMilli(earliestMs).Add(-5 * time.Second)
-		}
-
-		// Query Docker logs
-		logs, err := t.dockerClient.QueryLogs(ctx, earliest)
-		if err != nil {
-			dockerQueryError = err.Error()
-		}
-		if len(logs) > 0 {
-			// Filter to errors and warnings
-			errorLogs := t.dockerClient.FilterErrors(logs)
-
-			// Build facts for Mangle and response entries
-			var dockerFacts []mangle.Fact
-			for _, log := range errorLogs {
-				dockerFacts = append(dockerFacts, mangle.Fact{
-					Predicate: "docker_log",
-					Args: []interface{}{
-						log.Container,
-						log.Level,
-						log.Tag,
-						log.Message,
-						log.Timestamp.UnixMilli(),
-					},
-					Timestamp: log.Timestamp,
-				})
-
-				// Build docker error entry for response
-				errorEntry := map[string]interface{}{
-					"container": log.Container,
-					"level":     log.Level,
-					"tag":       log.Tag,
-					"message":   log.Message,
-					"timestamp": log.Timestamp.UnixMilli(),
-				}
-
-				correlationKeys := correlation.FromMessage(log.Message)
-				if len(correlationKeys) > 0 {
-					keyEntries := make([]map[string]string, 0, len(correlationKeys))
-					for _, key := range correlationKeys {
-						dockerFacts = append(dockerFacts, mangle.Fact{
-							Predicate: "docker_log_correlation",
-							Args: []interface{}{
-								log.Container,
-								key.Type,
-								key.Value,
-								log.Message,
-								log.Timestamp.UnixMilli(),
-							},
-							Timestamp: log.Timestamp,
-						})
-						keyEntries = append(keyEntries, map[string]string{
-							"key_type":  key.Type,
-							"key_value": key.Value,
-						})
-					}
-					errorEntry["correlation_keys"] = keyEntries
-				}
-
-				dockerErrors = append(dockerErrors, errorEntry)
-			}
-
-			// Push all docker_log facts to Mangle for correlation
-			if len(dockerFacts) > 0 {
-				_ = t.engine.AddFacts(ctx, dockerFacts)
-			}
-
-			// Query Mangle for backend correlations
-			// api_backend_correlation(SessionId, ReqId, Url, Status, BackendMsg, TimeDelta)
-			correlationFacts, _ := t.engine.Evaluate(ctx, "api_backend_correlation")
-			for _, cf := range correlationFacts {
-				if len(cf.Args) < 6 {
-					continue
-				}
-				sess := fmt.Sprintf("%v", cf.Args[0])
-				if sessionID != "" && sess != sessionID {
-					continue
-				}
-				backendCorrelations = append(backendCorrelations, map[string]interface{}{
-					"session_id":    sess,
-					"request_id":    fmt.Sprintf("%v", cf.Args[1]),
-					"url":           fmt.Sprintf("%v", cf.Args[2]),
-					"status":        cf.Args[3],
-					"backend_error": fmt.Sprintf("%v", cf.Args[4]),
-					"time_delta_ms": cf.Args[5],
-					"container":     "backend",
-					"mode":          "keyed",
-				})
-			}
-
-			// Get container health analysis
-			health := t.dockerClient.AnalyzeHealth(logs)
-			containerHealth = make(map[string]interface{})
-			for name, h := range health {
-				containerHealth[name] = map[string]interface{}{
-					"status":        h.Status,
-					"error_count":   h.ErrorCount,
-					"warning_count": h.WarningCount,
-				}
-			}
-		}
-	}
-
 	result := map[string]interface{}{
-		"success":              true,
-		"error_count":          eventCount,
-		"group_count":          len(errors),
-		"errors":               errors,
-		"failed_request_count": len(failedRequests),
-		"failed_requests":      failedRequests,
-		"slow_api_count":       len(slowApis),
-		"slow_apis":            slowApis,
-		"cascading_failures":   cascadingFailures,
+		"success": true, "error_count": eventCount, "group_count": len(errors), "errors": errors,
+		"failed_request_count": len(failedRequests), "failed_requests": failedRequests,
+		"slow_api_count": len(slowApis), "slow_apis": slowApis, "cascading_failures": cascadingFailures,
+		"docker_enabled": t.dockerClient != nil, "server_logs_enabled": t.logSource != nil,
 	}
-
-	// Add Docker integration results only if enabled AND we queried for correlations
-	if t.dockerClient != nil {
-		result["docker_enabled"] = true
-		// Only include Docker data if we actually queried (had errors to correlate)
-		if hasErrorsToCorrelate {
-			result["docker_error_count"] = len(dockerErrors)
-			result["docker_errors"] = dockerErrors
-			result["backend_correlations"] = backendCorrelations
-			result["container_health"] = containerHealth
-			if dockerQueryError != "" {
-				result["docker_query_error"] = dockerQueryError
-			}
-
-			// Summary message
-			if len(backendCorrelations) > 0 {
-				result["correlation_summary"] = fmt.Sprintf(
-					"%d frontend failures linked to %d backend errors across %d containers",
-					len(backendCorrelations), len(dockerErrors), len(containerHealth))
+	if t.logSource != nil && (eventCount > 0 || len(failedRequests) > 0 || len(slowApis) > 0) {
+		window := t.logSource.LogWindow()
+		if window <= 0 {
+			window = defaultBackendWindow
+		}
+		earliest, latest := time.Now().Add(-window), time.Now()
+		for _, req := range failedRequests {
+			if at := asInt64(req["timestamp"]); at > 0 {
+				ts := time.UnixMilli(at)
+				if ts.Add(-window).Before(earliest) {
+					earliest = ts.Add(-window)
+				}
+				if ts.Add(window).After(latest) {
+					latest = ts.Add(window)
+				}
 			}
 		}
-	} else {
-		result["docker_enabled"] = false
+		qctx, cancel := context.WithTimeout(ctx, backendQueryTimeout)
+		entries, logErr := t.logSource.LogsBetween(qctx, earliest, latest)
+		cancel()
+		if logErr != nil {
+			result["server_log_error"] = backendLogError(logErr)
+		}
+		rows := make([]map[string]interface{}, 0)
+		for _, entry := range entries {
+			if entry.Timestamp.IsZero() {
+				continue
+			}
+			if entry.Level == "ERROR" || entry.Level == "WARNING" || entry.Level == "CRITICAL" {
+				rows = append(rows, map[string]interface{}{"source": entry.Source, "level": entry.Level, "tag": entry.Tag, "message": redactSnippet(entry.Message, 4000), "timestamp": entry.Timestamp.UnixMilli()})
+			}
+		}
+		result["server_logs"] = rows
+		correlated := make([]map[string]interface{}, 0)
+		for _, req := range failedRequests {
+			at := asInt64(req["timestamp"])
+			if at <= 0 {
+				continue
+			}
+			matches := logs.MatchRequestLines(entries, requestPath(fmt.Sprint(req["url"])), time.UnixMilli(at), window, backendErrorWindow, backendMaxLines)
+			for _, match := range matches {
+				correlated = append(correlated, map[string]interface{}{"session_id": req["session_id"], "request_id": req["request_id"], "url": req["url"], "source": match.Entry.Source, "backend_error": formatBackendLine(match), "mode": match.Reason})
+			}
+		}
+		result["backend_correlations"] = correlated
+		if t.dockerClient != nil {
+			t.addDockerDiagnostics(ctx, result, entries, sessionID)
+		}
 	}
 
 	// Add debug info showing what's in the buffer
@@ -539,9 +425,8 @@ func (t *GetConsoleErrorsTool) Execute(ctx context.Context, args map[string]inte
 			"console_events_by_level": levelCounts,
 			"facts_by_predicate":      predicateCounts,
 			"session_filter":          sessionID,
-			"note": "Server-side logs (Next.js RSC/SSR) are NOT captured by CDP. " +
-				"Only client-side JavaScript console calls are visible. " +
-				"Events must occur AFTER session is created to be captured.",
+			"note": "Server-side logs come from configured file and Docker sources. " +
+				"CDP captures browser console events after the session is created.",
 		}
 	}
 

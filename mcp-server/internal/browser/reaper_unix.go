@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,9 @@ import (
 	"time"
 )
 
-type unixProcessQuerier struct{}
+type unixProcessQuerier struct {
+	probeProcess func(int) error
+}
 
 func DefaultProcessQuerier() ProcessQuerier {
 	return &unixProcessQuerier{}
@@ -91,11 +94,12 @@ func (q *unixProcessQuerier) IsProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
+	probe := q.probeProcess
+	if probe == nil {
+		probe = func(pid int) error { return syscall.Kill(pid, 0) }
 	}
-	return process.Signal(syscall.Signal(0)) == nil
+	// Permission denial and other failures cannot prove a process has exited.
+	return !errors.Is(probe(pid), syscall.ESRCH)
 }
 
 func (q *unixProcessQuerier) KillProcessTree(pid int) error {

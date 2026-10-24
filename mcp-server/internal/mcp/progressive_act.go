@@ -43,15 +43,17 @@ navigate{url,wait_until} history{action} interact{action,<locator>,value,submit}
 fill{fields:[{<locator>,value}],submit|submit_button} key{key:"Control+a"}
 upload{ref,files} sleep{duration_ms<=60000} await_stable await_fact{predicate,args}
 await_conditions{conditions} wait{predicate,match_args} dialog{accept,prompt_text}
-session_create{url} (later ops use the new session_id) session_focus session_close
-session_fork session_attach{target_id} browser_launch browser_close js{script} plan
+session_create{url,browser_id,isolated} (later ops use new session_id) session_focus session_close
+session_fork{source_session_id} session_attach{target_id,browser_id}
+browser_launch{new_instance} browser_close{browser_id} js{script} plan
 viewport{preset:phone|iphone-14|pixel-7|phone-small|tablet|laptop|desktop, or width,height,device_scale_factor,
 mobile,touch,orientation,toolbar_height; reset:true} sizes this tab only
 
 type/fill read the value back; select verifies the widget shows the option;
 navigate to the tab's current URL reloads it (reloaded:true); any op may carry
 dialog:accept|dismiss. Results give each op's error and effects: url change,
-console errors, failed requests, dialogs, toasts, downloads.`
+console errors, failed requests, dialogs, toasts, live_regions, downloads.
+toasts requires toast/snackbar markers; generic ARIA status/alert text is live_regions.`
 }
 
 func (t *BrowserActTool) InputSchema() map[string]interface{} {
@@ -94,7 +96,7 @@ var actPageOps = map[string]bool{
 }
 
 // actCompactKeys are lifted from an op's result into its compact entry.
-var actCompactKeys = []string{"session_id", "url", "title", "reloaded", "located", "selected", "verified_by", "armed", "warning", "note", "dialogs"}
+var actCompactKeys = []string{"session_id", "browser_id", "isolated", "isolated_display", "managed", "default", "url", "title", "reloaded", "located", "selected", "verified_by", "armed", "warning", "note", "dialogs"}
 
 func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	sessionID := getStringArg(args, "session_id")
@@ -170,6 +172,16 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 			run.follow(opType, entry)
 		}
 		if run.session != "" && t.sessions != nil {
+			dialogCtx, cancelDialogs := context.WithTimeout(ctx, time.Second)
+			dialogErr := t.sessions.AwaitDialogReports(dialogCtx, run.session, opStart)
+			cancelDialogs()
+			if dialogErr != nil {
+				warning := fmt.Sprintf("dialog reporting incomplete: %v", dialogErr)
+				if previous, ok := entry["warning"]; ok {
+					warning = fmt.Sprintf("%v; %s", previous, warning)
+				}
+				entry["warning"] = warning
+			}
 			if dialogs := t.sessions.DialogsSince(run.session, opStart); len(dialogs) > 0 {
 				described := make([]string, 0, len(dialogs))
 				for _, d := range dialogs {
@@ -188,7 +200,9 @@ func (t *BrowserActTool) Execute(ctx context.Context, args map[string]interface{
 		if firstFailure == "" {
 			firstFailure = fmt.Sprintf("op %d %s: %s", idx, opType, errMsg)
 		}
-		if stopOnError {
+		// A failed switch cannot let later page operations fall back to the
+		// previous tab, even in a best-effort batch.
+		if stopOnError || opType == "session_create" || opType == "session_attach" || opType == "session_fork" || opType == "session_focus" {
 			break
 		}
 	}
@@ -338,12 +352,22 @@ func liftActFields(entry map[string]interface{}, opType string, result interface
 	case "session_create", "session_fork", "session_attach":
 		if sess, ok := m["session"].(*browser.Session); ok && sess != nil {
 			entry["session_id"] = sess.ID
+			entry["browser_id"] = sess.BrowserID
+			entry["isolated"] = sess.Isolated
+			entry["isolated_display"] = sess.IsolatedDisplay
 			if sess.URL != "" {
 				entry["url"] = sess.URL
 			}
 			if sess.Title != "" {
 				entry["title"] = sess.Title
 			}
+		}
+	case "browser_launch":
+		if instance, ok := m["browser"].(*browser.BrowserInstance); ok && instance != nil {
+			entry["browser_id"] = instance.ID
+			entry["managed"] = instance.Managed
+			entry["default"] = instance.Default
+			entry["isolated_display"] = instance.IsolatedDisplay
 		}
 	case "navigate", "history":
 		if u, ok := m["url"].(string); ok && u != "" {

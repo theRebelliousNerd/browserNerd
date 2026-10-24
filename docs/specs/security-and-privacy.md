@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Security and Privacy
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-10-22
 doc_type: security-spec
 subsystem: browsernerd
 read_when: Changing capture, persistence, workspace config, JavaScript evaluation, Mangle, or file exports
@@ -50,7 +50,7 @@ local authority into queryable or persisted data.
 - Runtime directories use owner-only permissions.
 - Trace and session files use owner-only permissions.
 - Recorder tool arguments and results are recursively sanitized.
-- Flight exports sanitize facts and Docker rows again at the output boundary.
+- Flight exports sanitize facts and native or Docker log entries again at the output boundary.
 - Persisted browser-audit plans and findings use private directories and files.
 - Runtime data defaults to the operating-system user cache, outside source
   repositories.
@@ -72,6 +72,13 @@ caller passes `--trust-workspace-config`, it cannot provide browser launch or
 attachment settings, read specs or schemas outside the selected workspace, or
 write runtime data outside that workspace. It also cannot enable arbitrary
 JavaScript evaluation.
+
+Configured native log files use bounded reads, never shell commands. Untrusted
+workspace sources remain inside the workspace even after symlink retargeting;
+explicitly trusted profiles may select external regular files. Read errors,
+missing timestamps, truncation and partial source failures remain visible while
+all evidence and diagnostic errors cross the credential redactor. Doctor lists
+source identities and types without returning file contents or credentials.
 
 ## Script, file, and logic boundaries
 

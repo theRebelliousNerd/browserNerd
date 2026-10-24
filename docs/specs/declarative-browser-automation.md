@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Declarative Browser Automation
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-10-23
 doc_type: feature-spec
 subsystem: browsernerd
 read_when: Changing observe, act, waits, event correlation, or state deltas
@@ -39,6 +39,14 @@ is scaled to it; `timeout` becomes `timeout_ms` on any operation; a fork's
 
 `browser-test` runs a fixture's operations through the same validation before
 its first step ([token-efficient testing](token-efficient-testing.md)).
+Without an initial session, its static session-flow check requires a create,
+attach, explicit-source fork or explicit-target focus before a page operation.
+It checks the complete sequence before lifecycle effects, not only the first
+operation. An explicit close of the current session clears that availability;
+closing a different named session leaves it unchanged. Browser close is
+conservatively treated as clearing availability. A failed session-establishing
+operation stops replay even with `stop_on_error: false`; later page operations
+never fall back to the earlier tab.
 
 ## Finding an element
 
@@ -102,11 +110,19 @@ different selector's matches, because that clicks whatever sits at that
 position. `internal/mcp/element_ref_roundtrip_integration_test.go` pins all of
 this against a live browser.
 
-A click scrolls the element to the middle of the viewport and dispatches at a
-point that hits the element itself; when something else sits on top of it -
+A locator click scrolls the element into view once, then requires a connected,
+visible target and a stable, hit-tested point for 60 ms. It moves the native
+pointer there and repeats that check before pressing: scroll controls and
+portaled popups may reposition after scrolling or hover. Sampling is bounded
+at three seconds without depending on animation frames. An unstable or detached
+target fails before any press; a target click sends at most one pointer press and
+never replays a click after a possible mutation. Explicit viewport coordinates
+retain their literal point semantics. When something else sits on top of it -
 a sticky header, an open dialog's overlay - the click fails naming what
-covers it instead of landing on that element. A tab in the background is
-brought to the front before any input reaches it.
+covers it instead of landing on that element. Tabs use renderer focus
+emulation; ordinary input never explicitly activates their desktop window.
+Uninterrupted headed automation uses `browser.isolated_display: true`, keeping
+Chromium's native focus effects inside a managed private display.
 
 ## Every operation is bounded
 
@@ -121,6 +137,14 @@ server deadline ([delivery and verification](delivery-and-verification.md)).
 An operation that runs out of time fails with an error naming the usual
 cause, a JavaScript dialog or a busy renderer, and with `stop_on_error` the
 operations after it are counted as `skipped`.
+
+Before collecting an operation's dialog results, the action waits for any
+dialog reports already pending for that session and operation to be published.
+This wait is driven by report completion, bounded at one second under the
+batch context, and adds no wait when no report is pending. If publication does
+not complete within that bound, the operation carries an explicit warning.
+The same rule applies when `settle_ms` is zero: batch settling is independent
+of publishing a dialog the operation already answered.
 
 ## Navigating
 
@@ -167,7 +191,8 @@ with something in them appear:
 |---|---|
 | `url_changed` | `{from, to}` |
 | `title` | the new title, when it changed |
-| `toasts` | one entry per notification: error, warning and success toast facts, and the alert, status and toast regions newly visible when the batch settled, folded together when they are sightings of the same notification - the same text ignoring whitespace and case, or one sighting is the other's title (prefix) or description (suffix) of at least six characters. An entry keeps the fullest text, the spelling with its words apart, and the level over the role (`error: Login failed Invalid credentials`). An info-level toast fact is left to the live-region read, which shows what the page settled on rather than a passing "loading" |
+| `toasts` | notifications identified by toast/snackbar element markers or UI-library toast containers, folded when sightings share text or a title/description of at least six characters. Entries retain the fullest text and strongest level. ARIA roles alone do not identify a toast |
+| `live_regions` | newly visible or changed generic ARIA alert/status/live-region text, labelled by role. Static badges and persistent inline validation remain live regions even when navigation first exposes them. Unchanged regions are not replayed; a region inside an actual toast belongs only to `toasts` |
 | `errors` | console errors and failed assertions |
 | `failed_requests` | `METHOD /path STATUS`, with a snippet of the failure body when one was captured; a 4xx on a page asset (the resource types `failed_request` treats as assets) is left out |
 | `pending` | requests still unanswered after the settle window |

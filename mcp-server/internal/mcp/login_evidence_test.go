@@ -86,7 +86,7 @@ func TestLiveFillSubmissionPrecedesClickSideEffects(t *testing.T) {
 	t.Fatal("a successful POST and synchronous navigation did not prove login")
 }
 
-func TestLiveToastUrgencyDoesNotImplyError(t *testing.T) {
+func TestLiveNotificationUrgencyDoesNotImplyToastOrError(t *testing.T) {
 	probe := startLiveProbe(t)
 	probe.eval(t, probe.session, `(() => {
 		const messages = [
@@ -119,16 +119,25 @@ func TestLiveToastUrgencyDoesNotImplyError(t *testing.T) {
 		"Saved successfully.":                                                     "error",
 		"Update complete.":                                                        "success",
 	}
-	for _, fact := range probe.engine.FactsByPredicate("toast_notification") {
-		text := fmt.Sprint(fact.Args[1])
-		if expected, exists := want[text]; exists {
-			if got := fmt.Sprint(fact.Args[2]); got != expected {
-				t.Errorf("%q severity = %s, want %s", text, got, expected)
+	for _, predicate := range []string{"toast_notification", "live_region_notification"} {
+		for _, fact := range probe.engine.FactsByPredicate(predicate) {
+			text := fmt.Sprint(fact.Args[1])
+			if expected, exists := want[text]; exists {
+				levelIndex := 3
+				if predicate == "toast_notification" {
+					levelIndex = 2
+				}
+				if got := fmt.Sprint(fact.Args[levelIndex]); got != expected {
+					t.Errorf("%q severity = %s, want %s", text, got, expected)
+				}
+				if (predicate == "toast_notification") != (text == "Update complete.") {
+					t.Errorf("%q classified as %s without matching toast markers", text, predicate)
+				}
+				delete(want, text)
 			}
-			delete(want, text)
 		}
 	}
 	if len(want) > 0 {
-		t.Fatalf("missing toast evidence: %v", want)
+		t.Fatalf("missing notification evidence: %v", want)
 	}
 }

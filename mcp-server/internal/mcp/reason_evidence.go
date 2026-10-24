@@ -198,6 +198,13 @@ type toastRecord struct {
 	ts     int64
 }
 
+type liveRegionRecord struct {
+	text  string
+	role  string
+	level string
+	ts    int64
+}
+
 type dialogRecord struct {
 	kind      string
 	message   string
@@ -234,6 +241,7 @@ type browserEvidence struct {
 	calls             []*netCall
 	console           []consoleRecord
 	toasts            []toastRecord
+	liveRegions       []liveRegionRecord
 	dialogs           []dialogRecord
 	ws                []wsRecord
 	loadFailures      []loadFailureRecord
@@ -437,6 +445,16 @@ func collectBrowserEvidence(ctx context.Context, engine *mangle.Engine, scope re
 		rec := toastRecord{text: factString(f, 1), level: strings.ToLower(factString(f, 2)), source: factString(f, 3), ts: factTime(f, 4)}
 		if rec.text != "" && scope.admits(rec.ts) {
 			ev.toasts = append(ev.toasts, rec)
+		}
+	}
+	// live_region_notification(SessionId, Text, Role, Level, Timestamp)
+	for _, f := range engine.FactsByPredicate("live_region_notification") {
+		if !factInSession(f, sid) {
+			continue
+		}
+		rec := liveRegionRecord{text: factString(f, 1), role: factString(f, 2), level: strings.ToLower(factString(f, 3)), ts: factTime(f, 4)}
+		if rec.text != "" && scope.admits(rec.ts) {
+			ev.liveRegions = append(ev.liveRegions, rec)
 		}
 	}
 	// js_dialog(SessionId, Type, Message, Accepted, HandledBy, Timestamp)

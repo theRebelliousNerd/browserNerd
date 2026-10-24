@@ -9,6 +9,15 @@ import (
 )
 
 func TestStaleSourceNamesSourceNewerThanTheBinary(t *testing.T) {
+	if identity := Read(); identity.BuildTime.IsZero() {
+		if identity.IdentityStatus != "unavailable" || identity.IdentityError == "" || identity.SHA256 != "" || identity.FileID != "" {
+			t.Fatalf("unknown build time needs unavailable identity and a reason: %+v", identity)
+		}
+		if stale, _ := StaleSource(t.TempDir()); stale != "" {
+			t.Fatalf("unavailable image cannot claim source staleness: %s", stale)
+		}
+		return
+	}
 	root := t.TempDir()
 	src := filepath.Join(root, "internal", "mcp", "tool.go")
 	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {

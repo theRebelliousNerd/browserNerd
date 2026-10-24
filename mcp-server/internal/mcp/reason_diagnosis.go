@@ -45,34 +45,36 @@ type reasonIssue struct {
 }
 
 type healthScore struct {
-	failed5xx       int
-	failed4xx       int
-	failedNetwork   int
-	consoleErrors   int
-	consoleWarnings int
-	toastErrors     int
-	storms          int
-	wsFailures      int
-	dialogs         int
-	pageLoadFailed  int
-	slow            int
-	blocking        int
+	failed5xx        int
+	failed4xx        int
+	failedNetwork    int
+	consoleErrors    int
+	consoleWarnings  int
+	toastErrors      int
+	liveRegionErrors int
+	storms           int
+	wsFailures       int
+	dialogs          int
+	pageLoadFailed   int
+	slow             int
+	blocking         int
 }
 
 func (s healthScore) row() map[string]interface{} {
 	return map[string]interface{}{
-		"failed_5xx":       s.failed5xx,
-		"failed_4xx":       s.failed4xx,
-		"failed_network":   s.failedNetwork,
-		"console_errors":   s.consoleErrors,
-		"console_warnings": s.consoleWarnings,
-		"toast_errors":     s.toastErrors,
-		"storms":           s.storms,
-		"ws_failures":      s.wsFailures,
-		"dialogs":          s.dialogs,
-		"page_load_failed": s.pageLoadFailed,
-		"slow":             s.slow,
-		"blocking":         s.blocking,
+		"failed_5xx":         s.failed5xx,
+		"failed_4xx":         s.failed4xx,
+		"failed_network":     s.failedNetwork,
+		"console_errors":     s.consoleErrors,
+		"console_warnings":   s.consoleWarnings,
+		"toast_errors":       s.toastErrors,
+		"live_region_errors": s.liveRegionErrors,
+		"storms":             s.storms,
+		"ws_failures":        s.wsFailures,
+		"dialogs":            s.dialogs,
+		"page_load_failed":   s.pageLoadFailed,
+		"slow":               s.slow,
+		"blocking":           s.blocking,
 	}
 }
 
@@ -206,6 +208,12 @@ func diagnose(ev *browserEvidence) *diagnosis {
 		if toastIsError(t) {
 			d.score.toastErrors++
 			effects = append(effects, &effectCandidate{kind: "toast", message: t.text, ts: t.ts})
+		}
+	}
+	for _, r := range ev.liveRegions {
+		if r.level == "error" {
+			d.score.liveRegionErrors++
+			effects = append(effects, &effectCandidate{kind: "live_region", message: r.text, ts: r.ts})
 		}
 	}
 	for _, dl := range ev.dialogs {
@@ -474,6 +482,7 @@ func (d *diagnosis) addUnlinkedEffectIssues(effects []*effectCandidate) {
 	unlinkedConsole := make([]consoleRecord, 0)
 	unlinkedToasts := make([]consoleRecord, 0)
 	unlinkedAlerts := make([]consoleRecord, 0)
+	unlinkedRegions := make([]consoleRecord, 0)
 	for _, e := range effects {
 		if e.linked {
 			continue
@@ -486,6 +495,8 @@ func (d *diagnosis) addUnlinkedEffectIssues(effects []*effectCandidate) {
 			unlinkedToasts = append(unlinkedToasts, rec)
 		case "alert":
 			unlinkedAlerts = append(unlinkedAlerts, rec)
+		case "live_region":
+			unlinkedRegions = append(unlinkedRegions, rec)
 		}
 	}
 	for _, g := range groupConsole(unlinkedConsole) {
@@ -513,6 +524,11 @@ func (d *diagnosis) addUnlinkedEffectIssues(effects []*effectCandidate) {
 	}
 	for _, g := range groupConsole(unlinkedAlerts) {
 		d.add(&reasonIssue{kind: "alert", level: "warning", severity: 76, line: fmt.Sprintf("alert %q", clipText(g.message, 120)), atMs: g.lastMs})
+	}
+	for _, g := range groupConsole(unlinkedRegions) {
+		d.add(&reasonIssue{kind: "live_region_error", level: "error", severity: 83,
+			line: fmt.Sprintf("live region error %q", clipText(g.message, 120)), atMs: g.lastMs,
+			detail: map[string]interface{}{"kind": "live_region_error", "live_region": g.row()}})
 	}
 	for _, g := range d.toasts {
 		if g.level != "warning" {
@@ -669,9 +685,9 @@ func (d *diagnosis) primary() *reasonIssue {
 
 func (d *diagnosis) verdict(scopeLabel string) string {
 	if p := d.primary(); p != nil {
-		return p.line
+		return scopedIssueVerdict(scopeLabel, p.line)
 	}
-	if len(d.ev.calls) == 0 && len(d.ev.console) == 0 && len(d.ev.toasts) == 0 {
+	if len(d.ev.calls) == 0 && len(d.ev.console) == 0 && len(d.ev.toasts) == 0 && len(d.ev.liveRegions) == 0 {
 		return "no browser events recorded " + scopeLabel + "; check session_id or widen time_window_ms"
 	}
 	return "no failures recorded " + scopeLabel

@@ -303,13 +303,16 @@ func locateFailure(loc elementLocator, report locateReport) error {
 
 // clickTargetScript scrolls the element to the middle of the viewport and
 // returns a point on it that a click would actually hit, or what covers it.
-const clickTargetScript = `function () {
+const clickTargetScript = `function (scroll) {
   const describe = (el) => {
     if (!el) return 'nothing';
     const cls = (typeof el.className === 'string' ? el.className : '').trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.');
     return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : '');
   };
-  this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+  if (!this.isConnected) return { error: 'element is detached' };
+  const style = getComputedStyle(this);
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return { error: 'element is not visible' };
+  if (scroll) this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
   const rects = Array.from(this.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
   if (!rects.length) return { error: 'element has no visible box' };
   const vw = window.innerWidth, vh = window.innerHeight;
@@ -335,86 +338,22 @@ const clickTargetScript = `function () {
 // wait on animation frames, so a background tab or a page blocked by a dialog
 // fails within the bound instead of hanging.
 func clickElement(ctx context.Context, page *rod.Page, el *rod.Element, clickCount int) error {
-	x, y, err := clickPoint(ctx, el)
+	x, y, err := prepareElementPointer(ctx, page, el)
 	if err != nil {
 		return err
 	}
-	return dispatchClick(page.Context(ctx), x, y, clickCount)
+	return pressAndRelease(page.Context(ctx), x, y, clickCount)
 }
 
 // hoverElement moves the pointer onto el.
 func hoverElement(ctx context.Context, page *rod.Page, el *rod.Element) error {
-	x, y, err := clickPoint(ctx, el)
-	if err != nil {
-		return err
-	}
-	return hoverAt(page.Context(ctx), x, y)
+	_, _, err := prepareElementPointer(ctx, page, el)
+	return err
 }
 
 // hoverAt moves the pointer to a viewport point.
 func hoverAt(page *rod.Page, x, y float64) error {
-	bringToFront(page)
 	return proto.InputDispatchMouseEvent{Type: proto.InputDispatchMouseEventTypeMouseMoved, X: x, Y: y}.Call(page)
-}
-
-// bringToFront shows a hidden tab before it gets pointer or key input: a
-// background tab does not complete an input event until it is shown, the way
-// a person switches to a tab before clicking in it.
-func bringToFront(page *rod.Page) {
-	visibility := func() string {
-		res, err := page.Timeout(2 * time.Second).Eval(`() => document.visibilityState`)
-		if err != nil {
-			return ""
-		}
-		return res.Value.Str()
-	}
-	if visibility() != "hidden" {
-		return
-	}
-	if _, err := page.Activate(); err != nil {
-		return
-	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && visibility() == "hidden" {
-		if sleepWithContext(page.GetContext(), 50*time.Millisecond) != nil {
-			return
-		}
-	}
-}
-
-func clickPoint(ctx context.Context, el *rod.Element) (float64, float64, error) {
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		res, err := el.Context(ctx).Timeout(3 * time.Second).Eval(clickTargetScript)
-		if err != nil {
-			return 0, 0, fmt.Errorf("could not reach the element: %w", err)
-		}
-		v := res.Value
-		if v.Get("error").Nil() {
-			x, y := v.Get("x").Num(), v.Get("y").Num()
-			if !v.Get("top").Bool() {
-				// Inside a frame the script's point is frame-local; the content
-				// quads are in the page's coordinates.
-				shape, shapeErr := el.Context(ctx).Shape()
-				if shapeErr != nil || shape == nil || shape.OnePointInside() == nil {
-					return 0, 0, fmt.Errorf("could not place the click inside a frame: %v", shapeErr)
-				}
-				pt := shape.OnePointInside()
-				x, y = pt.X, pt.Y
-			}
-			return x, y, nil
-		}
-		msg := v.Get("error").Str()
-		if msg == "covered" {
-			msg = "the element is covered by " + v.Get("by").Str()
-		}
-		if time.Now().After(deadline) {
-			return 0, 0, errors.New(msg)
-		}
-		if err := sleepWithContext(ctx, 150*time.Millisecond); err != nil {
-			return 0, 0, err
-		}
-	}
 }
 
 // clickDispatchTimeout bounds the press and release. A click whose handler
@@ -423,17 +362,23 @@ const clickDispatchTimeout = 5 * time.Second
 
 // dispatchClick presses and releases the left button at a viewport point.
 func dispatchClick(page *rod.Page, x, y float64, clickCount int) error {
+	bounded := page.Timeout(clickDispatchTimeout)
+	if err := hoverAt(bounded, x, y); err != nil {
+		return err
+	}
+	return pressAndRelease(bounded, x, y, clickCount)
+}
+
+// pressAndRelease sends one native press after the caller has placed the pointer.
+func pressAndRelease(page *rod.Page, x, y float64, clickCount int) error {
 	if clickCount < 1 {
 		clickCount = 1
 	}
 	bounded := page.Timeout(clickDispatchTimeout)
-	err := hoverAt(bounded, x, y)
-	if err == nil {
-		err = proto.InputDispatchMouseEvent{
-			Type: proto.InputDispatchMouseEventTypeMousePressed, X: x, Y: y,
-			Button: proto.InputMouseButtonLeft, Buttons: gson.Int(1), ClickCount: clickCount,
-		}.Call(bounded)
-	}
+	err := proto.InputDispatchMouseEvent{
+		Type: proto.InputDispatchMouseEventTypeMousePressed, X: x, Y: y,
+		Button: proto.InputMouseButtonLeft, Buttons: gson.Int(1), ClickCount: clickCount,
+	}.Call(bounded)
 	if err == nil {
 		err = proto.InputDispatchMouseEvent{
 			Type: proto.InputDispatchMouseEventTypeMouseReleased, X: x, Y: y,

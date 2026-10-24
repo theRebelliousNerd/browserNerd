@@ -323,13 +323,13 @@ func TestLiveActSessionCreateHandsTheBatchItsSession(t *testing.T) {
 func TestLiveActDialogAnswers(t *testing.T) {
 	p := startLiveProbe(t)
 	start := time.Now()
-	res := p.act(t, map[string]interface{}{"operations": ops(map[string]interface{}{"type": "interact", "action": "click", "text": "Delete"})})
+	res := p.act(t, map[string]interface{}{"settle_ms": 0, "operations": ops(map[string]interface{}{"type": "interact", "action": "click", "text": "Delete"})})
 	elapsed := time.Since(start)
 	if elapsed > 7*time.Second {
 		t.Fatalf("a click that opens a dialog took %v; it must return within the bound", elapsed)
 	}
-	if res["success"] != true && len(p.manager.DialogsSince(p.session, start)) == 0 {
-		t.Skipf("this build does not answer dialogs (no dialog handler recorded one); the click failed in %v with: %v", elapsed.Round(time.Millisecond), firstResult(t, res)["error"])
+	if res["success"] != true {
+		t.Fatalf("the dialog-opening click must succeed: %+v", res)
 	}
 	if got := p.status(t); got != "kept" {
 		t.Fatalf("an unarmed confirm is dismissed, status should be kept, got %q", got)

@@ -77,3 +77,67 @@ func TestRedactorRedactsSensitiveBrowserInputs(t *testing.T) {
 		t.Fatalf("expected safe browser input to remain, got %q", got)
 	}
 }
+
+func TestRedactorSanitizesStructuredNativeLogRaw(t *testing.T) {
+	redactor := NewRedactor([]string{"session_credential"})
+	raw := `{"timestamp":"2026-10-22T12:00:00Z","level":"ERROR","message":"GET /items failed","password":"json-password-fixture","api_key":"json-key-fixture","context":{"token":"nested-token-fixture","safe":"keep"},"session_credential":{"parts":["custom-secret-fixture"]}}`
+	payload := map[string]interface{}{
+		"rows": []interface{}{map[string]interface{}{
+			"source": "server_log", "log_source": "api", "raw": raw,
+		}},
+	}
+	safe := redactor.Sanitize(payload).(map[string]interface{})
+	rows := safe["rows"].([]interface{})
+	result := rows[0].(map[string]interface{})["raw"].(string)
+	for _, fixture := range []string{"json-password-fixture", "json-key-fixture", "nested-token-fixture", "custom-secret-fixture"} {
+		if strings.Contains(result, fixture) {
+			t.Fatalf("native JSON raw retained %q: %s", fixture, result)
+		}
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &decoded); err != nil {
+		t.Fatalf("sanitized raw must remain JSON: %v, %s", err, result)
+	}
+	if decoded["message"] != "GET /items failed" || decoded["password"] != Redacted || decoded["session_credential"] != Redacted || decoded["context"].(map[string]interface{})["safe"] != "keep" {
+		t.Fatalf("sensitive values or safe evidence changed incorrectly: %s", result)
+	}
+}
+
+func TestRedactorJSONFragmentsQuotesEscapesAndScalarValues(t *testing.T) {
+	redactor := NewRedactor([]string{"custom_credential"})
+	cases := []struct {
+		input, want string
+	}{
+		{`prefix {"password":"fragment-secret","safe":42} suffix`, `prefix {"password":"[REDACTED]","safe":42} suffix`},
+		{`prefix {"pass\u0077ord":"escaped-key-fixture","safe":"keep"} suffix`, `prefix {"pass\u0077ord":"[REDACTED]","safe":"keep"} suffix`},
+		{`{"password":"escaped-quote\"and-slash\\fixture","safe":"quote\" remains"}`, `{"password":"[REDACTED]","safe":"quote\" remains"}`},
+		{`{"custom_credential":[{"private":"array-secret"}],"safe":true}`, `{"custom_credential":"[REDACTED]","safe":true}`},
+		{`event {"token":12345,"count":3} tail`, `event {"token":"[REDACTED]","count":3} tail`},
+		{`{"password":"clipped-fixture`, `{"password":"[REDACTED]"`},
+		{`{"password":{"nested":"clipped-fixture"`, `{"password":"[REDACTED]"`},
+		{`"ordinary JSON scalar"`, `"ordinary JSON scalar"`},
+		{`""`, `""`},
+		{`123`, `123`},
+		{`[true,false,null]`, `[true,false,null]`},
+		{`{"safe":{"items":[1,2,3]},"message":"failure"}`, `{"safe":{"items":[1,2,3]},"message":"failure"}`},
+	}
+	for _, tc := range cases {
+		if result := redactor.SanitizeString(tc.input); result != tc.want {
+			t.Errorf("SanitizeString(%q) = %q, want %q", tc.input, result, tc.want)
+		}
+	}
+}
+
+func TestRedactorJSONScanIsIterativeAndHandlesMalformedFragments(t *testing.T) {
+	redactor := NewRedactor(nil)
+	input := `prefix {"password":` + strings.Repeat("[", 20000) + `"deep-secret-fixture"` + strings.Repeat("]", 20000) + `,"message":"keep"} suffix`
+	result := redactor.SanitizeString(input)
+	if result != `prefix {"password":"[REDACTED]","message":"keep"} suffix` {
+		t.Fatalf("deep JSON must redact without recursive decoding: %s", result)
+	}
+	for _, input := range []string{`{"password":`, `{"password":,}`, `{"password":}`, `{"password":"\\`, `{"bad\q":"safe","password":"fixture-secret"}`} {
+		if result := redactor.SanitizeString(input); strings.Contains(result, "fixture-secret") {
+			t.Fatalf("malformed fragment retained credential: %q", result)
+		}
+	}
+}

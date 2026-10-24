@@ -142,7 +142,6 @@ func keyDefined(k input.Key) (ok bool) {
 // modifier other than Shift is held the key carries no text, which is how a
 // browser tells a shortcut (Control+a selects all) from typing a character.
 func dispatchKeyChord(page *rod.Page, chord keyChord) (err error) {
-	bringToFront(page)
 	mask := 0
 	pressed := make([]input.Key, 0, len(chord.modifiers))
 	defer func() {

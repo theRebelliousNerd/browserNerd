@@ -58,8 +58,8 @@ const pageHookFunction = `() => {
 		});
 	}).observe(document, { attributes: true, subtree: true });
 
-	// Toasts, snackbars, alerts and notifications, from any common UI library.
-	const toastPatterns = /toast|notification|alert|snackbar|banner|message|notice|popup|notistack/i;
+	` + NotificationClassifierJS + `
+	// Severity is separate from whether an announcement is a toast.
 	const errorPatterns = /error|danger|fail|critical|destructive/i;
 	const warningPatterns = /warning|warn|caution/i;
 	const successPatterns = /success|done|complete|confirmed/i;
@@ -76,26 +76,12 @@ const pageHookFunction = `() => {
 		return 'info';
 	};
 
-	const libraryClasses = ['muisnackbar', 'muialert', 'chakra-alert', 'chakra-toast', 'ant-notification', 'ant-message', 'ant-alert', 'sonner', 'toaster', 'toastify', 'react-hot-toast', 'notistack'];
-	const isToastElement = (el) => {
-		if (!el || el.nodeType !== 1) return false;
-		const classes = classOf(el).toLowerCase();
-		const role = el.getAttribute('role') || '';
-		const ariaLive = el.getAttribute('aria-live') || '';
-		const id = (el.id || '').toLowerCase();
-		const dataTestId = el.getAttribute('data-testid') || '';
-		if (toastPatterns.test(classes) || toastPatterns.test(id) || toastPatterns.test(dataTestId)) return true;
-		if (role === 'alert' || role === 'alertdialog' || role === 'status') return true;
-		if (ariaLive === 'polite' || ariaLive === 'assertive') return true;
-		return libraryClasses.some((name) => classes.includes(name));
-	};
-
 	const extractToastSource = (el) => {
 		const classes = classOf(el).toLowerCase();
 		if (classes.includes('mui') || classes.includes('material')) return 'material-ui';
 		if (classes.includes('chakra')) return 'chakra-ui';
 		if (classes.includes('ant-')) return 'ant-design';
-		if (classes.includes('sonner') || classes.includes('toaster')) return 'shadcn';
+		if (el.hasAttribute('data-sonner-toast') || classes.includes('sonner') || classes.includes('toaster')) return 'shadcn';
 		if (classes.includes('toastify')) return 'react-toastify';
 		if (classes.includes('react-hot-toast')) return 'react-hot-toast';
 		if (classes.includes('notistack')) return 'notistack';
@@ -131,13 +117,19 @@ const pageHookFunction = `() => {
 		seenToasts.set(key, now + 5000);
 		return false;
 	};
-	const checkToast = (el) => {
-		if (!isToastElement(el)) return;
+	const checkToast = (node) => {
+		if (!node || node.nodeType !== 1) return;
+		const toast = bnToastRoot(node);
+		const el = toast || (node.matches(bnLiveSelector) ? node : null);
+		if (!el || !bnVisible(el)) return;
+		if (!toast && bnContainsToast(el)) return;
 		const text = toastText(el);
 		if (!text || isRouteAnnouncement(el, text)) return;
-		if (seenToast(toastKeyOf(text))) return;
+		const role = bnRegionRole(el);
+		if (seenToast((toast ? 'toast:' : role + ':') + toastKeyOf(text))) return;
 		w.__browsernerdEvents.push({
-			type: 'toast',
+			type: toast ? 'toast' : 'live_region',
+			role: role,
 			text: text,
 			level: detectToastLevel(el),
 			source: extractToastSource(el),
@@ -147,22 +139,12 @@ const pageHookFunction = `() => {
 		});
 	};
 
-	// A region that interrupts (role="alert", an assertive live region, a
-	// toast-library container) reports text written into it after it exists:
-	// most apps and toast libraries reuse one live region and only change its
-	// text. A polite status region reports only when it is added, because
-	// its text changes too often to be an alert.
+	// Reused announcement and toast regions report changed text. Repeated
+	// identical text is deduplicated independently for each event kind.
 	const interruptingRegion = (node) => {
 		const el = node && (node.nodeType === 1 ? node : node.parentElement);
 		if (!el || !el.closest) return null;
-		const region = el.closest('[role="alert"], [role="alertdialog"], [aria-live="assertive"]');
-		if (region) return region;
-		let cur = el;
-		for (let depth = 0; cur && depth < 4; depth++, cur = cur.parentElement) {
-			const classes = classOf(cur).toLowerCase();
-			if (/toast|snackbar|notistack|sonner/.test(classes) || libraryClasses.some((name) => classes.includes(name))) return cur;
-		}
-		return null;
+		return bnToastRoot(el) || el.closest(bnLiveSelector);
 	};
 
 	new MutationObserver((mutations) => {
@@ -181,7 +163,7 @@ const pageHookFunction = `() => {
 					checkToast(node);
 					// Toast containers often wrap the element that carries the role.
 					if (node.querySelectorAll) {
-						node.querySelectorAll('[role="alert"], [role="status"], [aria-live]').forEach(checkToast);
+						node.querySelectorAll(bnLiveSelector + ',' + bnToastSelector).forEach(checkToast);
 					}
 				});
 			} catch (e) {}

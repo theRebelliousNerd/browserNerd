@@ -157,7 +157,7 @@ func TestLiveBrowserSessionManager(t *testing.T) {
 	})
 
 	t.Run("SnapshotDOM", func(t *testing.T) {
-		err := manager.SnapshotDOM(ctx, sessionID)
+		_, err := manager.SnapshotDOM(ctx, sessionID, nil, SnapshotOptions{})
 		if err != nil {
 			t.Fatalf("SnapshotDOM failed: %v", err)
 		}
@@ -193,7 +193,7 @@ func TestLiveBrowserSessionManager(t *testing.T) {
 	})
 
 	t.Run("SnapshotDOMNonExistent", func(t *testing.T) {
-		err := manager.SnapshotDOM(ctx, "nonexistent-session")
+		_, err := manager.SnapshotDOM(ctx, "nonexistent-session", nil, SnapshotOptions{})
 		if err == nil {
 			t.Error("Expected error for non-existent session")
 		}
@@ -258,11 +258,11 @@ func TestLiveReifyReact(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// ReifyReact should not crash even without React
-	facts, err := manager.ReifyReact(ctx, session.ID)
+	facts, err := manager.ReifyReact(ctx, session.ID, nil, SnapshotOptions{})
 	if err != nil {
 		t.Logf("ReifyReact returned error (expected for non-React page): %v", err)
 	} else {
-		t.Logf("ReifyReact returned %d facts", len(facts))
+		t.Logf("ReifyReact returned %d facts", len(facts.Nodes))
 	}
 }
 
@@ -291,13 +291,13 @@ func TestLiveReifyReactNoEngine(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	// ReifyReact should fail with no engine
-	_, err = manager.ReifyReact(ctx, session.ID)
-	if err == nil {
-		t.Error("Expected error for nil engine")
+	// Direct inspection does not require an engine or invent an accessible tree.
+	snapshot, err := manager.ReifyReact(ctx, session.ID, nil, SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err.Error() != "mangle engine not configured" {
-		t.Errorf("Unexpected error: %v", err)
+	if snapshot.CaptureComplete || snapshot.Capability != "unavailable" {
+		t.Fatalf("static page must report unavailable React evidence: %+v", snapshot)
 	}
 }
 
@@ -604,7 +604,7 @@ func TestReifyReactNonExistentSession(t *testing.T) {
 	manager := NewSessionManager(cfg, sink)
 
 	ctx := context.Background()
-	_, err := manager.ReifyReact(ctx, "nonexistent-session")
+	_, err := manager.ReifyReact(ctx, "nonexistent-session", nil, SnapshotOptions{})
 	if err == nil {
 		t.Error("Expected error for non-existent session")
 	}

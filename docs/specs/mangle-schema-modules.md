@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Mangle Schema Modules
 created: 2026-07-23
-last_updated: 2026-09-24
+last_updated: 2026-10-23
 doc_type: architecture-spec
 subsystem: browsernerd
 read_when: Adding facts, rules, queries, or schema loading behavior
@@ -21,8 +21,8 @@ a workspace can never run against a stale copy of them. `browser.mg` is a
 manifest (`# @include modules`); its modules load in lexical order:
 
 - `00_core_events.mg`: browser, React, DOM, network, failure, dialog,
-  download and event facts.
-- `10_causal_temporal.mg`: temporal, causal, toast, and predictive rules.
+  download, toast and generic live-region event facts.
+- `10_causal_temporal.mg`: temporal, causal, toast, live-region error, and predictive rules.
 - `20_automation_testing.mg`: interaction, login, automation, and tests.
 - `30_docker_correlation.mg`: backend and cross-layer correlations.
 - `40_ui_quality.mg`: fingerprints, page state, accessibility, and forms.

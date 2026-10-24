@@ -60,12 +60,13 @@ func (m *SessionManager) LaunchAdditional(_ context.Context) (*BrowserInstance, 
 
 	now := time.Now()
 	meta := BrowserInstance{
-		ID:         uuid.NewString(),
-		ControlURL: m.redactor.SanitizeString(launched.controlURL),
-		Status:     "connected",
-		Managed:    true,
-		CreatedAt:  now,
-		LastActive: now,
+		ID:              uuid.NewString(),
+		ControlURL:      m.redactor.SanitizeString(launched.controlURL),
+		Status:          "connected",
+		Managed:         true,
+		IsolatedDisplay: launched.display != nil,
+		CreatedAt:       now,
+		LastActive:      now,
 	}
 	m.mu.Lock()
 	m.browsers[meta.ID] = &browserRecord{
@@ -75,6 +76,7 @@ func (m *SessionManager) LaunchAdditional(_ context.Context) (*BrowserInstance, 
 		pid:         launched.pid,
 		userDataDir: launched.userDataDir,
 		tempDir:     launched.tempDir,
+		display:     launched.display,
 	}
 	m.mu.Unlock()
 	m.enableDownloads(browser, "")
@@ -134,9 +136,16 @@ func (m *SessionManager) openTab(_ context.Context, browserID, rawURL string, is
 		m.enableDownloads(record.browser, targetBrowser.BrowserContextID)
 		m.listenForDownloads(record.browser)
 	}
-	page, err := targetBrowser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	page, err := targetBrowser.Page(proto.TargetCreateTarget{URL: "about:blank", Background: true})
 	if err != nil {
 		return nil, fmt.Errorf("create tab: %w", err)
+	}
+	if err := enableBackgroundRendering(page); err != nil {
+		_ = page.Close()
+		if isolatedBrowser != nil {
+			_ = isolatedBrowser.Close()
+		}
+		return nil, err
 	}
 	if err := (proto.EmulationSetDeviceMetricsOverride{
 		Width:             m.cfg.GetViewportWidth(),
@@ -149,14 +158,15 @@ func (m *SessionManager) openTab(_ context.Context, browserID, rawURL string, is
 
 	now := time.Now()
 	meta := Session{
-		ID:         uuid.NewString(),
-		BrowserID:  resolvedID,
-		TargetID:   string(page.TargetID),
-		URL:        rawURL,
-		Status:     "active",
-		CreatedAt:  now,
-		LastActive: now,
-		Isolated:   isolated,
+		ID:              uuid.NewString(),
+		BrowserID:       resolvedID,
+		TargetID:        string(page.TargetID),
+		URL:             rawURL,
+		Status:          "active",
+		CreatedAt:       now,
+		LastActive:      now,
+		Isolated:        isolated,
+		IsolatedDisplay: record.display != nil,
 	}
 	streamCtx, streamCancel := context.WithCancel(context.Background())
 	m.mu.Lock()
@@ -202,14 +212,18 @@ func (m *SessionManager) AttachToBrowser(_ context.Context, browserID, targetID 
 	if err != nil {
 		return nil, fmt.Errorf("attach to target %s: %w", targetID, err)
 	}
+	if err := enableBackgroundRendering(page); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	meta := Session{
-		ID:         uuid.NewString(),
-		BrowserID:  resolvedID,
-		TargetID:   targetID,
-		Status:     "attached",
-		CreatedAt:  now,
-		LastActive: now,
+		ID:              uuid.NewString(),
+		BrowserID:       resolvedID,
+		TargetID:        targetID,
+		Status:          "attached",
+		IsolatedDisplay: record.display != nil,
+		CreatedAt:       now,
+		LastActive:      now,
 	}
 	streamCtx, streamCancel := context.WithCancel(context.Background())
 	m.mu.Lock()
@@ -236,8 +250,20 @@ func (m *SessionManager) FocusSession(sessionID string) error {
 	if !ok {
 		return fmt.Errorf("unknown session: %s", sessionID)
 	}
+	bounds, err := page.Timeout(5 * time.Second).GetWindow()
+	if err != nil {
+		return fmt.Errorf("inspect window before explicit focus: %w", err)
+	}
+	if bounds.WindowState == proto.BrowserWindowStateMinimized {
+		if err := page.Timeout(5 * time.Second).SetWindow(&proto.BrowserBounds{WindowState: proto.BrowserWindowStateNormal}); err != nil {
+			return fmt.Errorf("restore window for explicit focus: %w", err)
+		}
+	}
 	if _, err := page.Activate(); err != nil {
 		return fmt.Errorf("activate tab: %w", err)
+	}
+	if err := (proto.PageBringToFront{}).Call(page.Timeout(5 * time.Second)); err != nil {
+		return fmt.Errorf("bring explicitly focused window forward: %w", err)
 	}
 	m.UpdateMetadata(sessionID, func(session Session) Session {
 		session.Status = "active"
@@ -334,6 +360,11 @@ func teardownBrowser(q ProcessQuerier, record *browserRecord) error {
 			err = rmErr
 		}
 	}
+	if record.display != nil {
+		if displayErr := record.display.Close(); displayErr != nil && err == nil {
+			err = displayErr
+		}
+	}
 	return err
 }
 
@@ -372,6 +403,7 @@ type launchedChrome struct {
 	pid         int
 	userDataDir string
 	tempDir     bool
+	display     *managedDisplay
 }
 
 func (m *SessionManager) killLaunchedChrome(l *launchedChrome) {
@@ -391,6 +423,9 @@ func (m *SessionManager) killLaunchedChrome(l *launchedChrome) {
 	if l.tempDir && l.userDataDir != "" {
 		_ = removeUserDataDir(l.userDataDir)
 	}
+	if l.display != nil {
+		_ = l.display.Close()
+	}
 }
 
 // newLauncher builds a launcher for ChromeBinary without Rod's leakless guard.
@@ -408,6 +443,17 @@ func (m *SessionManager) newLauncher() *launcher.Launcher {
 }
 
 func (m *SessionManager) launchChrome() (*launchedChrome, error) {
+	if err := m.cfg.ValidateDisplayIsolation(); err != nil {
+		return nil, err
+	}
+	var display *managedDisplay
+	if m.cfg.IsolatedDisplay {
+		var err error
+		display, err = startManagedDisplay(m.cfg.GetViewportWidth(), m.cfg.GetViewportHeight())
+		if err != nil {
+			return nil, fmt.Errorf("isolated headed display: %w", err)
+		}
+	}
 	launch := m.newLauncher()
 	flagStart := 0
 	if len(m.cfg.Launch) > 0 {
@@ -422,9 +468,19 @@ func (m *SessionManager) launchChrome() (*launchedChrome, error) {
 			launch = launch.Set(flags.Flag(name))
 		}
 	}
+	if display != nil {
+		launch.Env(display.env...).Set("ozone-platform", "x11").Delete(flags.Headless)
+	}
 	controlURL, err := launch.Launch()
 	if err == nil {
-		return launchedFrom(launch, controlURL), nil
+		launched := launchedFrom(launch, controlURL)
+		launched.display = display
+		return launched, nil
+	}
+	if display != nil {
+		dir := launch.Get(flags.UserDataDir)
+		m.killLaunchedChrome(&launchedChrome{pid: launch.PID(), userDataDir: dir, tempDir: isBrowserNERDUserDataDir(dir), display: display})
+		return nil, fmt.Errorf("launch isolated headed chrome: %w; no desktop fallback attempted", err)
 	}
 	discardProfile(launch)
 

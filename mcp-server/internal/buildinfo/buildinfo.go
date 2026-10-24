@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,24 +18,41 @@ var Version = "dev"
 
 // Info identifies the running binary.
 type Info struct {
-	Version   string    `json:"version"`
-	Revision  string    `json:"revision,omitempty"`
-	Modified  bool      `json:"modified"`
-	BuildTime time.Time `json:"build_time,omitzero"`
-	GoVersion string    `json:"go_version"`
-	Binary    string    `json:"binary,omitempty"`
+	Version        string    `json:"version"`
+	Revision       string    `json:"revision,omitempty"`
+	Modified       bool      `json:"modified"`
+	BuildTime      time.Time `json:"build_time,omitzero"`
+	GoVersion      string    `json:"go_version"`
+	Binary         string    `json:"binary,omitempty"`
+	PID            int       `json:"pid"`
+	IdentityStatus string    `json:"identity_status"`
+	IdentitySource string    `json:"identity_source"`
+	SHA256         string    `json:"sha256,omitempty"`
+	FileID         string    `json:"file_id,omitempty"`
+	IdentityError  string    `json:"identity_error,omitempty"`
 }
 
+type runningImageIdentity struct {
+	built                          time.Time
+	sha256, fileID, source, reason string
+}
+
+var imageOnce sync.Once
+var imageIdentity runningImageIdentity
+
 // Read returns the running binary's identity from the VCS stamp Go embeds at
-// build time. BuildTime is the binary file's modification time, which is when
-// it was built.
+// build time. BuildTime is the held executable image's modification time when
+// a native reader can verify it. The installed pathname is not image identity.
 func Read() Info {
-	info := Info{Version: Version}
+	imageOnce.Do(func() { imageIdentity = readRunningImage() })
+	info := Info{Version: Version, PID: os.Getpid(), BuildTime: imageIdentity.built,
+		IdentityStatus: "verified", IdentitySource: imageIdentity.source,
+		SHA256: imageIdentity.sha256, FileID: imageIdentity.fileID, IdentityError: imageIdentity.reason}
+	if imageIdentity.reason != "" {
+		info.IdentityStatus = "unavailable"
+	}
 	if exe, err := os.Executable(); err == nil {
 		info.Binary = exe
-		if st, statErr := os.Stat(exe); statErr == nil {
-			info.BuildTime = st.ModTime()
-		}
 	}
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {

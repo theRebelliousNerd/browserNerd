@@ -11,16 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"browsernerd-mcp-server/internal/docker"
+	"browsernerd-mcp-server/internal/logs"
 	"browsernerd-mcp-server/internal/mangle"
 	"browsernerd-mcp-server/internal/recorder"
 	"browsernerd-mcp-server/internal/security"
+	sdkmcp "github.com/mark3labs/mcp-go/mcp"
 )
 
 // BrowserMangleTool consolidates all Mangle fact operations into one progressive-disclosure tool.
 type BrowserMangleTool struct {
 	engine           *mangle.Engine
-	dockerClient     *docker.Client
+	logSource        logs.Source
 	recorder         *recorder.Recorder
 	redactor         *security.Redactor
 	pathPolicy       *security.PathPolicy
@@ -35,7 +36,9 @@ func (t *BrowserMangleTool) Description() string {
   query: an atom, a conjunction that joins without a rule
     ("net_request(S,R,M,U,I,T), net_response(S,R,500,L,D)"), or head :- body.
     A wrong argument count or unknown predicate is an error naming the signature.
-  read: recent facts, newest first (predicate_filter, limit). temporal: a predicate
+  read: recent facts (predicate_filter, limit), session_id filters BEFORE limit.
+    Only read/export_flight accept session_id; omit it for a global read/query.
+  temporal: a predicate
     between after_ms and before_ms. evaluate: does a derived predicate match now.
   submit_rule / push: add a rule / facts. subscribe, await_fact, await_conditions:
     wait for facts (timeout_ms). export_flight: JSONL evidence (include_server_logs).
@@ -57,7 +60,8 @@ func (t *BrowserMangleTool) InputSchema() map[string]interface{} {
 			},
 			"session_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Scope to this session",
+				"minLength":   1,
+				"description": "read/export_flight only: exact session; omit for global operations",
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
@@ -145,6 +149,17 @@ func (t *BrowserMangleTool) Execute(ctx context.Context, args map[string]interfa
 	if operation == "" {
 		return map[string]interface{}{"success": false, "error": "operation is required"}, nil
 	}
+	sessionID := ""
+	if raw, present := args["session_id"]; present {
+		value, ok := raw.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("%w: session_id must be a nonempty string; omit it for an unscoped operation", sdkmcp.ErrInvalidParams)
+		}
+		sessionID = strings.TrimSpace(value)
+		if operation != "read" && operation != "export_flight" {
+			return nil, fmt.Errorf("%w: session_id is supported only by read/export_flight, not %s; omit it and bind session arguments explicitly in a raw query", sdkmcp.ErrInvalidParams, operation)
+		}
+	}
 	if operation == "export_flight" {
 		return t.handleExportFlight(ctx, args), nil
 	}
@@ -193,6 +208,19 @@ func (t *BrowserMangleTool) Execute(ctx context.Context, args map[string]interfa
 		})
 
 	case "read":
+		if sessionID != "" {
+			limit := getIntArg(args, "limit", 25)
+			if limit <= 0 {
+				limit = 25
+			}
+			predicate := strings.TrimSpace(getStringArg(args, "predicate_filter"))
+			facts := selectRecentSessionFacts(t.engine, sessionID, predicate, limit)
+			opResult = map[string]interface{}{"count": len(facts), "facts": facts, "session_id": sessionID}
+			if predicate != "" {
+				opResult.(map[string]interface{})["predicate_filter"] = predicate
+			}
+			break
+		}
 		delegate := &ReadFactsTool{engine: t.engine}
 		delegateArgs := map[string]interface{}{}
 		if v, ok := args["limit"]; ok {
@@ -275,6 +303,9 @@ func (t *BrowserMangleTool) Execute(ctx context.Context, args map[string]interfa
 		"view":             view,
 		"evidence_handles": handles,
 	}
+	if sessionID != "" {
+		response["session_id"] = sessionID
+	}
 
 	switch view {
 	case "summary":
@@ -335,16 +366,17 @@ func (t *BrowserMangleTool) handleExportFlight(ctx context.Context, args map[str
 	logRows := []map[string]interface{}{}
 	warnings := make([]string, 0, 1)
 	if includeServerLogs {
-		if t.dockerClient == nil {
-			warnings = append(warnings, "docker log export requested but docker integration is disabled")
+		if t.logSource == nil {
+			warnings = append(warnings, "server log export requested but no log sources are configured")
 		} else {
-			logs, logErr := t.dockerClient.QueryLogs(ctx, time.UnixMilli(sinceMs))
+			qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			entries, logErr := t.logSource.LogsBetween(qctx, time.UnixMilli(sinceMs), time.UnixMilli(untilMs))
+			cancel()
 			if logErr != nil {
-				warnings = append(warnings, "docker log export failed: "+logErr.Error())
-			} else {
-				logRows = collectFlightDockerRows(logs, sinceMs, untilMs)
-				rows = append(rows, logRows...)
+				warnings = append(warnings, "server log export incomplete: "+backendLogError(logErr))
 			}
+			logRows = collectFlightLogRows(entries, sinceMs, untilMs)
+			rows = append(rows, logRows...)
 		}
 	}
 
@@ -379,7 +411,7 @@ func (t *BrowserMangleTool) handleExportFlight(ctx context.Context, args map[str
 			"path":                outPath,
 			"rows_written":        len(rows),
 			"fact_rows":           len(factRows),
-			"docker_rows":         len(logRows),
+			"server_log_rows":     len(logRows),
 			"include_server_logs": includeServerLogs,
 			"since_ms":            sinceMs,
 			"until_ms":            untilMs,
@@ -399,7 +431,7 @@ func (t *BrowserMangleTool) handleExportFlight(ctx context.Context, args map[str
 		"path":                outPath,
 		"rows_written":        len(rows),
 		"fact_rows":           len(factRows),
-		"docker_rows":         len(logRows),
+		"server_log_rows":     len(logRows),
 		"session_id":          sessionID,
 		"include_server_logs": includeServerLogs,
 		"since_ms":            sinceMs,
@@ -488,9 +520,12 @@ func collectFlightFactRows(engine *mangle.Engine, sessionID string, sinceMs, unt
 	return rows
 }
 
-func collectFlightDockerRows(logs []docker.LogEntry, sinceMs, untilMs int64) []map[string]interface{} {
-	rows := make([]map[string]interface{}, 0, len(logs))
-	for _, entry := range logs {
+func collectFlightLogRows(entries []logs.Entry, sinceMs, untilMs int64) []map[string]interface{} {
+	rows := make([]map[string]interface{}, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Timestamp.IsZero() {
+			continue
+		}
 		ts := entry.Timestamp.UnixMilli()
 		if sinceMs > 0 && ts < sinceMs {
 			continue
@@ -499,13 +534,13 @@ func collectFlightDockerRows(logs []docker.LogEntry, sinceMs, untilMs int64) []m
 			continue
 		}
 		rows = append(rows, map[string]interface{}{
-			"ts":        ts,
-			"source":    "docker_log",
-			"container": entry.Container,
-			"level":     entry.Level,
-			"tag":       entry.Tag,
-			"message":   entry.Message,
-			"raw":       entry.Raw,
+			"ts":         ts,
+			"source":     "server_log",
+			"log_source": entry.Source,
+			"level":      entry.Level,
+			"tag":        entry.Tag,
+			"message":    entry.Message,
+			"raw":        entry.Raw,
 		})
 	}
 	return rows

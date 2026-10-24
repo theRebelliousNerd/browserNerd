@@ -19,7 +19,7 @@ var (
 )
 
 // normalizeRequestURL is the grouping key for a request URL: numeric, uuid
-// and opaque-token path segments collapse to {id}, query values are dropped
+// and opaque-token path segments collapse to {id}, query values are omitted
 // (keys kept, sorted), and a same-origin URL loses its origin.
 func normalizeRequestURL(raw, origin string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
@@ -58,10 +58,10 @@ func normalizeRequestURL(raw, origin string) string {
 	if u.RawQuery != "" {
 		keys := make([]string, 0)
 		for k := range u.Query() {
-			keys = append(keys, k)
+			keys = append(keys, url.QueryEscape(k))
 		}
 		sort.Strings(keys)
-		out += "?" + strings.Join(keys, "=&") + "="
+		out += "?" + strings.Join(keys, "=[OMITTED]&") + "=[OMITTED]"
 	}
 	return out
 }

@@ -5,7 +5,6 @@ package browser
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os/exec"
 	"strconv"
 	"syscall"
@@ -41,20 +40,8 @@ func (q *windowsProcessQuerier) IsProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	handle, err := syscall.OpenProcess(syscall.SYNCHRONIZE|syscall.PROCESS_QUERY_INFORMATION, false, uint32(pid))
-	if err != nil {
-		if errors.Is(err, syscall.ERROR_ACCESS_DENIED) {
-			return true
-		}
-		return false
-	}
-	defer syscall.CloseHandle(handle)
-
-	event, err := syscall.WaitForSingleObject(handle, 0)
-	if err != nil {
-		return false
-	}
-	return event == syscall.WAIT_TIMEOUT
+	exited, err := ownedProcessExited(pid)
+	return err != nil || !exited
 }
 
 func (q *windowsProcessQuerier) KillProcessTree(pid int) error {

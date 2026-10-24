@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -195,7 +195,19 @@ func orphanProfile(t *testing.T, base, name string, owner int) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, browser.ProfileOwnerFile), []byte(strconv.Itoa(owner)), 0o600); err != nil {
+	scope := runtime.GOOS
+	if runtime.GOOS == "linux" {
+		namespace, err := os.Readlink("/proc/self/ns/pid")
+		if err != nil {
+			t.Fatal(err)
+		}
+		scope += ":" + namespace
+	}
+	raw, err := json.Marshal(map[string]interface{}{"pid": owner, "process_scope": scope})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, browser.ProfileOwnerFile), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return dir

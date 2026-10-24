@@ -26,6 +26,9 @@ func compactSessionRow(s browser.Session) map[string]interface{} {
 	if s.Title != "" {
 		row["title"] = s.Title
 	}
+	if s.IsolatedDisplay {
+		row["isolated_display"] = true
+	}
 	if s.Viewport != nil {
 		row["viewport"] = s.Viewport.String()
 	}
