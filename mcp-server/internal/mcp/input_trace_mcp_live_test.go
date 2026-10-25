@@ -5,11 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/config"
+	"browsernerd-mcp-server/internal/mangle"
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	sdkmcp "github.com/mark3labs/mcp-go/mcp"
@@ -19,7 +24,8 @@ import (
 // own headed private browser inside an owned process namespace.
 func TestLiveInputTraceCandidateMCP(t *testing.T) {
 	binary := os.Getenv("BROWSERNERD_INPUT_TRACE_BINARY")
-	if binary == "" {
+	sourceChild := os.Getenv("BROWSERNERD_INPUT_TRACE_SOURCE_HEADED") == "1"
+	if binary == "" && !sourceChild {
 		t.Skip("set BROWSERNERD_INPUT_TRACE_BINARY to a built candidate")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -56,7 +62,20 @@ security:
 	if err := os.WriteFile(configPath, []byte(configuration), 0600); err != nil {
 		t.Fatal(err)
 	}
-	client, err := mcpclient.NewStdioMCPClient("unshare", os.Environ(), "--user", "--map-current-user", "--pid", "--fork", "--mount-proc", "--kill-child", binary, "--no-workspace", "--config", configPath)
+	command := []string{"--user", "--map-current-user", "--pid", "--fork", "--mount-proc", "--kill-child"}
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "DISPLAY=") && !strings.HasPrefix(entry, "WAYLAND_DISPLAY=") {
+			env = append(env, entry)
+		}
+	}
+	if sourceChild {
+		command = append(command, os.Args[0], "-test.run=^TestInputTraceMCPSourceChild$")
+		env = append(env, "BROWSERNERD_INPUT_TRACE_CHILD_CONFIG="+configPath)
+	} else {
+		command = append(command, binary, "--no-workspace", "--config", configPath)
+	}
+	client, err := mcpclient.NewStdioMCPClient("unshare", env, command...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,6 +158,9 @@ security:
 		t.Fatalf("real reasoning yielded no authorization: %+v", reason)
 	}
 	handle := fmt.Sprint(handles[0])
+	if asMap(reason["gate_grants"])["available"] != true {
+		t.Fatalf("real reasoning did not issue authority: %+v", reason)
+	}
 	trace := func(action string, extra map[string]interface{}) map[string]interface{} {
 		t.Helper()
 		args := map[string]interface{}{"session_id": session, "mode": "input_trace", "trace_action": action, "approved_by_handle": handle, "view": "full"}
@@ -148,34 +170,40 @@ security:
 		return call("browser-observe", args)
 	}
 	for _, selector := range []string{"#delivered", "#prevented", "#blocked", "#key"} {
-		armed := trace("arm", map[string]interface{}{"root_selector": selector, "max_trace_bytes": 32768})
-		if armed["success"] != true {
-			t.Fatalf("MCP arm: %+v", armed)
-		}
-		id := getStringFromMap(asMap(armed["data"]), "trace_id")
-		operations := []interface{}{map[string]interface{}{"type": "click", "ref": strings.TrimPrefix(selector, "#")}}
-		if selector == "#key" {
-			operations = append(operations, map[string]interface{}{"type": "key", "key": "Enter"})
-		}
-		if out := call("browser-act", map[string]interface{}{"session_id": session, "operations": operations, "settle_ms": 0}); out["success"] != true {
-			t.Fatalf("MCP native action: %+v", out)
-		}
-		out := trace("stop", map[string]interface{}{"trace_id": id})
-		data := asMap(out["data"])
-		if out["success"] != true || data["active"] != false || data["cleanup_confirmed"] != true || asInt(data["event_count"]) < 1 {
-			t.Fatalf("MCP trace failed: %+v", out)
-		}
-		raw, _ := json.Marshal(out)
-		if strings.Contains(string(raw), "Canary_") {
-			t.Fatalf("private metadata escaped MCP trace: %s", raw)
-		}
-		for _, view := range []string{"summary", "compact", "full"} {
-			read := call("browser-observe", map[string]interface{}{"session_id": session, "mode": "input_trace", "trace_action": "read", "trace_id": id, "approved_by_handle": handle, "view": view})
-			if read["success"] != true || asMap(read["data"])["event_count"] != data["event_count"] {
-				t.Fatalf("nondestructive read/all-view counts lost: %+v", read)
+		for _, actionView := range []string{"summary", "compact", "full"} {
+			armed := trace("arm", map[string]interface{}{"root_selector": selector, "max_trace_bytes": 32768, "view": actionView})
+			if armed["success"] != true {
+				t.Fatalf("MCP arm: %+v", armed)
 			}
+			id := getStringFromMap(asMap(armed["data"]), "trace_id")
+			operations := []interface{}{map[string]interface{}{"type": "click", "ref": strings.TrimPrefix(selector, "#")}}
+			if selector == "#key" {
+				operations = append(operations, map[string]interface{}{"type": "key", "key": "Enter"})
+			}
+			if out := call("browser-act", map[string]interface{}{"session_id": session, "operations": operations, "settle_ms": 0}); out["success"] != true {
+				t.Fatalf("MCP native action: %+v", out)
+			}
+			immediate := trace("read", map[string]interface{}{"trace_id": id, "view": actionView})
+			if immediate["success"] != true || getStringFromMap(asMap(immediate["data"]), "trace_id") != id {
+				t.Fatalf("immediate approved read/%s: %+v", actionView, immediate)
+			}
+			out := trace("stop", map[string]interface{}{"trace_id": id, "view": actionView})
+			data := asMap(out["data"])
+			if out["success"] != true || data["active"] != false || data["cleanup_confirmed"] != true || asInt(data["event_count"]) < 1 {
+				t.Fatalf("MCP trace failed: %+v", out)
+			}
+			raw, _ := json.Marshal(out)
+			if strings.Contains(string(raw), "Canary_") {
+				t.Fatalf("private metadata escaped MCP trace: %s", raw)
+			}
+			for _, view := range []string{"summary", "compact", "full"} {
+				read := call("browser-observe", map[string]interface{}{"session_id": session, "mode": "input_trace", "trace_action": "read", "trace_id": id, "approved_by_handle": handle, "view": view})
+				if read["success"] != true || asMap(read["data"])["event_count"] != data["event_count"] {
+					t.Fatalf("nondestructive read/all-view counts lost: %+v", read)
+				}
+			}
+			t.Logf("MCP %s/%s arm -> native action -> immediate approved read/stop: events=%v phases=%v final=%v cleanup=%v", selector, actionView, data["event_count"], data["phase_count"], data["final_confirmed"], data["cleanup_confirmed"])
 		}
-		t.Logf("MCP %s: events=%v phases=%v final=%v cleanup=%v", selector, data["event_count"], data["phase_count"], data["final_confirmed"], data["cleanup_confirmed"])
 	}
 	bad := trace("arm", map[string]interface{}{"root_selector": "PRIVATE_SELECTOR_CANARY_992"})
 	raw, _ := json.Marshal(bad)
@@ -207,4 +235,40 @@ security:
 		}
 	}
 	t.Log("fresh headed private stdio candidate advertised and gated trace mode; receiver/cancellation evidence worked across all views; enabled recorder excluded trace args/results")
+}
+
+// The source child serves only MCP on stdout, even after its parent closes the
+// transport. Cleanup completes before exit; the test runner has no trailing
+// PASS output to write into the closed protocol pipe.
+func TestInputTraceMCPSourceChild(t *testing.T) {
+	path := os.Getenv("BROWSERNERD_INPUT_TRACE_CHILD_CONFIG")
+	if path == "" {
+		t.Skip("source MCP child only")
+	}
+	// The client closes its stderr pipe before waiting for child cleanup.
+	// Keep ordinary lifecycle logs off that transport during graceful EOF.
+	log.SetOutput(io.Discard)
+	serve := func() error {
+		cfg, _, err := config.LoadWithWorkspace(path, config.WorkspaceOptions{Disable: true})
+		if err != nil {
+			return err
+		}
+		engine, err := mangle.NewEngine(cfg.Mangle)
+		if err != nil {
+			return err
+		}
+		manager := browser.NewSessionManager(cfg.Browser, engine)
+		defer manager.Shutdown(context.Background())
+		server, err := NewServer(cfg, manager, engine)
+		if err != nil {
+			return err
+		}
+		defer server.Close()
+		return server.Start(context.Background())
+	}
+	if err := serve(); err != nil {
+		fmt.Fprintln(os.Stderr, "source MCP child:", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }

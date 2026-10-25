@@ -65,10 +65,19 @@ One call returns:
 
 `mode: input_trace` uses `trace_action: arm | read | stop` to diagnose native
 input delivery without invoking application callbacks. Every action requires
-the existing same-session browser-reason disclosure authorization. Arm takes
+an explicit `approved_by_handle` from the same-session browser-reason response,
+or `gate_reason` naming one of that response's authorized reasons. Calling
+browser-reason does not select a grant for later calls. `explicit_user_intent`
+requires the approved handle on every action. Arm takes
 exactly one observed `root_ref` or unique `root_selector` and returns an opaque
 `trace_id`; read and stop require that ID and the same live session. Targets
 are exact node identities, never rebound after replacement or navigation.
+Read and stop accept `session_id`, `mode`, `trace_action`, `trace_id`, the
+authorization fields, `view` and `max_items`. Root and capture-budget fields
+(`root_ref`, `root_selector`, `duration_ms`, `max_events`, `max_trace_bytes`)
+are arm-only and must be omitted from read/stop. A native action followed
+immediately by read and stop reuses the arm's handle and returned trace ID;
+it does not repeat the action or rearm the target.
 
 The fixed listeners observe pointer down/up, mouse down/up/click, focus and
 focusin/out, and key down/up only for the fixed activation codes Enter,
@@ -99,7 +108,10 @@ retained and the in-page lease bounds remaining listeners to the armed duration.
 `cleanup_pending` distinguishes stopped listeners from resource cleanup still
 in flight. Rearm waits for that exact trace's bounded cleanup; an actively
 listening trace refuses replacement. Terminal evidence remains bounded in the
-session for 60000 ms after stopping; read is nondestructive. Rearming replaces
+session for 60000 ms after stopping, independently of the capture lease and
+the authorization grant's expiry; read is nondestructive and never extends
+this window. Read promptly after the native action, including when navigation
+or a capture limit can end the trace before its lease. Rearming replaces
 only a terminal trace and discards its superseded retained copy. Closed sessions
 and disconnected transports release owned handles and never authorize a trace
 on another tab.

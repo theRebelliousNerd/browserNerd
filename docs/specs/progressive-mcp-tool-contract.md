@@ -106,7 +106,11 @@ accepted. Options are passed as JSON arguments to fixed internal scripts.
 
 `input_trace` uses the same disclosure gate for `trace_action: arm | read |
 stop`. Arm resolves one exact target via `root_ref` or `root_selector`; read
-and stop require the returned same-session `trace_id`. Its fixed event set,
+and stop require the returned same-session `trace_id`.
+Every action must explicitly carry `approved_by_handle` or an authorized
+`gate_reason`; a preceding reasoning call alone does not authorize an omitted
+selector. Read/stop also accept `view` and `max_items`, but reject arm-only
+root and capture-budget fields. Its fixed event set,
 capture/response budgets, trace-local node identities, cancellation limits,
 cleanup and terminal retention are defined in
 [observation and interaction](browser-observation-and-interaction.md#input_trace).

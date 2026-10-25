@@ -14,6 +14,49 @@ func authorizeInputTrace(t *testing.T, engine *mangle.Engine, session string) st
 	return authorizeReason(t, engine, session)
 }
 
+func TestInputTraceReadStopExplicitContract(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	authorizeNoMatchingReason(t, engine, "own")
+	handle := authorizeInputTrace(t, engine, "own")
+	tool := &BrowserObserveTool{engine: engine}
+	for _, action := range []string{"read", "stop"} {
+		for _, view := range []string{"summary", "compact", "full"} {
+			args := map[string]interface{}{"session_id": "own", "mode": "input_trace", "trace_action": action, "trace_id": "00000000-0000-0000-0000-000000000000", "view": view, "max_items": 20}
+			out, err := tool.Execute(context.Background(), args)
+			if err != nil || asMap(out)["gated"] != true {
+				t.Fatalf("fresh reason auto-selected a grant: %+v %v", out, err)
+			}
+			for _, authorization := range []map[string]interface{}{
+				{"approved_by_handle": handle}, {"gate_reason": "no_matching_tool"},
+				{"gate_reason": "explicit_user_intent", "approved_by_handle": handle},
+			} {
+				copyArgs := make(map[string]interface{}, len(args)+2)
+				for name, value := range args {
+					copyArgs[name] = value
+				}
+				for name, value := range authorization {
+					copyArgs[name] = value
+				}
+				if _, err := parseInputTraceArgs(copyArgs); err != nil {
+					t.Fatalf("authorized read/stop shape refused: %v", err)
+				}
+				out, err := tool.Execute(context.Background(), copyArgs)
+				if err != nil || asMap(out)["gated"] == true || asMap(out)["error"] != "input trace requires a live owned session" {
+					t.Fatalf("explicit authority lost before ownership check: %+v %v", out, err)
+				}
+				for _, field := range []string{"root_ref", "root_selector", "duration_ms", "max_events", "max_trace_bytes"} {
+					copyArgs[field] = "PRIVATE_CANARY"
+					_, err := parseInputTraceArgs(copyArgs)
+					if err == nil || !strings.Contains(err.Error(), "approved_by_handle/gate_reason") || !strings.Contains(err.Error(), "arm-only") || strings.Contains(err.Error(), "PRIVATE_CANARY") {
+						t.Fatalf("contradictory or private validation error: %v", err)
+					}
+					delete(copyArgs, field)
+				}
+			}
+		}
+	}
+}
+
 func TestInputTraceSchemaAndRefusals(t *testing.T) {
 	props := (&BrowserObserveTool{}).InputSchema()["properties"].(map[string]interface{})
 	for _, name := range []string{"trace_action", "trace_id", "duration_ms", "max_events", "max_trace_bytes", "root_ref", "root_selector"} {

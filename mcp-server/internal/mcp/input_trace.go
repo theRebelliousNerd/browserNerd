@@ -112,7 +112,7 @@ func parseInputTraceArgs(args map[string]interface{}) (inputTraceArgs, error) {
 	} else {
 		for _, name := range []string{"root_ref", "root_selector", "duration_ms", "max_events", "max_trace_bytes"} {
 			if _, exists := args[name]; exists {
-				return o, fmt.Errorf("read/stop accepts trace_id, view and max_items only")
+				return o, fmt.Errorf("read/stop accepts trace_id, view, max_items and authorization (approved_by_handle/gate_reason); omit arm-only roots and budgets")
 			}
 		}
 		if o.id, err = stringArg("trace_id"); err != nil || len(o.id) != 36 {
