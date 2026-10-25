@@ -13,16 +13,21 @@ import (
 	"testing"
 	"time"
 
+	"browsernerd-mcp-server/internal/browser"
+	"browsernerd-mcp-server/internal/config"
+	"browsernerd-mcp-server/internal/mangle"
+
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	sdkmcp "github.com/mark3labs/mcp-go/mcp"
 )
 
-// This proof uses the installed candidate through MCP, a real React 18 fixture,
+// This proof uses a candidate or source test child through MCP, a real React fixture,
 // and headed Chrome on its own managed display. A PID namespace contains every
 // candidate child so cleanup cannot target another browser or daemon.
 func TestLiveProgressiveObserveDeepGateMCP(t *testing.T) {
 	binary := os.Getenv("BROWSERNERD_DEEP_GATE_BINARY")
-	if binary == "" {
+	sourceChild := os.Getenv("BROWSERNERD_GATE_LEDGER_HEADED") == "1"
+	if binary == "" && !sourceChild {
 		t.Skip("set BROWSERNERD_DEEP_GATE_BINARY and BROWSERNERD_REACT_FIXTURE_DIR for isolated headed MCP proof")
 	}
 	assets := os.Getenv("BROWSERNERD_REACT_FIXTURE_DIR")
@@ -93,9 +98,20 @@ security:
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
-	client, err := mcpclient.NewStdioMCPClient("unshare", os.Environ(),
-		"--user", "--map-current-user", "--pid", "--fork", "--mount-proc", "--kill-child",
-		binary, "--no-workspace", "--config", configPath)
+	command := []string{"--user", "--map-current-user", "--pid", "--fork", "--mount-proc", "--kill-child"}
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "DISPLAY=") && !strings.HasPrefix(entry, "WAYLAND_DISPLAY=") {
+			env = append(env, entry)
+		}
+	}
+	if sourceChild {
+		command = append(command, os.Args[0], "-test.run=^TestGateLedgerMCPChild$")
+		env = append(env, "BROWSERNERD_GATE_LEDGER_CHILD_CONFIG="+configPath)
+	} else {
+		command = append(command, binary, "--no-workspace", "--config", configPath)
+	}
+	client, err := mcpclient.NewStdioMCPClient("unshare", env, command...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,18 +218,10 @@ security:
 		if len(handles) == 0 {
 			t.Fatalf("real browser-reason emitted no handle for failed fixture request: %+v", reason)
 		}
-		retained := call("browser-mangle", map[string]interface{}{"operation": "read", "session_id": session, "predicate_filter": "disclosure_handle", "view": "full", "limit": 50})
-		facts, _ := asMap(retained["data"])["facts"].([]interface{})
-		for _, handle := range handles {
-			for _, fact := range facts {
-				args, _ := asMap(fact)["args"].([]interface{})
-				if len(args) > 1 && args[1] == handle {
-					return fmt.Sprint(handle)
-				}
-			}
+		if asMap(reason["gate_grants"])["available"] != true {
+			t.Fatalf("real reason authorization was unavailable: %+v", reason)
 		}
-		t.Fatal("real reasoning handles were unavailable under engine sampling; no gate bypass attempted")
-		return ""
+		return fmt.Sprint(handles[0])
 	}
 	handle := authorize()
 	for _, mode := range []string{"react", "dom_snapshot"} {
@@ -291,7 +299,11 @@ security:
 	}
 	// Submit many low-priority rows to a deliberately tiny buffer. Direct rows
 	// remain authoritative even when optional fact retention discards early fibers.
-	pressure := inspect("react", "full", map[string]interface{}{"root_selector": "main", "max_nodes": 500, "max_depth": 50, "emit_facts": true})
+	retainedHandle := authorize()
+	var pressure map[string]interface{}
+	for i := 0; i < 3; i++ {
+		pressure = call("browser-observe", map[string]interface{}{"session_id": session, "mode": "react", "view": "full", "approved_by_handle": retainedHandle, "root_selector": "main", "max_nodes": 500, "max_depth": 50, "emit_facts": true})
+	}
 	storage := asMap(asMap(pressure["data"])["fact_storage"])
 	if pressure["success"] != true || storage["retention"] != "unknown" || storage["submitted"].(float64) <= 1024 {
 		t.Fatalf("fixture did not saturate optional storage honestly: %+v", pressure)
@@ -311,6 +323,59 @@ security:
 		t.Fatalf("fixture did not actually evict facts: %+v", engine)
 	}
 	t.Logf("fact retention evicted %v; direct targeted tab value and function marker remain in response", engine["evicted"])
+	if sourceChild {
+		telemetry := call("browser-mangle", map[string]interface{}{"operation": "read", "session_id": session, "predicate_filter": "disclosure_handle", "limit": 1000, "view": "full"})
+		if strings.Contains(fmt.Sprint(telemetry), "reason:") || telemetry["success"] != true {
+			t.Fatalf("real producer telemetry did not fully evict: %+v", telemetry)
+		}
+		for _, view := range []string{"summary", "compact", "full"} {
+			for _, mode := range []string{"react", "dom_snapshot"} {
+				out := call("browser-observe", map[string]interface{}{"session_id": session, "mode": mode, "view": view, "approved_by_handle": retainedHandle, "root_selector": "main"})
+				if out["success"] != true || asMap(out["data"])["captured"].(float64) <= 0 {
+					t.Fatalf("eviction revoked %s/%s real authorization: %+v", mode, view, out)
+				}
+			}
+			arm := call("browser-observe", map[string]interface{}{"session_id": session, "mode": "input_trace", "view": view, "approved_by_handle": retainedHandle, "trace_action": "arm", "root_ref": "inspect-button", "duration_ms": 1000, "max_events": 20, "max_trace_bytes": 4000})
+			id := getStringFromMap(asMap(arm["data"]), "trace_id")
+			if arm["success"] != true || id == "" {
+				t.Fatalf("eviction revoked trace arm/%s: %+v", view, arm)
+			}
+			for _, action := range []string{"read", "stop"} {
+				out := call("browser-observe", map[string]interface{}{"session_id": session, "mode": "input_trace", "view": view, "approved_by_handle": retainedHandle, "trace_action": action, "trace_id": id})
+				if out["success"] != true || getStringFromMap(asMap(out["data"]), "trace_id") != id {
+					t.Fatalf("eviction revoked trace %s/%s: %+v", action, view, out)
+				}
+			}
+		}
+		t.Log("same actual reason handle authorized all deep modes/views and trace arm/read/stop after complete disclosure telemetry eviction")
+	}
 
 	t.Log("MCP advertised gate fields; both modes/all views denied before browser-reason, inspected with its same-session handle, and denied that handle on another session; headed isolated candidate only")
+}
+
+// The parent launches this source-built test process only in its own PID
+// namespace. It serves normal MCP tools without installing or switching a daemon.
+func TestGateLedgerMCPChild(t *testing.T) {
+	path := os.Getenv("BROWSERNERD_GATE_LEDGER_CHILD_CONFIG")
+	if path == "" {
+		t.Skip("source child only")
+	}
+	cfg, _, err := config.LoadWithWorkspace(path, config.WorkspaceOptions{Disable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := mangle.NewEngine(cfg.Mangle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := browser.NewSessionManager(cfg.Browser, engine)
+	defer manager.Shutdown(context.Background())
+	server, err := NewServer(cfg, manager, engine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	if err := server.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }

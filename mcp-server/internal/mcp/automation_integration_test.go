@@ -56,12 +56,7 @@ func TestIntegrationExecutePlan(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 	sessionID := session.ID
-	jsHandle := "reason:" + sessionID + ":root_causes"
-	_ = engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "disclosure_handle",
-		Args:      []interface{}{sessionID, jsHandle, "reason", time.Now().UnixMilli()},
-		Timestamp: time.Now(),
-	}})
+	jsHandle := authorizeReason(t, engine, sessionID)
 
 	page, _ := sessions.Page(sessionID)
 	dataURL := htmlDataURL(testHTML)
@@ -508,14 +503,7 @@ func TestIntegrationSessionTools(t *testing.T) {
 	})
 
 	t.Run("SnapshotDOMTool", func(t *testing.T) {
-		approvedHandle := "reason:" + testSessionID + ":snapshot"
-		if err := engine.AddFacts(ctx, []mangle.Fact{{
-			Predicate: "disclosure_handle",
-			Args:      []interface{}{testSessionID, approvedHandle, "reason", time.Now().UnixMilli()},
-			Timestamp: time.Now(),
-		}}); err != nil {
-			t.Fatalf("AddFacts failed: %v", err)
-		}
+		approvedHandle := authorizeReason(t, engine, testSessionID)
 		tool := &SnapshotDOMTool{sessions: sessions, engine: engine}
 
 		result, err := tool.Execute(ctx, map[string]interface{}{

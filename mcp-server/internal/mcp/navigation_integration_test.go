@@ -32,12 +32,7 @@ func TestIntegrationNavigationTools(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 	sessionID := session.ID
-	jsHandle := "reason:" + sessionID + ":root_causes"
-	_ = engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "disclosure_handle",
-		Args:      []interface{}{sessionID, jsHandle, "reason", time.Now().UnixMilli()},
-		Timestamp: time.Now(),
-	}})
+	jsHandle := authorizeReason(t, engine, sessionID)
 
 	// Navigate to test page with content
 	testHTML := `<!DOCTYPE html>
@@ -436,12 +431,7 @@ func TestIntegrationInteractionTools(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 	sessionID := session.ID
-	jsHandle := "reason:" + sessionID + ":root_causes"
-	_ = engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "disclosure_handle",
-		Args:      []interface{}{sessionID, jsHandle, "reason", time.Now().UnixMilli()},
-		Timestamp: time.Now(),
-	}})
+	jsHandle := authorizeReason(t, engine, sessionID)
 
 	page, _ := sessions.Page(sessionID)
 	dataURL := htmlDataURL(testHTML)

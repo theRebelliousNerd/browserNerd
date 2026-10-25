@@ -154,6 +154,15 @@ Progressive responses expose evidence handles for targeted expansion:
 `expand_handles` returns those sections' rows in `data`, along with `issues`
 and `backend_logs` when asked for.
 
+Expansion labels and authorization are separate. A reason response's
+`gate_grants` receipt reports whether its exact session/handle/reason bundle
+was atomically issued, its actual ten-minute expiry and its authorized reason
+names. On capacity, cancellation or unavailable-authority refusal, it reports
+unavailable with a named reason while retaining honest diagnostic/expansion
+evidence. Only the real reason producer issues grants. A bounded TTL ledger
+preserves issued grants independently of Mangle retention; a raw handle fact,
+including one written manually or emitted by another tool, is not authority.
+
 ## Export and persistence
 
 Raw flight export is an explicit `browser-mangle` operation and remains inside

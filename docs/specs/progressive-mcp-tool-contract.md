@@ -73,6 +73,23 @@ The `react` and `dom_snapshot` observation modes advertise `gate_reason` and
 inspection requires recent, same-session browser-reason evidence: a matching
 authorized reason or disclosure handle; `explicit_user_intent` requires a
 handle. Missing, expired, or foreign-session evidence remains denied.
+Only the actual `browser-reason` producer issues authorization. Its engine-owned
+grant ledger is independent of sampled/evicted Mangle telemetry. Raw facts and
+non-reason disclosure handles never authorize a gated tool. Each atomic issued
+bundle has a ten-minute expiry; refreshing exact keys does not extend other
+keys. Live grants are never evicted to admit a new bundle.
+
+Every valid reason response distinguishes expansion `evidence_handles` from
+`gate_grants`: `available` describes issuance of this response's whole bundle,
+`expires_at_ms` names its actual expiry, and nonempty `reasons` lists authorized
+reason names. Failed issuance has `available: false` and a named `reason`;
+expansion handles and the diagnosis remain usable. An older independently
+issued grant may remain valid until its own expiry when a refresh is refused.
+The ledger permits at most 256 sessions, 4096 distinct handle/reason keys and
+1048576 accounted bytes. A session accounts for its UTF-8 key bytes plus 64;
+each grant accounts for its key bytes plus 64. Session/handle keys are bounded
+to 256 bytes. Expired entries are removed lazily on issuance or lookup;
+capacity refusal never partially publishes or refreshes a bundle.
 Every view preserves a denied, failed, or timed-out extraction as
 `success: false`, with its reason and gate guidance. No inspection count or
 successful observation handle is manufactured on failure.

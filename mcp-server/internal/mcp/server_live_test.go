@@ -122,12 +122,7 @@ func TestWrapToolWithError(t *testing.T) {
 	// Try to execute a tool that will fail
 	ctx := context.Background()
 	tool := server.tools["reify-react"]
-	handle := "reason:nonexistent-session:root_causes"
-	_ = engine.AddFacts(ctx, []mangle.Fact{{
-		Predicate: "disclosure_handle",
-		Args:      []interface{}{"nonexistent-session", handle, "reason", time.Now().UnixMilli()},
-		Timestamp: time.Now(),
-	}})
+	handle := authorizeReason(t, engine, "nonexistent-session")
 	_, err = tool.Execute(ctx, map[string]interface{}{
 		"session_id":         "nonexistent-session",
 		"approved_by_handle": handle,

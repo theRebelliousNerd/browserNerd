@@ -73,6 +73,7 @@ type Engine struct {
 	cfg          config.MangleConfig
 	mu           sync.RWMutex
 	schemaLoaded bool
+	gateGrants   *gateGrantLedger
 
 	// Program
 	programInfo     *analysis.ProgramInfo
@@ -126,6 +127,7 @@ type engineCounters struct {
 func NewEngine(cfg config.MangleConfig) (*Engine, error) {
 	e := &Engine{
 		cfg:                cfg,
+		gateGrants:         newGateGrantLedger(gateGrantLimits{GateGrantMaxSessions, GateGrantMaxKeys, GateGrantMaxBytes}),
 		facts:              make([]Fact, 0, cfg.FactBufferLimit),
 		index:              make(map[string][]int),
 		eternal:            make(map[uint64]ast.Atom),

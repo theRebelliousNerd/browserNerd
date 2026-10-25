@@ -781,30 +781,6 @@ func emitDisclosureFacts(ctx context.Context, engine *mangle.Engine, sessionID s
 	_ = engine.AddFacts(ctx, facts)
 }
 
-func hasRecentGateFact(engine *mangle.Engine, predicate, sessionID, matchValue string, ttl time.Duration) bool {
-	if engine == nil {
-		return false
-	}
-	facts := engine.FactsByPredicate(predicate)
-	cutoff := time.Now().Add(-ttl)
-	for i := len(facts) - 1; i >= 0; i-- {
-		f := facts[i]
-		if f.Timestamp.Before(cutoff) {
-			continue
-		}
-		if len(f.Args) < 2 {
-			continue
-		}
-		if fmt.Sprintf("%v", f.Args[0]) != sessionID {
-			continue
-		}
-		if fmt.Sprintf("%v", f.Args[1]) == matchValue {
-			return true
-		}
-	}
-	return false
-}
-
 type observeIntentDefaults struct {
 	mode               string
 	view               string

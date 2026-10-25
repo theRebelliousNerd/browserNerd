@@ -3,6 +3,8 @@ package mcp
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +30,196 @@ func testMangleEngineForProgressive(t *testing.T) *mangle.Engine {
 		t.Fatalf("failed to create mangle engine: %v", err)
 	}
 	return engine
+}
+
+// reasonFixtureResponse uses only ordinary request evidence and the real issuer.
+func reasonFixtureResponse(t *testing.T, engine *mangle.Engine, session, view string) map[string]interface{} {
+	t.Helper()
+	now := time.Now()
+	request := fmt.Sprint("grant-request-", now.UnixNano())
+	if err := engine.AddFacts(context.Background(), []mangle.Fact{
+		{Predicate: "net_request", Args: []interface{}{session, request, "GET", "https://fixture.invalid/api/read", "fixture", now.UnixMilli()}, Timestamp: now},
+		{Predicate: "net_response", Args: []interface{}{session, request, 500, 0, 1}, Timestamp: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&BrowserReasonTool{engine: engine}).Execute(context.Background(), map[string]interface{}{"session_id": session, "topic": "health", "view": view})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := asMap(response)
+	if result["success"] != true {
+		t.Fatalf("actual reason failed: %+v", result)
+	}
+	return result
+}
+
+func authorizeReason(t *testing.T, engine *mangle.Engine, session string) string {
+	t.Helper()
+	result := reasonFixtureResponse(t, engine, session, "compact")
+	if asMap(result["gate_grants"])["available"] != true {
+		t.Fatalf("actual reason did not publish authorization: %+v", result)
+	}
+	handles, _ := result["evidence_handles"].([]string)
+	for _, handle := range handles {
+		if engine.HasGateHandle(session, handle) {
+			return handle
+		}
+	}
+	t.Fatal("real reason response returned no authorized handle")
+	return ""
+}
+
+func authorizeNoMatchingReason(t *testing.T, engine *mangle.Engine, session string) {
+	t.Helper()
+	result, err := (&BrowserReasonTool{engine: engine}).Execute(context.Background(), map[string]interface{}{"session_id": session, "topic": "next_best_action", "view": "compact"})
+	if err != nil || asMap(asMap(result)["gate_grants"])["available"] != true || !engine.HasGateReason(session, "no_matching_tool") {
+		t.Fatalf("real no-matching-tool reason unavailable: %+v %v", result, err)
+	}
+}
+
+func TestReasonAuthorizationReceiptPrivacyAndBudgets(t *testing.T) {
+	if jsGateTTL != mangle.GateGrantTTL {
+		t.Fatal("gate TTL contract differs from ledger")
+	}
+	for _, view := range []string{"summary", "compact", "full"} {
+		engine := testMangleEngineForProgressive(t)
+		result := reasonFixtureResponse(t, engine, "bounded-fixture", view)
+		safe := asMap(security.NewRedactor(nil).Sanitize(result))
+		receipt := asMap(safe["gate_grants"])
+		if receipt["available"] != true || receipt["expires_at_ms"] == nil || !engine.HasGateHandle("bounded-fixture", "reason:network") {
+			t.Fatalf("MCP-safe receipt lost %s grants: %+v", view, safe)
+		}
+		if view == "compact" && responseTokens(t, safe) > 300 {
+			t.Fatal("grant receipt exceeds existing compact health budget")
+		}
+	}
+	for _, item := range []struct {
+		err  error
+		code string
+	}{
+		{mangle.ErrGateGrantCapacity, "capacity_exhausted"},
+		{mangle.ErrGateGrantEmpty, "no_eligible_grants"},
+		{mangle.ErrGateGrantUnavailable, "authority_unavailable"},
+		{mangle.ErrGateGrantInvalid, "invalid_bundle"},
+		{context.Canceled, "publication_cancelled"},
+		{context.DeadlineExceeded, "publication_cancelled"},
+		{errors.New("OpaqueFailureSecret"), "authorization_publication_failed"},
+	} {
+		receipt := reasonAuthorizationReceipt(time.Time{}, item.err, []string{"OpaqueFailureSecret"})
+		raw, err := json.Marshal(security.NewRedactor(nil).Sanitize(map[string]interface{}{"gate_grants": receipt}))
+		if err != nil || receipt["available"] != false || receipt["reason"] != item.code || receipt["expires_at_ms"] != nil || strings.Contains(string(raw), "OpaqueFailureSecret") || len(raw) > 110 {
+			t.Fatalf("failure receipt leaks or implies authority: %s %v", raw, err)
+		}
+	}
+	engine := testMangleEngineForProgressive(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := (&BrowserReasonTool{engine: engine}).Execute(ctx, map[string]interface{}{"session_id": "cancelled", "topic": "health"})
+	if err != nil || asMap(asMap(result)["gate_grants"])["reason"] != "publication_cancelled" || engine.HasGateReason("cancelled", "no_matching_tool") {
+		t.Fatalf("cancelled actual issuer claimed authority: %+v %v", result, err)
+	}
+}
+
+func TestReasonAuthorizationSurvivesCompleteTelemetryEviction(t *testing.T) {
+	engine, err := mangle.NewEngine(config.MangleConfig{Enable: true, FactBufferLimit: 16384})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := authorizeReason(t, engine, "proof")
+	authorizeNoMatchingReason(t, engine, "reason-proof")
+	now := time.Now()
+	facts := make([]mangle.Fact, 0, 19753)
+	for i := 0; i < 13453; i++ {
+		facts = append(facts, mangle.Fact{Predicate: "page_loaded", Args: []interface{}{fmt.Sprint("fixture-", i), now.UnixMilli()}, Timestamp: now})
+	}
+	for i := 0; i < 1300; i++ {
+		facts = append(facts, mangle.Fact{Predicate: "navigation_event", Args: []interface{}{fmt.Sprint("fixture-", i), "https://fixture.invalid/", now.UnixMilli()}, Timestamp: now})
+	}
+	for i := 0; i < 5000; i++ {
+		facts = append(facts, mangle.Fact{Predicate: "dom_layout", Args: []interface{}{fmt.Sprint("fixture-", i), fmt.Sprint(i), 0, 0, 1, 1, "true"}, Timestamp: now})
+	}
+	if err := engine.AddFacts(context.Background(), facts); err != nil {
+		t.Fatal(err)
+	}
+	if len(engine.FactsByPredicate("disclosure_handle")) != 0 || len(engine.FactsByPredicate("js_gate_open")) != 0 {
+		t.Fatal("fixture did not completely evict authorization telemetry")
+	}
+	if !engine.HasGateHandle("proof", handle) || !engine.HasGateReason("reason-proof", "no_matching_tool") {
+		t.Fatal("eviction revoked real producer authority")
+	}
+	manager := browser.NewSessionManager(config.BrowserConfig{}, engine)
+	for _, view := range []string{"summary", "compact", "full"} {
+		for _, mode := range []string{"react", "dom_snapshot", "input_trace"} {
+			args := map[string]interface{}{"session_id": "proof", "mode": mode, "view": view, "approved_by_handle": handle, "root_selector": "main"}
+			if mode == "input_trace" {
+				args["trace_action"] = "arm"
+			}
+			out, err := (&BrowserObserveTool{sessions: manager, engine: engine}).Execute(context.Background(), args)
+			if err != nil || asMap(out)["gated"] == true || asMap(out)["status"] != "error" || asMap(out)["error"] == "" {
+				t.Fatalf("%s/%s real grant did not reach owned-session check: %+v %v", mode, view, out, err)
+			}
+		}
+	}
+	js := &EvaluateJSTool{sessions: manager, engine: engine}
+	for _, args := range []map[string]interface{}{
+		{"session_id": "proof", "script": "() => 1", "approved_by_handle": handle},
+		{"session_id": "reason-proof", "script": "() => 1", "gate_reason": "no_matching_tool"},
+	} {
+		out, err := js.Execute(context.Background(), args)
+		if err != nil || asMap(out)["error_type"] != "session" || asMap(out)["gated"] == true {
+			t.Fatalf("JS real grant lost after telemetry eviction: %+v %v", out, err)
+		}
+	}
+}
+
+func TestReasonAuthorizationCapacityReceiptAllViews(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	for i := 0; i < mangle.GateGrantMaxSessions; i++ {
+		authorizeReason(t, engine, fmt.Sprintf("capacity-%03d", i))
+	}
+	for _, view := range []string{"summary", "compact", "full"} {
+		result := reasonFixtureResponse(t, engine, "capacity-refused", view)
+		authorization := asMap(result["gate_grants"])
+		if authorization["available"] != false || authorization["reason"] != "capacity_exhausted" || authorization["expires_at_ms"] != nil {
+			t.Fatalf("capacity falsely claimed issuance: %+v", result)
+		}
+		if view != "summary" && len(toAnySlice(result["evidence_handles"])) == 0 {
+			t.Fatal("authorization refusal destroyed expansion evidence")
+		}
+		if engine.HasGateHandle("capacity-refused", "reason:network") {
+			t.Fatal("capacity-refused bundle minted authority")
+		}
+	}
+	if !engine.HasGateHandle("capacity-000", "reason:network") {
+		t.Fatal("capacity eviction removed older live authority")
+	}
+}
+
+func TestReasonAuthorizationRawAndNonreasonTelemetryDenied(t *testing.T) {
+	engine := testMangleEngineForProgressive(t)
+	now := time.Now()
+	if err := engine.AddFacts(context.Background(), []mangle.Fact{
+		{Predicate: "disclosure_handle", Args: []interface{}{"forged", "reason:network", "reason", now.UnixMilli()}, Timestamp: now},
+		{Predicate: "js_gate_open", Args: []interface{}{"forged", "low_confidence", now.UnixMilli()}, Timestamp: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	emitDisclosureFacts(context.Background(), engine, "forged", []string{"observe:forged:state"}, "observe")
+	gate := &EvaluateJSTool{engine: engine}
+	for _, caseArgs := range [][2]string{{"", "reason:network"}, {"", "observe:forged:state"}, {"low_confidence", ""}} {
+		if ok, _ := gate.evaluateJSGateOpen("forged", caseArgs[0], caseArgs[1], "evaluate-js"); ok {
+			t.Fatal("telemetry minted authority")
+		}
+	}
+	for _, view := range []string{"summary", "compact", "full"} {
+		for _, mode := range []string{"react", "dom_snapshot", "input_trace"} {
+			out, err := (&BrowserObserveTool{engine: engine}).Execute(context.Background(), map[string]interface{}{"session_id": "forged", "mode": mode, "view": view, "approved_by_handle": "reason:network", "trace_action": "arm", "root_selector": "main"})
+			if err != nil || asMap(out)["gated"] != true {
+				t.Fatalf("raw fact bypassed %s/%s: %+v %v", mode, view, out, err)
+			}
+		}
+	}
 }
 
 func TestProgressiveToolContracts(t *testing.T) {
@@ -185,57 +377,25 @@ func TestEvaluateJSGating(t *testing.T) {
 		}
 	})
 
-	t.Run("allows approved handle when recent handle fact exists", func(t *testing.T) {
+	t.Run("allows actual reason handle", func(t *testing.T) {
 		engine := testMangleEngineForProgressive(t)
-		tool := &EvaluateJSTool{engine: engine}
-		ctx := context.Background()
-
-		now := time.Now()
-		_ = engine.AddFacts(ctx, []mangle.Fact{{
-			Predicate: "disclosure_handle",
-			Args:      []interface{}{"s2", "reason:s2:root_causes", "reason", now.UnixMilli()},
-			Timestamp: now,
-		}})
-
-		ok, msg := tool.evaluateJSGateOpen("s2", "", "reason:s2:root_causes", tool.Name())
-		if !ok {
-			t.Fatalf("expected approved handle to pass, got: %s", msg)
+		handle := authorizeReason(t, engine, "s2")
+		if ok, msg := (&EvaluateJSTool{engine: engine}).evaluateJSGateOpen("s2", "", handle, "evaluate-js"); !ok {
+			t.Fatalf("actual handle denied: %s", msg)
 		}
 	})
-
-	t.Run("allows explicit user intent with approved handle", func(t *testing.T) {
+	t.Run("allows explicit intent only with actual reason handle", func(t *testing.T) {
 		engine := testMangleEngineForProgressive(t)
-		tool := &EvaluateJSTool{engine: engine}
-		ctx := context.Background()
-
-		now := time.Now()
-		_ = engine.AddFacts(ctx, []mangle.Fact{{
-			Predicate: "disclosure_handle",
-			Args:      []interface{}{"s2b", "reason:s2b:root_causes", "reason", now.UnixMilli()},
-			Timestamp: now,
-		}})
-
-		ok, msg := tool.evaluateJSGateOpen("s2b", "explicit_user_intent", "reason:s2b:root_causes", tool.Name())
-		if !ok {
-			t.Fatalf("expected explicit_user_intent with approved handle to pass, got: %s", msg)
+		handle := authorizeReason(t, engine, "s2b")
+		if ok, msg := (&EvaluateJSTool{engine: engine}).evaluateJSGateOpen("s2b", "explicit_user_intent", handle, "evaluate-js"); !ok {
+			t.Fatalf("actual explicit handle denied: %s", msg)
 		}
 	})
-
-	t.Run("allows low_confidence only when gate fact exists", func(t *testing.T) {
+	t.Run("allows no matching tool only after actual reason", func(t *testing.T) {
 		engine := testMangleEngineForProgressive(t)
-		tool := &EvaluateJSTool{engine: engine}
-		ctx := context.Background()
-
-		now := time.Now()
-		_ = engine.AddFacts(ctx, []mangle.Fact{{
-			Predicate: "js_gate_open",
-			Args:      []interface{}{"s3", "low_confidence", now.UnixMilli()},
-			Timestamp: now,
-		}})
-
-		ok, msg := tool.evaluateJSGateOpen("s3", "low_confidence", "", tool.Name())
-		if !ok {
-			t.Fatalf("expected low_confidence gate to pass, got: %s", msg)
+		authorizeNoMatchingReason(t, engine, "s3")
+		if ok, msg := (&EvaluateJSTool{engine: engine}).evaluateJSGateOpen("s3", "no_matching_tool", "", "evaluate-js"); !ok {
+			t.Fatalf("actual reason denied: %s", msg)
 		}
 	})
 
@@ -312,10 +472,10 @@ func TestBrowserReasonEmitsGateFacts(t *testing.T) {
 		t.Fatalf("expected expansion_suggested=true")
 	}
 
-	if !hasRecentGateFact(engine, "js_gate_open", "s-reason", "low_confidence", jsGateTTL) {
+	if !engine.HasGateReason("s-reason", "low_confidence") {
 		t.Fatalf("expected low_confidence gate fact")
 	}
-	if !hasRecentGateFact(engine, "js_gate_open", "s-reason", "contradiction_detected", jsGateTTL) {
+	if !engine.HasGateReason("s-reason", "contradiction_detected") {
 		t.Fatalf("expected contradiction_detected gate fact")
 	}
 }

@@ -30,7 +30,7 @@ func TestProgressiveObserveDeepGateSchema(t *testing.T) {
 func TestProgressiveObserveDeepGateRefusals(t *testing.T) {
 	for _, mode := range []string{"react", "dom_snapshot"} {
 		for _, view := range []string{"summary", "compact", "full"} {
-			for _, scenario := range []string{"missing", "explicit_without_handle", "unauthorized_reason", "invalid_reason", "foreign_handle", "foreign_reason", "expired_handle", "expired_reason"} {
+			for _, scenario := range []string{"missing", "explicit_without_handle", "unauthorized_reason", "invalid_reason", "raw_foreign_handle", "raw_foreign_reason", "raw_expired_handle", "raw_expired_reason"} {
 				t.Run(mode+"/"+view+"/"+scenario, func(t *testing.T) {
 					engine := testMangleEngineForProgressive(t)
 					args := map[string]interface{}{"session_id": "inspection", "mode": mode, "view": view}
@@ -40,23 +40,23 @@ func TestProgressiveObserveDeepGateRefusals(t *testing.T) {
 					case "explicit_without_handle":
 						args["gate_reason"] = "explicit_user_intent"
 					case "unauthorized_reason":
-						args["gate_reason"] = "low_confidence"
+						args["gate_reason"] = "no_matching_tool"
 					case "invalid_reason":
 						args["gate_reason"] = "skip_gate"
-					case "foreign_handle", "expired_handle":
+					case "raw_foreign_handle", "raw_expired_handle":
 						args["approved_by_handle"] = "reason:inspection:health"
-					case "foreign_reason", "expired_reason":
-						args["gate_reason"] = "low_confidence"
+					case "raw_foreign_reason", "raw_expired_reason":
+						args["gate_reason"] = "no_matching_tool"
 						fact.Predicate = "js_gate_open"
-						fact.Args = []interface{}{"inspection", "low_confidence", now.UnixMilli()}
+						fact.Args = []interface{}{"inspection", "no_matching_tool", now.UnixMilli()}
 					}
-					if strings.HasPrefix(scenario, "foreign_") {
+					if strings.HasPrefix(scenario, "raw_foreign_") {
 						fact.Args[0] = "another-session"
 					}
-					if strings.HasPrefix(scenario, "expired_") {
+					if strings.HasPrefix(scenario, "raw_expired_") {
 						fact.Timestamp = now.Add(-jsGateTTL - time.Minute)
 					}
-					if strings.HasPrefix(scenario, "foreign_") || strings.HasPrefix(scenario, "expired_") {
+					if strings.HasPrefix(scenario, "raw_foreign_") || strings.HasPrefix(scenario, "raw_expired_") {
 						if err := engine.AddFacts(context.Background(), []mangle.Fact{fact}); err != nil {
 							t.Fatal(err)
 						}
@@ -88,21 +88,18 @@ func TestProgressiveObserveDeepGateForwardsAuthorization(t *testing.T) {
 			t.Run(mode+"/"+authorization, func(t *testing.T) {
 				engine := testMangleEngineForProgressive(t)
 				manager := browser.NewSessionManager(config.BrowserConfig{}, engine)
-				now := time.Now()
+
 				args := map[string]interface{}{"session_id": "unknown-inspection", "mode": mode}
-				fact := mangle.Fact{Predicate: "disclosure_handle", Args: []interface{}{"unknown-inspection", "reason:unknown-inspection:health", "reason", now.UnixMilli()}, Timestamp: now}
 				if authorization == "reason" {
-					args["gate_reason"] = "low_confidence"
-					fact.Predicate, fact.Args = "js_gate_open", []interface{}{"unknown-inspection", "low_confidence", now.UnixMilli()}
+					authorizeNoMatchingReason(t, engine, "unknown-inspection")
+					args["gate_reason"] = "no_matching_tool"
 				} else {
-					args["approved_by_handle"] = "reason:unknown-inspection:health"
+					args["approved_by_handle"] = authorizeReason(t, engine, "unknown-inspection")
 					if authorization == "explicit" {
 						args["gate_reason"] = "explicit_user_intent"
 					}
 				}
-				if err := engine.AddFacts(context.Background(), []mangle.Fact{fact}); err != nil {
-					t.Fatal(err)
-				}
+
 				result, err := (&BrowserObserveTool{sessions: manager, engine: engine}).Execute(context.Background(), args)
 				if err != nil {
 					t.Fatal(err)

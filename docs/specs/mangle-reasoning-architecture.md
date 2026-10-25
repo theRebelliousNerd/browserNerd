@@ -49,6 +49,19 @@ or evicted as a unit, so a response is never kept without its request. Over
 half the limit, low-value predicates are also sampled on the way in. The
 engine keeps only the latest `current_url` per session.
 
+Authorization is held in a separate bounded, engine-owned TTL ledger rather
+than inferred from retained facts. `browser-reason` atomically issues exact
+session/handle and session/reason keys for ten minutes. The ledger bounds
+sessions, keys and accounted bytes, prunes expired entries lazily and refuses
+capacity without evicting live grants or partially refreshing a bundle.
+Observation sampling, trims and raw `disclosure_handle`/`js_gate_open` writes
+cannot change this authority. Those predicates remain best-effort telemetry;
+their absence in a Mangle read does not mean an issued grant disappeared.
+Only the real reason producer calls the typed publication API; ordinary fact
+ingestion and non-reason disclosure emitters do not mint grants. The exact
+limits and reader-facing issuance receipt are defined by the progressive tool
+contract.
+
 A read evaluates only the rules the predicate it asks for depends on, over the
 indexed store, and caches the derivation until the next write. New
 subscriptions snapshot matching fingerprints at creation and emit only fresh

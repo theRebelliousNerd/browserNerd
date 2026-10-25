@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -268,23 +269,54 @@ func (t *BrowserReasonTool) Execute(ctx context.Context, args map[string]interfa
 	}
 
 	now := time.Now()
+	grantReasons := make([]string, 0, 3)
 	emitFacts := []mangle.Fact{{
 		Predicate: "confidence_score",
 		Args:      []interface{}{sessionID, topic, int(math.Round(confidence * 100.0)), now.UnixMilli()},
 		Timestamp: now,
 	}}
 	if confidence < 0.70 {
+		grantReasons = append(grantReasons, "low_confidence")
 		emitFacts = append(emitFacts, mangle.Fact{Predicate: "js_gate_open", Args: []interface{}{sessionID, "low_confidence", now.UnixMilli()}, Timestamp: now})
 	}
 	if len(ev.contradictions) > 0 {
+		grantReasons = append(grantReasons, "contradiction_detected")
 		emitFacts = append(emitFacts, mangle.Fact{Predicate: "js_gate_open", Args: []interface{}{sessionID, "contradiction_detected", now.UnixMilli()}, Timestamp: now})
 	}
 	if response["next"] == nil {
+		grantReasons = append(grantReasons, "no_matching_tool")
 		emitFacts = append(emitFacts, mangle.Fact{Predicate: "js_gate_open", Args: []interface{}{sessionID, "no_matching_tool", now.UnixMilli()}, Timestamp: now})
 	}
+	expiry, issueErr := t.engine.PublishReasonGrants(ctx, sessionID, handles, grantReasons)
+	response["gate_grants"] = reasonAuthorizationReceipt(expiry, issueErr, grantReasons)
+	// Facts are observation evidence only; trims cannot revoke issued control state.
 	_ = t.engine.AddFacts(ctx, emitFacts)
 	emitDisclosureFacts(ctx, t.engine, sessionID, handles, "reason")
 	return response, nil
+}
+
+func reasonAuthorizationReceipt(expiry time.Time, issueErr error, reasons []string) map[string]interface{} {
+	if issueErr != nil {
+		code := "authorization_publication_failed"
+		switch {
+		case errors.Is(issueErr, mangle.ErrGateGrantCapacity):
+			code = "capacity_exhausted"
+		case errors.Is(issueErr, mangle.ErrGateGrantEmpty):
+			code = "no_eligible_grants"
+		case errors.Is(issueErr, mangle.ErrGateGrantUnavailable):
+			code = "authority_unavailable"
+		case errors.Is(issueErr, context.Canceled), errors.Is(issueErr, context.DeadlineExceeded):
+			code = "publication_cancelled"
+		case errors.Is(issueErr, mangle.ErrGateGrantInvalid):
+			code = "invalid_bundle"
+		}
+		return map[string]interface{}{"available": false, "reason": code}
+	}
+	receipt := map[string]interface{}{"available": true, "expires_at_ms": expiry.UnixMilli()}
+	if len(reasons) > 0 {
+		receipt["reasons"] = reasons
+	}
+	return receipt
 }
 
 // trafficBefore summarizes the calls a navigation-scoped read left out: how

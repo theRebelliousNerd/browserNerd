@@ -5,19 +5,13 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 
 	"browsernerd-mcp-server/internal/mangle"
 )
 
 func authorizeInputTrace(t *testing.T, engine *mangle.Engine, session string) string {
 	t.Helper()
-	handle := "reason:" + session + ":trace-proof"
-	now := time.Now()
-	if err := engine.AddFacts(context.Background(), []mangle.Fact{{Predicate: "disclosure_handle", Args: []interface{}{session, handle, "reason", now.UnixMilli()}, Timestamp: now}}); err != nil {
-		t.Fatal(err)
-	}
-	return handle
+	return authorizeReason(t, engine, session)
 }
 
 func TestInputTraceSchemaAndRefusals(t *testing.T) {

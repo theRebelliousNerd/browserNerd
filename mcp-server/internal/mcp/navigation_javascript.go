@@ -259,7 +259,7 @@ func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandl
 	}
 
 	if approvedHandle != "" {
-		if hasRecentGateFact(t.engine, "disclosure_handle", sessionID, approvedHandle, jsGateTTL) {
+		if t.engine.HasGateHandle(sessionID, approvedHandle) {
 			return true, ""
 		}
 		return false, fmt.Sprintf("approved_by_handle not found or expired: %s", approvedHandle)
@@ -272,7 +272,7 @@ func (t *EvaluateJSTool) evaluateJSGateOpen(sessionID, gateReason, approvedHandl
 		return false, fmt.Sprintf("%s is gated; provide gate_reason or approved_by_handle", toolName)
 	}
 
-	if hasRecentGateFact(t.engine, "js_gate_open", sessionID, gateReason, jsGateTTL) {
+	if t.engine.HasGateReason(sessionID, gateReason) {
 		return true, ""
 	}
 
