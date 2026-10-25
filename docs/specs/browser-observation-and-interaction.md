@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Observation and Interaction
 created: 2026-07-23
-last_updated: 2026-10-23
+last_updated: 2026-10-24
 doc_type: feature-spec
 subsystem: browsernerd
 read_when: Changing navigation, element discovery, actions, screenshots, or JS
@@ -60,6 +60,58 @@ One call returns:
 
 `include_diagnostics: true` adds the diagnose-page and error-toast views, and
 `view: full` adds hidden content and every section untrimmed.
+
+### input_trace
+
+`mode: input_trace` uses `trace_action: arm | read | stop` to diagnose native
+input delivery without invoking application callbacks. Every action requires
+the existing same-session browser-reason disclosure authorization. Arm takes
+exactly one observed `root_ref` or unique `root_selector` and returns an opaque
+`trace_id`; read and stop require that ID and the same live session. Targets
+are exact node identities, never rebound after replacement or navigation.
+
+The fixed listeners observe pointer down/up, mouse down/up/click, focus and
+focusin/out, and key down/up only for the fixed activation codes Enter,
+NumpadEnter, Space, Tab, Escape and arrows. Character keys and input events
+are excluded. Evidence includes trace-local stable node refs, bounded composed
+paths, event IDs, listener phase/current target, coordinates for pointer/mouse
+events, buttons, modifier flags, trust, default prevention and propagation
+cancellation as observed at each listener. No text, attributes, values,
+application state, function source or arguments are read. An event targeting
+an overlay at the armed target's point is included with `within_target: false`.
+
+A later task samples final `default_prevented`; it is null/unconfirmed until
+that task runs. Propagation observations identify only boundaries actually
+seen: earlier stop-immediate listeners can prevent the trace listener itself,
+and post-dispatch propagation flags cannot prove whether propagation stopped.
+Missing phases are not proof that an application callback did not run, and
+delivery is not proof that one ran. Top-document listeners do not trace child
+frames or closed shadow internals. Ancestor/path/node limits remain explicit.
+
+Arm defaults to 10000 ms, 32 distinct events and 16000 capture bytes. Bounds
+are `duration_ms` 100..30000, `max_events` 1..256 and `max_trace_bytes`
+2048..32768. One active trace per session is allowed. Event and byte limits
+stop listeners with named reasons and drop counts; timeout, stop and pagehide
+remove listeners. Navigation destroys the document's listeners; session close
+and disconnected transport release owned local page/runtime handles. If the
+transport cannot acknowledge remote removal, `cleanup_confirmed: false` is
+retained and the in-page lease bounds remaining listeners to the armed duration.
+`cleanup_pending` distinguishes stopped listeners from resource cleanup still
+in flight. Rearm waits for that exact trace's bounded cleanup; an actively
+listening trace refuses replacement. Terminal evidence remains bounded in the
+session for 60000 ms after stopping; read is nondestructive. Rearming replaces
+only a terminal trace and discards its superseded retained copy. Closed sessions
+and disconnected transports release owned handles and never authorize a trace
+on another tab.
+
+Every view retains scope, budget, terminal reason, event/phase/final-sample
+counts, dropped counts and separate capture/response completeness. Summary
+omits events; compact/full return at most `max_items` events and obey the same
+byte budget. Final samples pending or lost to navigation/cleanup remain named
+incompleteness. No trace is persisted as a fact, log payload or recorder file.
+The trace never activates a tab or changes the existing headed private-display
+contract. The tool accepts fixed options as JSON data, never script or CDP
+commands.
 
 ### Other modes
 

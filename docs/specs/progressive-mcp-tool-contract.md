@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Progressive MCP Tool Contract
 created: 2026-07-23
-last_updated: 2026-10-23
+last_updated: 2026-10-24
 doc_type: interface-spec
 subsystem: browsernerd
 read_when: Changing tool registration, schemas, response views, or evidence handles
@@ -24,7 +24,7 @@ focused ones, so both surfaces run one implementation.
 - `browser-observe` sees a page, small by default, and drills down by `mode`:
   `composite` (default), `text`, `interactive`, `screenshot`, `layout`,
   `storage`, `sessions`, `doctor`, and the narrow slices `state`, `nav`,
-  `hidden`, `grids`, `react` and `dom_snapshot`. Contract:
+  `hidden`, `grids`, `react`, `dom_snapshot` and `input_trace`. Contract:
   [observation and interaction](browser-observation-and-interaction.md);
   `layout` and the `browser-act` `viewport` operation:
   [responsive layout audit](responsive-layout-audit.md).
@@ -86,6 +86,14 @@ defaults to false for explicit inspection. Root selectors must match exactly
 one element; refs use the existing session ref registry and resolver. Missing,
 ambiguous, stale, or conflicting roots are refused. No user JavaScript is
 accepted. Options are passed as JSON arguments to fixed internal scripts.
+
+`input_trace` uses the same disclosure gate for `trace_action: arm | read |
+stop`. Arm resolves one exact target via `root_ref` or `root_selector`; read
+and stop require the returned same-session `trace_id`. Its fixed event set,
+capture/response budgets, trace-local node identities, cancellation limits,
+cleanup and terminal retention are defined in
+[observation and interaction](browser-observation-and-interaction.md#input_trace).
+Trace evidence describes delivery/cancellation, never callback execution.
 
 The response returns structured `nodes` directly, independently of Mangle
 retention. Every view carries `scope`, traversal/budget metadata, `scanned`,

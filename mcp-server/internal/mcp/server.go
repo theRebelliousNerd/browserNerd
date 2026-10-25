@@ -330,7 +330,8 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 		if rawSessionID, ok := args["session_id"]; ok {
 			sessionID = fmt.Sprintf("%v", rawSessionID)
 		}
-		if s.recorder != nil {
+		recordCall := s.recorder != nil && recordInputTraceCall(tool.Name(), args)
+		if recordCall {
 			s.recorder.Log("tool_call", sessionID, map[string]interface{}{
 				"tool": tool.Name(),
 				"args": args,
@@ -344,7 +345,7 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 		if timedOut {
 			s.calls.timedOut(callID)
 			log.Printf("tool %s (%s) exceeded %s on session %q; its work is still running", tool.Name(), detail, timeout, sessionID)
-			if s.recorder != nil {
+			if recordCall {
 				s.recorder.Log("tool_result", sessionID, map[string]interface{}{
 					"tool":        tool.Name(),
 					"success":     false,
@@ -365,7 +366,7 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 			}
 		}
 		if err != nil {
-			if s.recorder != nil {
+			if recordCall {
 				s.recorder.Log("tool_result", sessionID, map[string]interface{}{
 					"tool":        tool.Name(),
 					"success":     false,
@@ -380,7 +381,7 @@ func (s *Server) wrapTool(tool Tool) mcpserver.ToolHandlerFunc {
 		}
 
 		payload := sanitizeToolPayload(marshalToolPayload(tool.Name(), result), s.redactor)
-		if s.recorder != nil {
+		if recordCall {
 			payloadString := string(payload)
 			payloadTruncated := false
 			if len(payloadString) > 65536 {

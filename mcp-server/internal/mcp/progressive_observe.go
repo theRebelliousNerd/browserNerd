@@ -29,29 +29,28 @@ const observePlanningGroups = 60
 
 func (t *BrowserObserveTool) Name() string { return "browser-observe" }
 func (t *BrowserObserveTool) Description() string {
-	return `Inspect pages or sessions; doctor checks server health.
-composite groups controls and suggests actions. Prefer text for reading, interactive for refs,
-screenshot for pixels, storage for auth metadata (never values), layout for visual defects.
-react/dom_snapshot inspect bounded subtrees after browser-reason authorization.
-view: summary < compact < full.`
+	return `Read pages/sessions; doctor checks server health. composite groups controls/actions;
+text reads, interactive locates, screenshot shows pixels, storage reports auth metadata,
+layout audits. react/dom_snapshot and input_trace require browser-reason approval.
+input_trace: arm/read/stop fixed events. summary < compact < full.`
 }
 
 func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
-	return snapshotInputSchema(map[string]interface{}{
+	return inputTraceSchema(snapshotInputSchema(map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"session_id": map[string]interface{}{
 				"type":        "string",
-				"description": "Session (omit for sessions/doctor)",
+				"description": "Omit for sessions/doctor",
 			},
 			"gate_reason": map[string]interface{}{
 				"type":        "string",
-				"description": "Deep: browser-reason grant; explicit_user_intent needs a handle",
+				"description": "Reason grant; explicit intent needs handle",
 				"enum":        []string{"explicit_user_intent", "low_confidence", "contradiction_detected", "no_matching_tool"},
 			},
 			"approved_by_handle": map[string]interface{}{
 				"type":        "string",
-				"description": "Deep: recent same-session browser-reason handle",
+				"description": "Recent same-session reason handle",
 			},
 			"intent": map[string]interface{}{
 				"type":        "string",
@@ -61,7 +60,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			"mode": map[string]interface{}{
 				"type":        "string",
 				"description": "Default composite",
-				"enum":        []string{"composite", "text", "interactive", "screenshot", "layout", "storage", "sessions", "state", "nav", "hidden", "grids", "react", "dom_snapshot", "doctor"},
+				"enum":        []string{"composite", "text", "interactive", "screenshot", "layout", "storage", "sessions", "state", "nav", "hidden", "grids", "react", "dom_snapshot", "input_trace", "doctor"},
 			},
 			"view": map[string]interface{}{
 				"type":        "string",
@@ -70,15 +69,15 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"max_items": map[string]interface{}{
 				"type":        "integer",
-				"description": "List rows (default 20; annotate 30)",
+				"description": "Rows (20; annotate 30)",
 			},
 			"text_query": map[string]interface{}{
 				"type":        "string",
-				"description": "text: only blocks containing this term",
+				"description": "text: matching blocks",
 			},
 			"max_chars": map[string]interface{}{
 				"type":        "integer",
-				"description": "text: char budget (default 1500)",
+				"description": "text: chars (1500)",
 			},
 			"filter": map[string]interface{}{
 				"type":        "string",
@@ -87,15 +86,15 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"visible_only": map[string]interface{}{
 				"type":        "boolean",
-				"description": "react/dom_snapshot default false; other modes true",
+				"description": "Deep: false; others: true",
 			},
 			"annotate": map[string]interface{}{
 				"type":        "boolean",
-				"description": "screenshot: number the controls in view",
+				"description": "screenshot: numbered controls",
 			},
 			"ref": map[string]interface{}{
 				"type":        "string",
-				"description": "screenshot: this element only",
+				"description": "screenshot target",
 			},
 			"full_page": map[string]interface{}{
 				"type":        "boolean",
@@ -103,16 +102,16 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"viewports": map[string]interface{}{
 				"type":        "array",
-				"description": "layout: presets (phone, iphone-14, pixel-7, phone-small, tablet, laptop, desktop) or viewport objects",
+				"description": "layout: phone/iphone-14/pixel-7/phone-small/tablet/laptop/desktop or viewport objects",
 			},
 			"url": map[string]interface{}{
 				"type":        "string",
-				"description": "layout: load this URL at each viewport first",
+				"description": "layout: load at each viewport",
 			},
 			"checks": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "layout: finding types to run (default all)",
+				"description": "layout findings (all)",
 			},
 			"thresholds": map[string]interface{}{
 				"type":        "object",
@@ -120,7 +119,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"ready_timeout_ms": map[string]interface{}{
 				"type":        "integer",
-				"description": "layout: max wait per viewport for loading (default 20000)",
+				"description": "layout: load deadline/viewport (20000)",
 			},
 			"format": map[string]interface{}{
 				"type":        "string",
@@ -129,7 +128,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"quality": map[string]interface{}{
 				"type":        "integer",
-				"description": "screenshot jpeg quality 1-100 (default 90)",
+				"description": "JPEG 1..100 (90)",
 			},
 			"save_path": map[string]interface{}{
 				"type":        "string",
@@ -137,7 +136,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"include_detached": map[string]interface{}{
 				"type":        "boolean",
-				"description": "sessions: also list stale detached records",
+				"description": "sessions: detached records",
 			},
 			"internal_only": map[string]interface{}{
 				"type":        "boolean",
@@ -145,15 +144,15 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"emit_facts": map[string]interface{}{
 				"type":        "boolean",
-				"description": "react/dom_snapshot default false; other modes true; retention is not guaranteed",
+				"description": "Deep: false; others: true. Retention unknown",
 			},
 			"include_action_plan": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Ranked browser-act calls (default true)",
+				"description": "Ranked actions (true)",
 			},
 			"include_diagnostics": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Full diagnostics and toasts (default false)",
+				"description": "Diagnostics/toasts (false)",
 			},
 			"max_recommendations": map[string]interface{}{
 				"type":        "integer",
@@ -165,15 +164,15 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 			},
 			"sample_rows": map[string]interface{}{
 				"type":        "integer",
-				"description": "grids: rows sampled (default 3)",
+				"description": "grids: sampled rows (3)",
 			},
 			"include_samples": map[string]interface{}{
 				"type":        "boolean",
-				"description": "grids: sample refs (default true)",
+				"description": "grids: sample refs (true)",
 			},
 			"include_specs": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Attach route spec excerpts (default false)",
+				"description": "Route spec excerpts (false)",
 			},
 			"spec_terms": map[string]interface{}{
 				"type":        "array",
@@ -181,7 +180,7 @@ func (t *BrowserObserveTool) InputSchema() map[string]interface{} {
 				"description": "Terms ranking spec excerpts",
 			},
 		},
-	})
+	}))
 }
 
 // withIntent records the intent preset on a response only when the caller used one;
@@ -259,8 +258,8 @@ func (t *BrowserObserveTool) Execute(ctx context.Context, args map[string]interf
 	if !ok || m["success"] != true || sessionID == "" {
 		return res, nil
 	}
-	// doctor and sessions report on the server, not on the page.
-	if mode, _ := m["mode"].(string); mode == "doctor" || mode == "sessions" {
+	// Server inventories and retained traces do not attend the current page.
+	if mode, _ := m["mode"].(string); mode == "doctor" || mode == "sessions" || mode == "input_trace" {
 		return res, nil
 	}
 	markAttended(t.sessions, sessionID)
@@ -347,6 +346,8 @@ func (t *BrowserObserveTool) observe(ctx context.Context, args map[string]interf
 
 	// Handle new delegating modes that return early
 	switch mode {
+	case "input_trace":
+		return t.inputTrace(ctx, args), nil
 	case "doctor":
 		report := map[string]interface{}{}
 		if t.doctor != nil {

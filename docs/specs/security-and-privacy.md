@@ -1,7 +1,7 @@
 ---
 title: BrowserNERD Security and Privacy
 created: 2026-07-23
-last_updated: 2026-10-22
+last_updated: 2026-10-24
 doc_type: security-spec
 subsystem: browsernerd
 read_when: Changing capture, persistence, workspace config, JavaScript evaluation, Mangle, or file exports
@@ -28,6 +28,14 @@ local authority into queryable or persisted data.
   text or JSON body) is redacted before it becomes a fact.
 - WebSocket frame payloads are never captured; `ws_event` records the
   lifecycle only.
+- Explicit gated input traces capture fixed native event metadata only.
+  Trace-local node refs carry no DOM attributes or text. Character keys,
+  input/composition events, input values, callback source/arguments and
+  application state are excluded. Selector/ref strings resolve the exact
+  target but are not echoed into the receipt. Traces remain bounded in
+  memory, expire after their terminal retention TTL, and create no facts or
+  persisted payloads. Final cancellation is unknown until a later task
+  confirms it; cleanup never replaces missing evidence with false.
 - `browser-reason` `network` with `body: true` returns a response body's
   shape - keys, array lengths, clipped and redacted scalar samples - never
   the body, and never the value of a key that names a token, password, key or

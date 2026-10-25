@@ -26,6 +26,11 @@ import (
 // Dialogs are answered even without an engine: an unanswered dialog blocks
 // the renderer and every later call on the tab.
 func (m *SessionManager) startEventStream(ctx context.Context, sessionID string, page *rod.Page) {
+	m.mu.Lock()
+	if record := m.sessions[sessionID]; record != nil {
+		record.streamContext = ctx
+	}
+	m.mu.Unlock()
 	waitDialog := page.Context(ctx).EachEvent(func(ev *proto.PageJavascriptDialogOpening) {
 		m.handleDialog(ctx, sessionID, page, ev)
 	})
